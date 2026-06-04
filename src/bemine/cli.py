@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 from pathlib import Path
 
 from .capabilities import build_capability_manifest, render_capability_manifest
@@ -148,6 +150,12 @@ def build_parser() -> argparse.ArgumentParser:
     systemd_install.set_defaults(linger=True)
     systemd_render = systemd_sub.add_parser("render")
     systemd_render.add_argument("--json", action="store_true")
+
+    discord = sub.add_parser("discord", help="Manage Discord integration.")
+    discord_sub = discord.add_subparsers(dest="discord_command", required=True)
+    sync_channels = discord_sub.add_parser("sync-project-channels")
+    sync_channels.add_argument("--guild-id", default=os.environ.get("MAYOR_DISCORD_GUILD_ID", ""))
+    sync_channels.add_argument("--limit", type=int, default=200)
     return parser
 
 
@@ -402,6 +410,24 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 for unit in units:
                     print(f"# {unit.name}\n{unit.text}")
+    elif args.command == "discord":
+        if args.discord_command == "sync-project-channels":
+            from mayor_discord.config import Settings as DiscordSettings
+            from mayor_discord.dispatch import sync_project_channels_to_discord
+
+            discord_settings = DiscordSettings.load()
+            guild_id = args.guild_id.strip() or os.environ.get("DISCORD_GUILD_ID", "").strip()
+            if not guild_id:
+                raise SystemExit("Set --guild-id or MAYOR_DISCORD_GUILD_ID.")
+            result = asyncio.run(
+                sync_project_channels_to_discord(
+                    settings,
+                    discord_settings.token,
+                    guild_id,
+                    limit=args.limit,
+                )
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

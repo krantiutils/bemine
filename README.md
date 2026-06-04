@@ -46,6 +46,7 @@ Discord gateway:
 ```bash
 uv run bemine-discord-gateway
 uv run bemine-discord-send --text "bemine is online"
+uv run bemine discord sync-project-channels --guild-id "$MAYOR_DISCORD_GUILD_ID"
 ```
 
 Compatibility aliases still exist:
@@ -150,6 +151,18 @@ uv run bemine status --devices local,mbp2 --json
 Discord `status`, `bemine status`, and `mayor status` use the same status
 logic.
 
+## Discord Project Channels
+
+`bemine discord sync-project-channels` creates one text channel per indexed
+project under `Bemine Projects`. If the category reaches Discord's 50-channel
+limit, Bemine creates numbered overflow categories such as `Bemine Projects 2`.
+
+Messages in those project channels are dispatched to Codex with the channel's
+project root as `--cd`. Image attachments are passed to Codex with `--image`;
+other attachments are saved and listed in the prompt. The gateway reacts when it
+receives work, shows Discord typing while Codex runs, and replies with the final
+Codex message.
+
 ## Credential Gate
 
 Credential access is classified into baseline shared identity and gated
@@ -214,6 +227,7 @@ The tests are integration-oriented:
 - security and usage ledger verification
 - TOTP-gated credential request and approval flow
 - Discord approval-code redaction
+- Discord per-project channel routing and Codex dispatch adapter
 - Kimi handler wire-shape and usage recording
 - cron scheduling, daily digest execution, and systemd unit rendering
 - real tmux start/send/capture/kill flow when tmux is installed

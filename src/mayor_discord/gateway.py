@@ -20,6 +20,7 @@ from bemine.kernel import BemineKernel
 from bemine.status import collect_fleet_status, render_status
 
 from .config import Settings
+from .dispatch import CodexDispatcher, DispatchRequest, resolve_project_channel
 from .store import Store
 
 
@@ -27,6 +28,9 @@ LOG = logging.getLogger("mayor.discord.gateway")
 SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 VOICE_SUFFIXES = {".ogg", ".opus", ".mp3", ".m4a", ".wav", ".webm"}
 ACK_REACTION = "👀"
+WORKING_REACTION = "🛠️"
+SUCCESS_REACTION = "✅"
+WARNING_REACTION = "⚠️"
 APPROVAL_CODE_RE = re.compile(
     r"\b((?:!?(?:mayor|bemine)\s+)?approve\s+\S+\s+)(\d{6,8})\b",
     re.IGNORECASE,
@@ -272,6 +276,36 @@ class MayorDiscordGateway:
             await message.reply(f"Denied `{denial}`.", mention_author=False)
             return
 
+        settings = BemineSettings.load()
+        project = _project_channel_for_message(message, settings=settings)
+        if project and (normalized or saved_attachments):
+            await _acknowledge_message(message, emoji=WORKING_REACTION)
+            request = DispatchRequest(
+                channel_id=str(message.channel.id),
+                channel_name=_message_channel_name(message),
+                message_id=str(message.id),
+                author_name=getattr(message.author, "global_name", None) or str(message.author),
+                content=normalized,
+                attachments=saved_attachments,
+            )
+            result = await asyncio.to_thread(
+                CodexDispatcher(settings).dispatch,
+                project,
+                request,
+            )
+            await _acknowledge_message(
+                message,
+                emoji=SUCCESS_REACTION if result.ok else WARNING_REACTION,
+            )
+            header = (
+                f"Codex result for `#{project.channel_name}`"
+                if result.ok
+                else f"Codex dispatch issue for `#{project.channel_name}`"
+            )
+            for chunk in _discord_chunk(f"{header}:\n{result.output}", limit=1900):
+                await message.reply(chunk, mention_author=False)
+            return
+
         await self.bot.process_commands(message)
         await message.reply(
             self._default_reply(saved_attachments),
@@ -288,9 +322,9 @@ class MayorDiscordGateway:
             return (
                 "Received by Mayor. "
                 f"Saved {len(saved_attachments)} attachment(s). "
-                "Codex dispatch is not wired yet."
+                "Use a project channel for Codex dispatch."
             )
-        return "Received by Mayor. Codex dispatch is not wired yet."
+        return "Received by Mayor. Use a project channel for Codex dispatch."
 
     async def _record_message(self, message: discord.Message) -> list[Path]:
         message_id = str(message.id)
@@ -343,6 +377,28 @@ class MayorDiscordGateway:
 
     async def run(self) -> None:
         await self.bot.start(self.settings.token)
+
+
+def _project_channel_for_message(
+    message: discord.Message,
+    *,
+    settings: BemineSettings,
+):
+    return resolve_project_channel(
+        channel_name=_message_channel_name(message),
+        category_name=_message_category_name(message),
+        state_dir=settings.state_dir,
+        repo_dir=Path.cwd(),
+    )
+
+
+def _message_channel_name(message: discord.Message) -> str:
+    return str(getattr(message.channel, "name", "") or "")
+
+
+def _message_category_name(message: discord.Message) -> str:
+    category = getattr(message.channel, "category", None)
+    return str(getattr(category, "name", "") or "")
 
 
 def _discord_chunk(text: str, *, limit: int = 1900) -> list[str]:
