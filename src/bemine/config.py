@@ -20,6 +20,7 @@ class BemineSettings:
     codex_home: Path
     claude_home: Path
     kimi_home: Path
+    hermes_home: Path
     device_id: str
 
     @classmethod
@@ -31,6 +32,7 @@ class BemineSettings:
         codex_home: Path | None = None,
         claude_home: Path | None = None,
         kimi_home: Path | None = None,
+        hermes_home: Path | None = None,
         device_id: str | None = None,
     ) -> "BemineSettings":
         cwd = Path.cwd()
@@ -59,6 +61,11 @@ class BemineSettings:
             if kimi_home
             else _env_path("BEMINE_KIMI_HOME", Path.home() / "devlog" / "raw" / "kimi")
         )
+        resolved_hermes = (
+            hermes_home.expanduser().resolve()
+            if hermes_home
+            else _env_path("BEMINE_HERMES_HOME", Path.home() / ".hermes")
+        )
         resolved_device = (
             device_id
             or os.environ.get("BEMINE_DEVICE_ID", "").strip()
@@ -71,10 +78,10 @@ class BemineSettings:
             codex_home=resolved_codex,
             claude_home=resolved_claude,
             kimi_home=resolved_kimi,
+            hermes_home=resolved_hermes,
             device_id=resolved_device,
         )
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.vault_dir.mkdir(parents=True, exist_ok=True)
-

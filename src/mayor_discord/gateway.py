@@ -13,6 +13,7 @@ from discord.ext import commands
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
 from bemine.config import BemineSettings
 from bemine.credentials import CredentialInventory, PermissionGate
+from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
 from bemine.status import collect_fleet_status, render_status
 
@@ -157,6 +158,25 @@ class MayorDiscordGateway:
                 manifest = build_capability_manifest(rows, device_id=kernel.settings.device_id)
                 text = render_capability_manifest(manifest)
                 await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+                return
+            if normalized_lower in {
+                "!mayor kimi",
+                "mayor kimi",
+                "!mayor kimi status",
+                "mayor kimi status",
+                "!bemine kimi",
+                "bemine kimi",
+                "!bemine kimi status",
+                "bemine kimi status",
+                "kimi status",
+            }:
+                config = await asyncio.to_thread(
+                    lambda: KimiHandler(BemineSettings.load().hermes_home).status()
+                )
+                await message.reply(
+                    _discord_chunk(render_kimi_status(config), limit=1900)[0],
+                    mention_author=False,
+                )
                 return
             if normalized_lower in {
                 "!mayor permissions",

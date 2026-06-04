@@ -78,7 +78,7 @@ def collect_fleet_status(
         except Exception as exc:
             errors.append(StatusError(device_id=device, error=compact_text(str(exc), limit=160)))
     statuses.sort(key=lambda item: item.last_interaction_at, reverse=True)
-    return statuses, errors
+    return _dedupe_statuses(statuses), errors
 
 
 def collect_local_status(
@@ -119,6 +119,18 @@ def collect_local_status(
     )
     rows.sort(key=lambda item: item.last_interaction_at, reverse=True)
     return rows
+
+
+def _dedupe_statuses(statuses: list[SessionStatus]) -> list[SessionStatus]:
+    seen: set[tuple[str, str, str]] = set()
+    deduped: list[SessionStatus] = []
+    for status in statuses:
+        key = (status.device_id, status.runtime, status.session_id or status.source_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(status)
+    return deduped
 
 
 def collect_ssh_status(

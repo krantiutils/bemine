@@ -7,7 +7,8 @@ import sys
 import time
 from pathlib import Path
 
-from bemine.status import collect_local_status, render_status
+from bemine.status import SessionStatus, collect_local_status, render_status
+from bemine.status import _dedupe_statuses
 from bemine.status import _infer_ask
 
 
@@ -170,6 +171,52 @@ def test_status_ask_detection_ignores_explanatory_agent_text() -> None:
     assert asks is True
     assert "<code>" in summary
     assert "123456" not in summary
+
+
+def test_status_dedupes_same_device_runtime_session_id() -> None:
+    newest = SessionStatus(
+        device_id="mbp2",
+        runtime="claude",
+        session_id="session-1",
+        cwd="/repo",
+        source_path="/a.jsonl",
+        last_interaction_at=20,
+        age_seconds=1,
+        last_role="assistant",
+        asks_user=False,
+        ask_summary="latest agent turn does not appear to request input",
+        latest_summary="newer",
+    )
+    duplicate = SessionStatus(
+        device_id="mbp2",
+        runtime="claude",
+        session_id="session-1",
+        cwd="/repo",
+        source_path="/b.jsonl",
+        last_interaction_at=10,
+        age_seconds=2,
+        last_role="assistant",
+        asks_user=False,
+        ask_summary="latest agent turn does not appear to request input",
+        latest_summary="older",
+    )
+    other_runtime = SessionStatus(
+        device_id="mbp2",
+        runtime="codex",
+        session_id="session-1",
+        cwd="/repo",
+        source_path="/c.jsonl",
+        last_interaction_at=9,
+        age_seconds=3,
+        last_role="assistant",
+        asks_user=False,
+        ask_summary="latest agent turn does not appear to request input",
+        latest_summary="codex",
+    )
+
+    deduped = _dedupe_statuses([newest, duplicate, other_runtime])
+
+    assert deduped == [newest, other_runtime]
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 from .capabilities import build_capability_manifest, render_capability_manifest
 from .config import BemineSettings
 from .credentials import CredentialInventory, PermissionGate
+from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
 from .notifications import notify_permission_request_via_discord
 from .proxy import CredentialProxy
@@ -21,6 +22,7 @@ def _settings_from_args(args: argparse.Namespace) -> BemineSettings:
         codex_home=Path(args.codex_home) if args.codex_home else None,
         claude_home=Path(args.claude_home) if args.claude_home else None,
         kimi_home=Path(args.kimi_home) if args.kimi_home else None,
+        hermes_home=Path(args.hermes_home) if args.hermes_home else None,
         device_id=args.device or None,
     )
 
@@ -32,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codex-home", default="", help="Codex home. Defaults to ~/.codex.")
     parser.add_argument("--claude-home", default="", help="Claude home. Defaults to ~/.claude.")
     parser.add_argument("--kimi-home", default="", help="Kimi raw log home. Defaults to ~/devlog/raw/kimi.")
+    parser.add_argument("--hermes-home", default="", help="Hermes home. Defaults to ~/.hermes.")
     parser.add_argument("--device", default="", help="Device ID for local scan.")
     parser.add_argument("--credential-home", default="", help="Home directory to scan for credential metadata.")
 
@@ -61,6 +64,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the worker-facing capability manifest.",
     )
     capabilities.add_argument("--json", action="store_true")
+
+    kimi = sub.add_parser("kimi", help="Inspect or call the configured Kimi provider.")
+    kimi_sub = kimi.add_subparsers(dest="kimi_command", required=True)
+    kimi_status = kimi_sub.add_parser("status")
+    kimi_status.add_argument("--json", action="store_true")
+    kimi_ask = kimi_sub.add_parser("ask")
+    kimi_ask.add_argument("prompt")
+    kimi_ask.add_argument("--system", default="")
+    kimi_ask.add_argument("--max-tokens", type=int, default=512)
+    kimi_ask.add_argument("--timeout", type=float, default=60.0)
+    kimi_ask.add_argument("--json", action="store_true")
 
     tmux = sub.add_parser("tmux", help="Interact with tmux-backed managed sessions.")
     tmux_sub = tmux.add_subparsers(dest="tmux_command", required=True)
@@ -189,6 +203,42 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(manifest, indent=2, sort_keys=True))
         else:
             print(render_capability_manifest(manifest), end="")
+    elif args.command == "kimi":
+        handler = KimiHandler(settings.hermes_home)
+        if args.kimi_command == "status":
+            config = handler.status()
+            if args.json:
+                print(json.dumps(config.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_kimi_status(config), end="")
+        elif args.kimi_command == "ask":
+            result = handler.ask(
+                args.prompt,
+                system=args.system,
+                max_tokens=args.max_tokens,
+                timeout=args.timeout,
+            )
+            usage = usage_payload(result)
+            kernel.db.record_usage_sample(
+                provider="kimi",
+                account=result.provider,
+                runtime="kimi",
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                total_tokens=result.total_tokens,
+                raw_json=json.dumps(usage, sort_keys=True),
+            )
+            kernel.db.record_audit_event(
+                category="runtime",
+                event_type="kimi_ask",
+                actor="cli",
+                device_id=settings.device_id,
+                payload_json=json.dumps(usage, sort_keys=True),
+            )
+            if args.json:
+                print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(result.text)
     elif args.command == "credentials":
         inventory = CredentialInventory(
             kernel.db,
