@@ -21,11 +21,12 @@ from bemine.status import collect_fleet_status, render_status
 
 from .config import Settings
 from .dispatch import (
-    CodexDispatcher,
     DispatchRequest,
     DispatchResult,
+    ProjectDispatcher,
     ProjectRoute,
     infer_project_route,
+    resolve_dispatch_runtime,
 )
 from .store import Store
 
@@ -93,12 +94,13 @@ def _pending_permissions_text() -> str:
     if not rows:
         return "No pending permission requests."
     return "Pending permission requests:\n" + "\n".join(
-        f"{row['request_id']} {row['credential_id']} - {row['reason']}"
-        for row in rows
+        f"{row['request_id']} {row['credential_id']} - {row['reason']}" for row in rows
     )
 
 
-async def _acknowledge_message(message: discord.Message, *, emoji: str = ACK_REACTION) -> bool:
+async def _acknowledge_message(
+    message: discord.Message, *, emoji: str = ACK_REACTION
+) -> bool:
     try:
         await message.add_reaction(emoji)
     except (discord.DiscordException, AttributeError, TypeError) as exc:
@@ -159,7 +161,10 @@ class MayorDiscordGateway:
         async def on_message(message: discord.Message) -> None:
             if self.bot.user and message.author.id == self.bot.user.id:
                 return
-            if message.type not in {discord.MessageType.default, discord.MessageType.reply}:
+            if message.type not in {
+                discord.MessageType.default,
+                discord.MessageType.reply,
+            }:
                 return
             if not self._is_allowed(message.author):
                 LOG.warning("ignored unauthorized Discord user %s", message.author.id)
@@ -190,7 +195,9 @@ class MayorDiscordGateway:
                 settings,
             )
             text = render_status(statuses, errors, limit=8)
-            await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+            await message.reply(
+                _discord_chunk(text, limit=1900)[0], mention_author=False
+            )
             return
         if normalized_lower in {
             "!mayor rundown",
@@ -212,7 +219,9 @@ class MayorDiscordGateway:
         }:
             lines = await asyncio.to_thread(_credential_lines)
             await message.reply(
-                _discord_chunk("Credential profiles:\n" + "\n".join(lines), limit=1900)[0],
+                _discord_chunk("Credential profiles:\n" + "\n".join(lines), limit=1900)[
+                    0
+                ],
                 mention_author=False,
             )
             return
@@ -223,7 +232,9 @@ class MayorDiscordGateway:
             "bemine capabilities",
         }:
             text = await asyncio.to_thread(_capability_text)
-            await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+            await message.reply(
+                _discord_chunk(text, limit=1900)[0], mention_author=False
+            )
             return
         if normalized_lower in {
             "!mayor kimi",
@@ -251,7 +262,9 @@ class MayorDiscordGateway:
             "bemine permissions",
         }:
             text = await asyncio.to_thread(_pending_permissions_text)
-            await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+            await message.reply(
+                _discord_chunk(text, limit=1900)[0], mention_author=False
+            )
             return
         approval = _parse_approval_command(normalized)
         if approval:
@@ -290,13 +303,14 @@ class MayorDiscordGateway:
                 channel_id=str(message.channel.id),
                 channel_name=_message_channel_name(message),
                 message_id=str(message.id),
-                author_name=getattr(message.author, "global_name", None) or str(message.author),
+                author_name=getattr(message.author, "global_name", None)
+                or str(message.author),
                 content=normalized,
                 attachments=saved_attachments,
                 route_reason=route.reason,
             )
             result = await asyncio.to_thread(
-                CodexDispatcher(settings).dispatch,
+                ProjectDispatcher(settings).dispatch,
                 route.project,
                 request,
             )
@@ -304,7 +318,9 @@ class MayorDiscordGateway:
                 message,
                 emoji=SUCCESS_REACTION if result.ok else WARNING_REACTION,
             )
-            for chunk in _discord_chunk(_dispatch_response_text(result, route), limit=1900):
+            for chunk in _discord_chunk(
+                _dispatch_response_text(result, route), limit=1900
+            ):
                 await message.reply(chunk, mention_author=False)
             return
 
@@ -333,7 +349,9 @@ class MayorDiscordGateway:
         channel_id = str(message.channel.id)
         guild_id = str(message.guild.id) if message.guild else None
         is_dm = isinstance(message.channel, discord.DMChannel) or message.guild is None
-        author_name = getattr(message.author, "global_name", None) or str(message.author)
+        author_name = getattr(message.author, "global_name", None) or str(
+            message.author
+        )
         saved_attachments: list[Path] = []
 
         self.store.record_inbound_message(
@@ -443,7 +461,8 @@ def _discord_chunk(text: str, *, limit: int = 1900) -> list[str]:
 def _dispatch_response_text(result: DispatchResult, route: ProjectRoute) -> str:
     if result.ok:
         return result.output
-    return f"Codex dispatch issue for `#{route.project.channel_name}`:\n{result.output}"
+    runtime = resolve_dispatch_runtime(route.project.runtime).capitalize()
+    return f"{runtime} dispatch issue for `#{route.project.channel_name}`:\n{result.output}"
 
 
 def _redact_sensitive_message(content: str) -> str:

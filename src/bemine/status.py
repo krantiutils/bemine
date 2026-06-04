@@ -15,7 +15,9 @@ from .util import compact_text
 
 DEFAULT_STATUS_DEVICES = ("local", "mbp", "mbp2", "k2", "pi", "windows")
 CODE_RE = re.compile(r"\b(?:\d{6,8}|[A-Z0-9]{4}-[A-Z0-9]{4})\b")
-TOKEN_RE = re.compile(r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,})\b")
+TOKEN_RE = re.compile(
+    r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,}|sk[-_][A-Za-z0-9_-]{12,})\b"
+)
 UUID_RE = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 
 
@@ -77,7 +79,9 @@ def collect_fleet_status(
                 )
             )
         except Exception as exc:
-            errors.append(StatusError(device_id=device, error=compact_text(str(exc), limit=160)))
+            errors.append(
+                StatusError(device_id=device, error=compact_text(str(exc), limit=160))
+            )
     statuses = [status for status in statuses if not _status_is_ignored(status)]
     statuses.sort(key=lambda item: item.last_interaction_at, reverse=True)
     return _dedupe_statuses(statuses), errors
@@ -127,7 +131,11 @@ def _dedupe_statuses(statuses: list[SessionStatus]) -> list[SessionStatus]:
     seen: set[tuple[str, str, str]] = set()
     deduped: list[SessionStatus] = []
     for status in statuses:
-        key = (status.device_id, status.runtime, status.session_id or status.source_path)
+        key = (
+            status.device_id,
+            status.runtime,
+            status.session_id or status.source_path,
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -181,7 +189,12 @@ def collect_ssh_status(
     return rows
 
 
-def render_status(statuses: list[SessionStatus], errors: list[StatusError] | None = None, *, limit: int = 12) -> str:
+def render_status(
+    statuses: list[SessionStatus],
+    errors: list[StatusError] | None = None,
+    *,
+    limit: int = 12,
+) -> str:
     if not statuses:
         text = "No recent Codex, Claude, or Kimi session interactions found."
     else:
@@ -302,7 +315,9 @@ def _parse_kimi_status(path: Path, *, device_id: str) -> SessionStatus:
     for obj in _read_jsonl_tail(path):
         cwd = str(obj.get("cwd") or obj.get("project") or cwd)
         role = str(obj.get("role") or obj.get("type") or "")
-        text = _text_from_content(obj.get("message") or obj.get("content") or obj.get("text"))
+        text = _text_from_content(
+            obj.get("message") or obj.get("content") or obj.get("text")
+        )
         if text:
             last_role = role or "message"
             latest = text
@@ -395,12 +410,20 @@ def _infer_ask(*, last_role: str, text: str) -> tuple[bool, str]:
             if phrase in sentence_lower:
                 return True, compact_text(_redact(sentence), limit=160)
         if "totp" in sentence_lower and any(
-            phrase in sentence_lower for phrase in ("provide", "send", "enter", "approve")
+            phrase in sentence_lower
+            for phrase in ("provide", "send", "enter", "approve")
         ):
             return True, compact_text(_redact(sentence), limit=160)
         if "?" in sentence and any(
             phrase in sentence_lower
-            for phrase in ("can you", "could you", "would you", "do you want", "want me", "should i")
+            for phrase in (
+                "can you",
+                "could you",
+                "would you",
+                "do you want",
+                "want me",
+                "should i",
+            )
         ):
             return True, compact_text(_redact(sentence), limit=160)
     return False, "latest agent turn does not appear to request input"
@@ -410,7 +433,11 @@ def _sentences(text: str) -> list[str]:
     normalized = re.sub(r"\s+", " ", text).strip()
     if not normalized:
         return []
-    return [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", normalized) if part.strip()]
+    return [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+|\n+", normalized)
+        if part.strip()
+    ]
 
 
 def _read_jsonl_head(path: Path, *, max_lines: int = 200) -> list[dict[str, Any]]:
@@ -505,7 +532,7 @@ import time
 device_id = sys.argv[1]
 limit_per_runtime = int(sys.argv[2])
 code_re = re.compile(r"\b(?:\d{6,8}|[A-Z0-9]{4}-[A-Z0-9]{4})\b")
-token_re = re.compile(r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,})\b")
+token_re = re.compile(r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,}|sk[-_][A-Za-z0-9_-]{12,})\b")
 uuid_re = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 
 def compact(value, limit=160):

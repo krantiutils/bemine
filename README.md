@@ -24,9 +24,9 @@ Functional now:
 
 - `bemine status` gives recent Codex, Claude, and Kimi sessions across known SSH devices.
 - `bemine rundown` gives indexed project summaries from SQLite/Obsidian.
-- Discord `status`, `rundown`, credential approval commands, and per-project Codex dispatch work.
-- Per-project Discord channels route messages into `codex exec --cd <project>`.
-- Image attachments are passed to Codex; non-image attachments are saved and listed in the prompt.
+- Discord `status`, `rundown`, credential approval commands, and per-project Kimi dispatch work.
+- Per-project Discord channels route messages to Kimi by default, with Codex still selectable per project.
+- Attachments are saved and listed in the prompt. Codex project channels also pass image attachments with `--image`.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
 - `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
@@ -39,7 +39,8 @@ Functional now:
 
 Not functional yet:
 
-- Claude dispatch and Kimi dispatch from Discord project channels.
+- Claude dispatch from Discord project channels.
+- Kimi API dispatch cannot execute shell tools directly; use Codex dispatch or managed workers for local edits/commands.
 - Attaching to raw non-tmux Codex/Claude/Kimi TTY sessions.
 - Proton Mail IMAP ingestion and schedule extraction from email.
 - Calendar sync beyond Bemine cron/reminder jobs.
@@ -148,6 +149,8 @@ BEMINE_IGNORED_PROJECT_ROOTS=~/gt
 BEMINE_OPERATOR_CONTEXT_FILES=~/deploy.md
 BEMINE_HARNESS_CONTEXT_FILES=/home/cdjk/bm/SOUL.md:/home/cdjk/bm/SKILL.md
 BEMINE_CODEX_SANDBOX=danger-full-access
+BEMINE_DISPATCH_RUNTIME=kimi
+BEMINE_KIMI_DISPATCH_MAX_TOKENS=1600
 BEMINE_TOTP_SECRET=
 ```
 
@@ -162,6 +165,12 @@ shown or injected into worker prompts.
 `BEMINE_HARNESS_CONTEXT_FILES` is a `:`-separated override for Bemine's own
 worker context. By default, dispatch prompts include repository `SOUL.md` and
 `SKILL.md`, redacted with the same secret filters as operator context.
+
+`BEMINE_DISPATCH_RUNTIME` controls the default runtime for Discord project
+channels when no per-project runtime is stored. It defaults to `kimi`. Existing
+project-channel config can still set a project to `codex`. Kimi dispatch uses
+the Hermes-backed Kimi API configuration and records token usage in SQLite.
+`BEMINE_KIMI_DISPATCH_MAX_TOKENS` controls the response budget.
 
 `BEMINE_CODEX_SANDBOX` controls the sandbox mode used by Discord Codex dispatch.
 It defaults to `danger-full-access` because `workspace-write` can fail under
@@ -321,11 +330,14 @@ Messages in project channels dispatch directly to that project. Messages in
 general channels can route by mentioned channel, explicit text such as `tts:`
 or `#bemine`, or fall back to the mayor project when no project is clear.
 
-Dispatched messages use the selected project root as `--cd`. Image attachments
-are passed to Codex with `--image`; other attachments are saved and listed in
-the prompt. The gateway reacts when it receives work, shows Discord typing while
-Codex runs, and replies with the final Codex message directly. Dispatch failures
-are prefixed with the project channel for triage.
+Dispatched messages include the selected project root, harness context, operator
+runbooks, credential rules, and saved attachment paths. By default they go to
+Kimi through the Hermes-backed Kimi API handler and usage is recorded in SQLite.
+For projects configured with `runtime: codex`, Bemine runs `codex exec --cd
+<project>`; image attachments are passed to Codex with `--image`. The gateway
+reacts when it receives work, shows Discord typing while the runtime runs, and
+replies with the final runtime message directly. Dispatch failures are prefixed
+with the runtime and project channel for triage.
 
 Codex dispatch defaults to `--sandbox danger-full-access` to avoid service-level
 bubblewrap failures such as `bwrap: loopback: Failed RTM_NEWADDR: Operation not

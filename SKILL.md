@@ -54,7 +54,7 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - CLI: `src/bemine/cli.py`
 - Status and history: `src/bemine/status.py`, `src/bemine/discovery.py`
 - Discord gateway: `src/mayor_discord/gateway.py`
-- Codex dispatch: `src/mayor_discord/dispatch.py`
+- Runtime dispatch: `src/mayor_discord/dispatch.py` defaults Discord project work to Kimi and keeps Codex selectable per project.
 - Kimi handler: `src/bemine/kimi_handler.py`
 - Credential inventory and gates: `src/bemine/credentials.py`,
   `src/bemine/proxy.py`, `src/bemine/totp.py`

@@ -10,13 +10,19 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import aiohttp
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.harness_context import load_harness_context
+from bemine.kimi_handler import (
+    KimiAPIError,
+    KimiConfigError,
+    KimiHandler,
+    usage_payload,
+)
 from bemine.operator_context import load_operator_context
 from bemine.project_filters import ignored_project_reason
 from bemine.status import _redact
@@ -34,7 +40,7 @@ class ProjectChannel:
     cwd: Path
     project_id: str = ""
     project_name: str = ""
-    runtime: str = "codex"
+    runtime: str = "kimi"
 
 
 @dataclass(frozen=True)
@@ -56,6 +62,12 @@ class DispatchResult:
     elapsed_seconds: float
     returncode: int | None = None
     timed_out: bool = False
+
+
+class DispatchBackend(Protocol):
+    def dispatch(
+        self, project: ProjectChannel, request: DispatchRequest
+    ) -> DispatchResult: ...
 
 
 @dataclass(frozen=True)
@@ -81,7 +93,9 @@ def load_project_channels(
             raise ValueError(f"{config_path} must contain a JSON object")
         for name, value in raw.items():
             channel = _project_channel_from_config(str(name), value)
-            if channel.cwd.exists() and not ignored_project_reason(channel.cwd, name=channel.project_name):
+            if channel.cwd.exists() and not ignored_project_reason(
+                channel.cwd, name=channel.project_name
+            ):
                 mapping[_channel_key(name)] = channel
     return mapping
 
@@ -136,7 +150,9 @@ def write_project_channel_config(
             runtime=channel.runtime,
         )
         payload[alias.channel_name] = _project_channel_payload(alias)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return path
 
 
@@ -149,7 +165,9 @@ def resolve_project_channel(
 ) -> ProjectChannel | None:
     if not _is_project_category_name(category_name):
         return None
-    return load_project_channels(state_dir, repo_dir=repo_dir).get(_channel_key(channel_name))
+    return load_project_channels(state_dir, repo_dir=repo_dir).get(
+        _channel_key(channel_name)
+    )
 
 
 def infer_project_route(
@@ -179,12 +197,16 @@ def infer_project_route(
             repo_dir=repo_dir,
         )
         if mentioned_project:
-            return ProjectRoute(project=mentioned_project, reason=f"mentioned-channel:{mentioned_name}")
+            return ProjectRoute(
+                project=mentioned_project, reason=f"mentioned-channel:{mentioned_name}"
+            )
 
     channels = load_project_channels(state_dir, repo_dir=repo_dir)
     channel_match = channels.get(_channel_key(channel_name))
     if channel_match:
-        return ProjectRoute(project=channel_match, reason=f"channel-name:{channel_name}")
+        return ProjectRoute(
+            project=channel_match, reason=f"channel-name:{channel_name}"
+        )
 
     content_match = _project_from_content(content, channels)
     if content_match:
@@ -212,7 +234,9 @@ def ensure_default_project_config(
         channel.channel_name: {"cwd": str(channel.cwd), "runtime": channel.runtime}
         for channel in defaults.values()
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return path
 
 
@@ -243,14 +267,18 @@ async def sync_project_channels_to_discord(
     }
     async with aiohttp.ClientSession(headers=headers) as session:
         categories, existing = await _ensure_project_categories(session, guild_id)
-        project_category_ids = {str(category.get("id") or "") for category in categories}
+        project_category_ids = {
+            str(category.get("id") or "") for category in categories
+        }
         existing_project_channels = [
             channel
             for channel in existing
             if channel.get("type") == 0
             and str(channel.get("parent_id") or "") in project_category_ids
         ]
-        existing_by_name = {str(channel.get("name")): channel for channel in existing_project_channels}
+        existing_by_name = {
+            str(channel.get("name")): channel for channel in existing_project_channels
+        }
         deleted: list[dict[str, str]] = []
         if prune:
             for name, channel in list(existing_by_name.items()):
@@ -272,7 +300,9 @@ async def sync_project_channels_to_discord(
                 categories,
                 category_counts,
             )
-            channel = await _create_text_channel(session, guild_id, name, parent_id=str(category["id"]))
+            channel = await _create_text_channel(
+                session, guild_id, name, parent_id=str(category["id"])
+            )
             category_id = str(category.get("id") or "")
             category_counts[category_id] = category_counts.get(category_id, 0) + 1
             created.append(
@@ -299,7 +329,9 @@ async def sync_project_channels_to_discord(
         payload_json=json.dumps(
             {
                 "guild_id": guild_id,
-                "category_ids": [str(category.get("id") or "") for category in categories],
+                "category_ids": [
+                    str(category.get("id") or "") for category in categories
+                ],
                 "created": created,
                 "deleted": deleted,
                 "deleted_categories": deleted_categories,
@@ -313,7 +345,10 @@ async def sync_project_channels_to_discord(
     return {
         "guild_id": guild_id,
         "category_ids": [str(category.get("id") or "") for category in categories],
-        "category_names": [str(category.get("name") or PROJECT_CATEGORY_NAME) for category in categories],
+        "category_names": [
+            str(category.get("name") or PROJECT_CATEGORY_NAME)
+            for category in categories
+        ],
         "created": created,
         "deleted": deleted,
         "deleted_categories": deleted_categories,
@@ -321,6 +356,189 @@ async def sync_project_channels_to_discord(
         "config_path": str(config_path),
         "project_count": len(channels),
     }
+
+
+class ProjectDispatcher:
+    def __init__(
+        self,
+        settings: BemineSettings,
+        *,
+        codex_dispatcher: DispatchBackend | None = None,
+        kimi_dispatcher: DispatchBackend | None = None,
+    ) -> None:
+        self.settings = settings
+        self.codex_dispatcher = codex_dispatcher
+        self.kimi_dispatcher = kimi_dispatcher
+
+    def dispatch(
+        self, project: ProjectChannel, request: DispatchRequest
+    ) -> DispatchResult:
+        runtime = resolve_dispatch_runtime(project.runtime)
+        if runtime == "kimi":
+            dispatcher = self.kimi_dispatcher or KimiDispatcher(self.settings)
+            return dispatcher.dispatch(project, request)
+        if runtime == "codex":
+            dispatcher = self.codex_dispatcher or CodexDispatcher(self.settings)
+            return dispatcher.dispatch(project, request)
+        return DispatchResult(
+            ok=False,
+            project=project,
+            output=(
+                f"Unsupported dispatch runtime `{runtime}` for `#{project.channel_name}`. "
+                "Use `kimi` or `codex`."
+            ),
+            elapsed_seconds=0.0,
+            returncode=None,
+        )
+
+
+class KimiDispatcher:
+    def __init__(
+        self,
+        settings: BemineSettings,
+        *,
+        handler: KimiHandler | None = None,
+        timeout_seconds: int = 900,
+        max_tokens: int | None = None,
+    ) -> None:
+        self.settings = settings
+        self.handler = handler or KimiHandler(settings.hermes_home)
+        self.timeout_seconds = timeout_seconds
+        self.max_tokens = max_tokens or resolve_kimi_dispatch_max_tokens()
+        self.db = BemineDB(settings.db_path)
+
+    def dispatch(
+        self, project: ProjectChannel, request: DispatchRequest
+    ) -> DispatchResult:
+        started = time.monotonic()
+        self._audit(
+            "kimi_dispatch_started",
+            project,
+            request,
+            {"timeout_seconds": self.timeout_seconds, "max_tokens": self.max_tokens},
+        )
+        prompt = build_kimi_prompt(project, request)
+        try:
+            response = self.handler.ask(
+                prompt,
+                system=_kimi_system_prompt(),
+                max_tokens=self.max_tokens,
+                timeout=float(self.timeout_seconds),
+            )
+        except (KimiConfigError, KimiAPIError, ValueError) as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=f"Kimi dispatch failed: {_redact(str(exc))}",
+                elapsed_seconds=elapsed,
+                returncode=None,
+            )
+            self._audit_result(
+                "kimi_dispatch_finished",
+                project,
+                request,
+                result,
+                extra={"error_type": type(exc).__name__, "error": _redact(str(exc))},
+            )
+            return result
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=f"Kimi dispatch failed before completion: {_redact(str(exc))}",
+                elapsed_seconds=elapsed,
+                returncode=None,
+            )
+            self._audit_result(
+                "kimi_dispatch_finished",
+                project,
+                request,
+                result,
+                extra={"error_type": type(exc).__name__, "error": _redact(str(exc))},
+            )
+            return result
+
+        self.db.record_usage_sample(
+            provider="kimi",
+            account=response.provider,
+            runtime="kimi",
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            total_tokens=response.total_tokens,
+            raw_json=json.dumps(usage_payload(response), sort_keys=True),
+        )
+        output = _redact(
+            response.text.strip() or "Kimi finished without a final message."
+        )
+        elapsed = time.monotonic() - started
+        result = DispatchResult(
+            ok=True,
+            project=project,
+            output=output,
+            elapsed_seconds=elapsed,
+            returncode=0,
+        )
+        self._audit_result(
+            "kimi_dispatch_finished",
+            project,
+            request,
+            result,
+            extra={
+                "model": response.model,
+                "provider": response.provider,
+                "finish_reason": response.finish_reason,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "total_tokens": response.total_tokens,
+            },
+        )
+        return result
+
+    def _audit(
+        self,
+        event_type: str,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "channel_id": request.channel_id,
+            "channel_name": request.channel_name,
+            "message_id": request.message_id,
+            "project_channel": project.channel_name,
+            "project_cwd": str(project.cwd),
+            "runtime": "kimi",
+            "configured_runtime": project.runtime,
+        }
+        if extra:
+            payload.update(extra)
+        self.db.record_audit_event(
+            category="discord",
+            event_type=event_type,
+            actor=f"discord:{request.author_name}",
+            device_id=self.settings.device_id,
+            payload_json=json.dumps(payload, sort_keys=True),
+        )
+
+    def _audit_result(
+        self,
+        event_type: str,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        result: DispatchResult,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "ok": result.ok,
+            "returncode": result.returncode,
+            "timed_out": result.timed_out,
+            "elapsed_seconds": round(result.elapsed_seconds, 3),
+        }
+        if extra:
+            payload.update(extra)
+        self._audit(event_type, project, request, payload)
 
 
 class CodexDispatcher:
@@ -339,11 +557,20 @@ class CodexDispatcher:
         self.codex_sandbox = resolve_codex_sandbox()
         self.db = BemineDB(settings.db_path)
 
-    def dispatch(self, project: ProjectChannel, request: DispatchRequest) -> DispatchResult:
+    def dispatch(
+        self, project: ProjectChannel, request: DispatchRequest
+    ) -> DispatchResult:
         started = time.monotonic()
-        self._audit("codex_dispatch_started", project, request, {"timeout_seconds": self.timeout_seconds})
+        self._audit(
+            "codex_dispatch_started",
+            project,
+            request,
+            {"timeout_seconds": self.timeout_seconds},
+        )
         prompt = build_codex_prompt(project, request)
-        with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=True) as output_file:
+        with tempfile.NamedTemporaryFile(
+            "w+", encoding="utf-8", delete=True
+        ) as output_file:
             command = [
                 self.codex_bin,
                 "exec",
@@ -416,7 +643,10 @@ class CodexDispatcher:
                     project,
                     request,
                     result,
-                    extra={"error_type": type(exc).__name__, "error": _redact(str(exc))},
+                    extra={
+                        "error_type": type(exc).__name__,
+                        "error": _redact(str(exc)),
+                    },
                 )
                 return result
 
@@ -511,15 +741,64 @@ def resolve_codex_sandbox() -> str:
     return configured
 
 
+def resolve_dispatch_runtime(runtime: str | None = None) -> str:
+    configured = (runtime or "").strip().lower()
+    if not configured:
+        configured = os.environ.get("BEMINE_DISPATCH_RUNTIME", "").strip().lower()
+    return configured or "kimi"
+
+
+def resolve_kimi_dispatch_max_tokens() -> int:
+    raw = os.environ.get("BEMINE_KIMI_DISPATCH_MAX_TOKENS", "").strip()
+    if not raw:
+        return 1600
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("BEMINE_KIMI_DISPATCH_MAX_TOKENS must be an integer") from exc
+    if value <= 0:
+        raise ValueError("BEMINE_KIMI_DISPATCH_MAX_TOKENS must be positive")
+    return value
+
+
 def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str:
-    attachment_lines = [
-        f"- {path}" for path in request.attachments
-    ] or ["- none"]
+    return _build_dispatch_prompt(
+        project,
+        request,
+        runtime_name="Codex",
+        runtime_notes=[
+            "- You may inspect and edit files using Codex tools as needed.",
+        ],
+    )
+
+
+def build_kimi_prompt(project: ProjectChannel, request: DispatchRequest) -> str:
+    return _build_dispatch_prompt(
+        project,
+        request,
+        runtime_name="Kimi",
+        runtime_notes=[
+            "- This Discord Kimi path is API dispatch, so do not claim you executed shell commands.",
+            "- If the task needs file edits, tmux interaction, or another local tool, state the exact action Bemine should run next.",
+        ],
+    )
+
+
+def _build_dispatch_prompt(
+    project: ProjectChannel,
+    request: DispatchRequest,
+    *,
+    runtime_name: str,
+    runtime_notes: list[str],
+) -> str:
+    attachment_lines = [f"- {path}" for path in request.attachments] or ["- none"]
     harness_context = load_harness_context().text or "No harness context files found."
-    operator_context = load_operator_context().text or "No operator context files found."
+    operator_context = (
+        load_operator_context().text or "No operator context files found."
+    )
     return "\n".join(
         [
-            "You are Bemine's Codex worker for a Discord-routed task.",
+            f"You are Bemine's {runtime_name} worker for a Discord-routed task.",
             f"Route reason: {request.route_reason or 'unspecified'}",
             f"Source channel: #{request.channel_name}",
             f"Project channel: #{project.channel_name}",
@@ -545,8 +824,11 @@ def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str
             "- Use `bemine capabilities` before assuming credential access.",
             "- Hugging Face identity/token access is baseline shared when present; never print the token.",
             "- AWS, Google, Porkbun, and other cost-incurring or infrastructure credentials require explicit permission.",
-            "- If a task needs gated access, ask through `bemine permissions ask <credential_id> --reason \"<why>\"`.",
+            '- If a task needs gated access, ask through `bemine permissions ask <credential_id> --reason "<why>"`.',
             "- Deployment runbooks live in operator context, especially `~/deploy.md`.",
+            "",
+            "Runtime-specific rules:",
+            *runtime_notes,
             "",
             "Operational rules:",
             "- Work inside the project root unless the user clearly asks for coordination only.",
@@ -558,7 +840,17 @@ def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str
     )
 
 
-def _default_project_channels(*, repo_dir: Path, home: Path) -> dict[str, ProjectChannel]:
+def _kimi_system_prompt() -> str:
+    return (
+        "You are Bemine's Kimi dispatch worker. Be concise, preserve project context, "
+        "and never expose secrets. If execution or credential access is required, ask "
+        "for the precise Bemine action instead of pretending it already happened."
+    )
+
+
+def _default_project_channels(
+    *, repo_dir: Path, home: Path
+) -> dict[str, ProjectChannel]:
     candidates = {
         "tts": home / "github" / "streaming-tts",
         "streaming-tts": home / "github" / "streaming-tts",
@@ -579,11 +871,15 @@ def _default_project_channels(*, repo_dir: Path, home: Path) -> dict[str, Projec
 
 def _project_channel_from_config(name: str, value: Any) -> ProjectChannel:
     if isinstance(value, str):
-        return ProjectChannel(channel_name=name, cwd=Path(value).expanduser().resolve())
+        return ProjectChannel(
+            channel_name=name,
+            cwd=Path(value).expanduser().resolve(),
+            runtime=resolve_dispatch_runtime(),
+        )
     if not isinstance(value, dict):
         raise ValueError(f"project channel {name!r} must be a string or object")
     cwd = Path(str(value["cwd"])).expanduser().resolve()
-    runtime = str(value.get("runtime") or "codex")
+    runtime = resolve_dispatch_runtime(str(value.get("runtime") or ""))
     return ProjectChannel(
         channel_name=str(value.get("channel_name") or name),
         cwd=cwd,
@@ -620,7 +916,9 @@ def _project_from_content(
     text = _content_key(content)
     if not text:
         return None
-    ordered = sorted(channels.values(), key=lambda channel: len(channel.channel_name), reverse=True)
+    ordered = sorted(
+        channels.values(), key=lambda channel: len(channel.channel_name), reverse=True
+    )
     for channel in ordered:
         for variant in _project_variants(channel):
             if _content_mentions_project(text, variant):
@@ -663,7 +961,9 @@ def _content_mentions_project(text: str, project_key: str) -> bool:
 def _project_channels_from_rows(rows: list[Mapping[str, Any]]) -> list[ProjectChannel]:
     name_counts: dict[str, int] = {}
     for row in rows:
-        name_counts[_slug(str(row["name"]))] = name_counts.get(_slug(str(row["name"])), 0) + 1
+        name_counts[_slug(str(row["name"]))] = (
+            name_counts.get(_slug(str(row["name"])), 0) + 1
+        )
 
     used: set[str] = set()
     channels: list[ProjectChannel] = []
@@ -687,6 +987,7 @@ def _project_channels_from_rows(rows: list[Mapping[str, Any]]) -> list[ProjectCh
                 cwd=cwd,
                 project_id=project_id,
                 project_name=project_name,
+                runtime=resolve_dispatch_runtime(),
             )
         )
     return channels
@@ -724,7 +1025,11 @@ def _deduped_channel_name(base: str, project_id: str, used: set[str]) -> str:
 
 
 def _path_context(cwd: Path) -> str:
-    parts = [part for part in cwd.parts if part not in {"", "/", "home", "cdjk", "crew", "apps", ".worktrees"}]
+    parts = [
+        part
+        for part in cwd.parts
+        if part not in {"", "/", "home", "cdjk", "crew", "apps", ".worktrees"}
+    ]
     if len(parts) <= 1:
         return ""
     stem = _slug(parts[-1])
@@ -774,14 +1079,17 @@ async def _ensure_project_categories(
     session: aiohttp.ClientSession,
     guild_id: str,
 ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
-    channels = await _discord_json(session, "GET", f"https://discord.com/api/v10/guilds/{guild_id}/channels")
+    channels = await _discord_json(
+        session, "GET", f"https://discord.com/api/v10/guilds/{guild_id}/channels"
+    )
     if not isinstance(channels, list):
         raise RuntimeError("Discord channel list response was not a list")
     categories = _sort_project_categories(
         [
             channel
             for channel in channels
-            if channel.get("type") == 4 and _is_project_category_name(str(channel.get("name") or ""))
+            if channel.get("type") == 4
+            and _is_project_category_name(str(channel.get("name") or ""))
         ]
     )
     if categories:
@@ -821,7 +1129,9 @@ async def _create_project_category(
     )
 
 
-def _sort_project_categories(categories: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+def _sort_project_categories(
+    categories: list[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
     return sorted(categories, key=_project_category_sort_key)
 
 
@@ -909,12 +1219,16 @@ async def _discord_json(
     *,
     json_payload: Mapping[str, Any] | None = None,
 ) -> Any:
-    async with session.request(method, url, json=dict(json_payload) if json_payload else None) as response:
+    async with session.request(
+        method, url, json=dict(json_payload) if json_payload else None
+    ) as response:
         text = await response.text()
         try:
             data = json.loads(text) if text else {}
         except json.JSONDecodeError:
             data = {"raw": text}
         if response.status >= 400:
-            raise RuntimeError(f"Discord API {method} {url} failed {response.status}: {data}")
+            raise RuntimeError(
+                f"Discord API {method} {url} failed {response.status}: {data}"
+            )
         return data

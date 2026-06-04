@@ -6,10 +6,14 @@ from pathlib import Path
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
+from bemine.kimi_handler import KimiMessageResult
 from mayor_discord.dispatch import (
     PROJECT_CATEGORY_NAME,
     CodexDispatcher,
     DispatchRequest,
+    DispatchResult,
+    KimiDispatcher,
+    ProjectDispatcher,
     ProjectChannel,
     infer_project_route,
     load_project_channels,
@@ -21,7 +25,9 @@ from mayor_discord.dispatch import (
 )
 
 
-def test_project_channel_config_resolves_only_inside_project_category(tmp_path: Path) -> None:
+def test_project_channel_config_resolves_only_inside_project_category(
+    tmp_path: Path,
+) -> None:
     state_dir = tmp_path / "state"
     project_root = tmp_path / "streaming-tts"
     project_root.mkdir()
@@ -37,6 +43,7 @@ def test_project_channel_config_resolves_only_inside_project_category(tmp_path: 
     assert path == state_dir / "discord-projects.json"
     loaded = load_project_channels(state_dir, repo_dir=tmp_path)
     assert loaded["tts"] == channel
+    assert loaded["tts"].runtime == "kimi"
     assert (
         resolve_project_channel(
             channel_name="tts",
@@ -66,7 +73,9 @@ def test_project_channel_config_resolves_only_inside_project_category(tmp_path: 
     )
 
 
-def test_general_channel_routes_by_content_mentions_and_mayor_fallback(tmp_path: Path) -> None:
+def test_general_channel_routes_by_content_mentions_and_mayor_fallback(
+    tmp_path: Path,
+) -> None:
     state_dir = tmp_path / "state"
     bemine_root = tmp_path / "bm"
     tts_root = tmp_path / "streaming-tts"
@@ -139,7 +148,10 @@ def test_project_channels_from_db_make_per_project_names_unique(tmp_path: Path) 
             INSERT INTO projects(project_id, name, cwd, first_seen_at, last_seen_at)
             VALUES (?, ?, ?, 1.0, ?)
             """,
-            [(project_id, name, str(cwd), last_seen) for project_id, name, cwd, last_seen in rows],
+            [
+                (project_id, name, str(cwd), last_seen)
+                for project_id, name, cwd, last_seen in rows
+            ],
         )
 
     channels = project_channels_from_db(db)
@@ -150,9 +162,167 @@ def test_project_channels_from_db_make_per_project_names_unique(tmp_path: Path) 
     assert "web-clients-beta" in names
     assert "neptts-bench" in names
     assert "aux" in names
+    assert {channel.runtime for channel in channels} == {"kimi"}
 
 
-def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Path) -> None:
+class _FakeKimiHandler:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def ask(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        max_tokens: int = 512,
+        timeout: float = 60.0,
+    ) -> KimiMessageResult:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "max_tokens": max_tokens,
+                "timeout": timeout,
+            }
+        )
+        return KimiMessageResult(
+            text="kimi finished without sk-kimi-abcdefghijklmnopqrstuvwxyz",
+            model="kimi-k2.6",
+            provider="kimi-coding",
+            api_mode="anthropic_messages",
+            finish_reason="end_turn",
+            input_tokens=11,
+            output_tokens=13,
+            total_tokens=24,
+        )
+
+
+def test_kimi_dispatch_records_usage_and_audit(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    project_root = tmp_path / "repo"
+    note_path = tmp_path / "inbox" / "notes.txt"
+    project_root.mkdir()
+    note_path.parent.mkdir()
+    note_path.write_text("note", encoding="utf-8")
+    settings = BemineSettings.load(
+        state_dir=state_dir,
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    handler = _FakeKimiHandler()
+    dispatcher = KimiDispatcher(
+        settings, handler=handler, timeout_seconds=30, max_tokens=256
+    )
+
+    result = dispatcher.dispatch(
+        ProjectChannel(
+            channel_name="bemine",
+            cwd=project_root,
+            project_id="proj_bm",
+            project_name="bm",
+            runtime="kimi",
+        ),
+        DispatchRequest(
+            channel_id="channel-1",
+            channel_name="bemine",
+            message_id="message-1",
+            author_name="voidash",
+            content="please inspect this",
+            attachments=[note_path],
+        ),
+    )
+
+    assert result.ok is True
+    assert "sk-kimi-abcdefghijklmnopqrstuvwxyz" not in result.output
+    assert "<token>" in result.output
+    assert handler.calls[0]["max_tokens"] == 256
+    assert handler.calls[0]["timeout"] == 30.0
+    assert "You are Bemine's Kimi worker" in str(handler.calls[0]["prompt"])
+    assert str(note_path) in str(handler.calls[0]["prompt"])
+    assert "API dispatch" in str(handler.calls[0]["prompt"])
+    assert "Bemine harness context:" in str(handler.calls[0]["prompt"])
+    assert "Credential and infrastructure rules:" in str(handler.calls[0]["prompt"])
+
+    db = BemineDB(settings.db_path)
+    with db.connect() as conn:
+        events = [
+            dict(row) for row in conn.execute("SELECT * FROM audit_events ORDER BY id")
+        ]
+        usage = dict(conn.execute("SELECT * FROM usage_samples").fetchone())
+    assert [row["event_type"] for row in events] == [
+        "kimi_dispatch_started",
+        "kimi_dispatch_finished",
+    ]
+    payload = json.loads(events[-1]["payload_json"])
+    assert payload["ok"] is True
+    assert payload["runtime"] == "kimi"
+    assert payload["model"] == "kimi-k2.6"
+    assert usage["provider"] == "kimi"
+    assert usage["runtime"] == "kimi"
+    assert usage["input_tokens"] == 11
+    assert usage["output_tokens"] == 13
+    assert usage["total_tokens"] == 24
+
+
+class _FakeDispatcher:
+    def __init__(self, output: str) -> None:
+        self.output = output
+        self.calls: list[tuple[ProjectChannel, DispatchRequest]] = []
+
+    def dispatch(
+        self, project: ProjectChannel, request: DispatchRequest
+    ) -> DispatchResult:
+        self.calls.append((project, request))
+        return DispatchResult(
+            ok=True, project=project, output=self.output, elapsed_seconds=0.01
+        )
+
+
+def test_project_dispatcher_routes_by_project_runtime(tmp_path: Path) -> None:
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    codex = _FakeDispatcher("codex-ok")
+    kimi = _FakeDispatcher("kimi-ok")
+    dispatcher = ProjectDispatcher(
+        settings, codex_dispatcher=codex, kimi_dispatcher=kimi
+    )
+    request = DispatchRequest(
+        channel_id="channel-1",
+        channel_name="bemine",
+        message_id="message-1",
+        author_name="voidash",
+        content="hello",
+        attachments=[],
+    )
+
+    kimi_result = dispatcher.dispatch(
+        ProjectChannel(channel_name="bemine", cwd=tmp_path), request
+    )
+    codex_result = dispatcher.dispatch(
+        ProjectChannel(channel_name="bemine", cwd=tmp_path, runtime="codex"),
+        request,
+    )
+
+    assert kimi_result.output == "kimi-ok"
+    assert codex_result.output == "codex-ok"
+    assert len(kimi.calls) == 1
+    assert len(codex.calls) == 1
+
+
+def test_codex_dispatch_runs_in_project_root_with_images_and_audit(
+    tmp_path: Path,
+) -> None:
     state_dir = tmp_path / "state"
     project_root = tmp_path / "repo"
     image_path = tmp_path / "inbox" / "diagram.png"
@@ -190,7 +360,9 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Pat
         seen["timeout"] = timeout
         seen["check"] = check
         output_path = Path(command[command.index("--output-last-message") + 1])
-        output_path.write_text("finished without ghp_abcdefghijklmnopqrstuvwxyz", encoding="utf-8")
+        output_path.write_text(
+            "finished without ghp_abcdefghijklmnopqrstuvwxyz", encoding="utf-8"
+        )
         return subprocess.CompletedProcess(command, 0, "stdout fallback", "")
 
     dispatcher = CodexDispatcher(
@@ -237,7 +409,9 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Pat
 
     db = BemineDB(settings.db_path)
     with db.connect() as conn:
-        rows = [dict(row) for row in conn.execute("SELECT * FROM audit_events ORDER BY id")]
+        rows = [
+            dict(row) for row in conn.execute("SELECT * FROM audit_events ORDER BY id")
+        ]
     assert [row["event_type"] for row in rows] == [
         "codex_dispatch_started",
         "codex_dispatch_finished",
@@ -264,7 +438,9 @@ def test_codex_dispatch_timeout_is_audited(tmp_path: Path) -> None:
     def timeout_runner(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd=args[0], timeout=1)
 
-    result = CodexDispatcher(settings, runner=timeout_runner, timeout_seconds=1).dispatch(
+    result = CodexDispatcher(
+        settings, runner=timeout_runner, timeout_seconds=1
+    ).dispatch(
         ProjectChannel(channel_name="bemine", cwd=project_root),
         DispatchRequest(
             channel_id="channel-1",
@@ -288,7 +464,9 @@ def test_codex_dispatch_timeout_is_audited(tmp_path: Path) -> None:
     assert payload["timed_out"] is True
 
 
-def test_codex_dispatch_missing_binary_returns_discord_visible_failure(tmp_path: Path) -> None:
+def test_codex_dispatch_missing_binary_returns_discord_visible_failure(
+    tmp_path: Path,
+) -> None:
     settings = BemineSettings.load(
         state_dir=tmp_path / "state",
         vault_dir=tmp_path / "vault",
