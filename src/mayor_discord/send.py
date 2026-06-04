@@ -15,6 +15,7 @@ from .store import Store
 
 LOG = logging.getLogger("mayor.discord.send")
 DISCORD_API = "https://discord.com/api/v10"
+MAX_DISCORD_CONTENT = 3900
 
 
 async def send_message(
@@ -28,27 +29,27 @@ async def send_message(
     settings.require_token()
     url = f"{DISCORD_API}/channels/{channel_id}/messages"
     headers = {"Authorization": f"Bot {settings.token}"}
-    payload: dict = {
-        "content": text,
-        "allowed_mentions": {"parse": []},
-    }
-    if reply_to:
-        payload["message_reference"] = {
-            "message_id": reply_to,
-            "channel_id": channel_id,
-            "fail_if_not_exists": False,
-        }
+    parts = _split_discord_content(text)
 
     timeout = aiohttp.ClientTimeout(total=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         if not files:
-            async with session.post(url, headers=headers, json=payload) as resp:
-                body = await resp.text()
-                if resp.status >= 400:
-                    raise RuntimeError(f"Discord send failed {resp.status}: {body}")
-                return json.loads(body)
+            result = {}
+            for index, part in enumerate(parts):
+                payload = _message_payload(
+                    part,
+                    channel_id=channel_id,
+                    reply_to=reply_to if index == 0 else None,
+                )
+                result = await _post_json(session, url, headers, payload)
+            return result
 
         form = aiohttp.FormData()
+        payload = _message_payload(
+            parts[0],
+            channel_id=channel_id,
+            reply_to=reply_to,
+        )
         form.add_field("payload_json", json.dumps(payload))
         handles = []
         try:
@@ -66,10 +67,69 @@ async def send_message(
                 body = await resp.text()
                 if resp.status >= 400:
                     raise RuntimeError(f"Discord send failed {resp.status}: {body}")
-                return json.loads(body)
+                result = json.loads(body)
+            for part in parts[1:]:
+                result = await _post_json(
+                    session,
+                    url,
+                    headers,
+                    _message_payload(part, channel_id=channel_id, reply_to=None),
+                )
+            return result
         finally:
             for handle in handles:
                 handle.close()
+
+
+async def _post_json(
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: dict[str, str],
+    payload: dict,
+) -> dict:
+    async with session.post(url, headers=headers, json=payload) as resp:
+        body = await resp.text()
+        if resp.status >= 400:
+            raise RuntimeError(f"Discord send failed {resp.status}: {body}")
+        return json.loads(body)
+
+
+def _message_payload(text: str, *, channel_id: str, reply_to: str | None) -> dict:
+    payload: dict = {
+        "content": text,
+        "allowed_mentions": {"parse": []},
+    }
+    if reply_to:
+        payload["message_reference"] = {
+            "message_id": reply_to,
+            "channel_id": channel_id,
+            "fail_if_not_exists": False,
+        }
+    return payload
+
+
+def _split_discord_content(text: str, *, limit: int = MAX_DISCORD_CONTENT) -> list[str]:
+    if limit <= 0:
+        raise ValueError("limit must be positive")
+    if not text:
+        return [""]
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines(keepends=True):
+        while len(line) > limit:
+            if current:
+                chunks.append(current.rstrip())
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if len(current) + len(line) > limit:
+            chunks.append(current.rstrip())
+            current = line
+        else:
+            current += line
+    if current or not chunks:
+        chunks.append(current.rstrip())
+    return chunks
 
 
 def _parse_args() -> argparse.Namespace:
