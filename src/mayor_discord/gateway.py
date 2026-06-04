@@ -4,8 +4,10 @@ import asyncio
 import argparse
 import logging
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import AsyncIterator
 
 import discord
 from discord.ext import commands
@@ -24,6 +26,7 @@ from .store import Store
 LOG = logging.getLogger("mayor.discord.gateway")
 SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 VOICE_SUFFIXES = {".ogg", ".opus", ".mp3", ".m4a", ".wav", ".webm"}
+ACK_REACTION = "👀"
 APPROVAL_CODE_RE = re.compile(
     r"\b((?:!?(?:mayor|bemine)\s+)?approve\s+\S+\s+)(\d{6,8})\b",
     re.IGNORECASE,
@@ -47,6 +50,69 @@ def _is_voice_attachment(attachment: discord.Attachment) -> bool:
 def _is_image_attachment(attachment: discord.Attachment) -> bool:
     content_type = (attachment.content_type or "").lower()
     return content_type.startswith("image/")
+
+
+def _build_rundown() -> str:
+    kernel = BemineKernel(BemineSettings.load())
+    kernel.scan_local()
+    return kernel.project_rundown(limit=12)
+
+
+def _credential_lines() -> list[str]:
+    kernel = BemineKernel(BemineSettings.load())
+    CredentialInventory(kernel.db, device_id=kernel.settings.device_id).scan()
+    rows = kernel.db.list_credential_profiles()
+    return [
+        f"{row['credential_id']} [{row['kind']}] {row['approval_policy']}"
+        + (" totp" if row["totp_required"] else "")
+        for row in rows
+    ]
+
+
+def _capability_text() -> str:
+    kernel = BemineKernel(BemineSettings.load())
+    CredentialInventory(kernel.db, device_id=kernel.settings.device_id).scan()
+    rows = [dict(row) for row in kernel.db.list_credential_profiles()]
+    manifest = build_capability_manifest(rows, device_id=kernel.settings.device_id)
+    return render_capability_manifest(manifest)
+
+
+def _pending_permissions_text() -> str:
+    kernel = BemineKernel(BemineSettings.load())
+    rows = kernel.db.list_permission_requests(status="pending")
+    if not rows:
+        return "No pending permission requests."
+    return "Pending permission requests:\n" + "\n".join(
+        f"{row['request_id']} {row['credential_id']} - {row['reason']}"
+        for row in rows
+    )
+
+
+async def _acknowledge_message(message: discord.Message, *, emoji: str = ACK_REACTION) -> bool:
+    try:
+        await message.add_reaction(emoji)
+    except (discord.DiscordException, AttributeError, TypeError) as exc:
+        LOG.debug("could not add Discord acknowledgement reaction: %s", exc)
+        return False
+    return True
+
+
+@asynccontextmanager
+async def _best_effort_typing(channel: discord.abc.Messageable) -> AsyncIterator[None]:
+    try:
+        typing = channel.typing()
+        await typing.__aenter__()
+    except (discord.DiscordException, AttributeError, TypeError) as exc:
+        LOG.debug("could not start Discord typing indicator: %s", exc)
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            await typing.__aexit__(None, None, None)
+        except (discord.DiscordException, AttributeError, TypeError) as exc:
+            LOG.debug("could not stop Discord typing indicator: %s", exc)
 
 
 class MayorDiscordGateway:
@@ -89,146 +155,128 @@ class MayorDiscordGateway:
                 LOG.warning("ignored unauthorized Discord user %s", message.author.id)
                 return
 
-            saved_attachments = await self._record_message(message)
-            normalized = message.content.strip()
-            normalized_lower = normalized.lower()
+            await _acknowledge_message(message)
+            async with _best_effort_typing(message.channel):
+                await self._handle_allowed_message(message)
 
-            if normalized_lower in {"!mayor ping", "mayor ping"}:
-                await message.reply("Mayor gateway online.", mention_author=False)
-                return
-            if normalized_lower in {
-                "status",
-                "!mayor status",
-                "mayor status",
-                "!bemine status",
-                "bemine status",
-            }:
-                async with message.channel.typing():
-                    settings = BemineSettings.load()
-                    statuses, errors = await asyncio.to_thread(
-                        collect_fleet_status,
-                        settings,
-                    )
-                    text = render_status(statuses, errors, limit=8)
-                await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
-                return
-            if normalized_lower in {
-                "!mayor rundown",
-                "mayor rundown",
-                "!bemine rundown",
-                "bemine rundown",
-            }:
-                async with message.channel.typing():
-                    kernel = BemineKernel(BemineSettings.load())
-                    kernel.scan_local()
-                    rundown = kernel.project_rundown(limit=12)
-                await message.reply(
-                    _discord_chunk(rundown, limit=1900)[0],
-                    mention_author=False,
-                )
-                return
-            if normalized_lower in {
-                "!mayor credentials",
-                "mayor credentials",
-                "!bemine credentials",
-                "bemine credentials",
-            }:
-                kernel = BemineKernel(BemineSettings.load())
-                CredentialInventory(kernel.db, device_id=kernel.settings.device_id).scan()
-                rows = kernel.db.list_credential_profiles()
-                lines = [
-                    f"{row['credential_id']} [{row['kind']}] {row['approval_policy']}"
-                    + (" totp" if row["totp_required"] else "")
-                    for row in rows
-                ]
-                await message.reply(
-                    _discord_chunk("Credential profiles:\n" + "\n".join(lines), limit=1900)[0],
-                    mention_author=False,
-                )
-                return
-            if normalized_lower in {
-                "!mayor capabilities",
-                "mayor capabilities",
-                "!bemine capabilities",
-                "bemine capabilities",
-            }:
-                kernel = BemineKernel(BemineSettings.load())
-                CredentialInventory(kernel.db, device_id=kernel.settings.device_id).scan()
-                rows = [dict(row) for row in kernel.db.list_credential_profiles()]
-                manifest = build_capability_manifest(rows, device_id=kernel.settings.device_id)
-                text = render_capability_manifest(manifest)
-                await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
-                return
-            if normalized_lower in {
-                "!mayor kimi",
-                "mayor kimi",
-                "!mayor kimi status",
-                "mayor kimi status",
-                "!bemine kimi",
-                "bemine kimi",
-                "!bemine kimi status",
-                "bemine kimi status",
-                "kimi status",
-            }:
-                config = await asyncio.to_thread(
-                    lambda: KimiHandler(BemineSettings.load().hermes_home).status()
-                )
-                await message.reply(
-                    _discord_chunk(render_kimi_status(config), limit=1900)[0],
-                    mention_author=False,
-                )
-                return
-            if normalized_lower in {
-                "!mayor permissions",
-                "mayor permissions",
-                "!bemine permissions",
-                "bemine permissions",
-            }:
-                kernel = BemineKernel(BemineSettings.load())
-                rows = kernel.db.list_permission_requests(status="pending")
-                if not rows:
-                    text = "No pending permission requests."
-                else:
-                    text = "Pending permission requests:\n" + "\n".join(
-                        f"{row['request_id']} {row['credential_id']} - {row['reason']}"
-                        for row in rows
-                    )
-                await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
-                return
-            approval = _parse_approval_command(normalized)
-            if approval:
-                request_id, totp_code = approval
-                kernel = BemineKernel(BemineSettings.load())
-                try:
-                    PermissionGate(kernel.db).approve(
-                        request_id,
-                        actor=f"discord:{message.author.id}",
-                        totp_code=totp_code,
-                    )
-                except Exception as exc:
-                    await message.reply(f"Approval failed: {exc}", mention_author=False)
-                    return
-                await message.reply(f"Approved `{request_id}`.", mention_author=False)
-                return
-            denial = _parse_deny_command(normalized)
-            if denial:
-                kernel = BemineKernel(BemineSettings.load())
-                try:
-                    PermissionGate(kernel.db).deny(
-                        denial,
-                        actor=f"discord:{message.author.id}",
-                    )
-                except Exception as exc:
-                    await message.reply(f"Deny failed: {exc}", mention_author=False)
-                    return
-                await message.reply(f"Denied `{denial}`.", mention_author=False)
-                return
+    async def _handle_allowed_message(self, message: discord.Message) -> None:
+        saved_attachments = await self._record_message(message)
+        normalized = message.content.strip()
+        normalized_lower = normalized.lower()
 
-            await self.bot.process_commands(message)
+        if normalized_lower in {"!mayor ping", "mayor ping"}:
+            await message.reply("Mayor gateway online.", mention_author=False)
+            return
+        if normalized_lower in {
+            "status",
+            "!mayor status",
+            "mayor status",
+            "!bemine status",
+            "bemine status",
+        }:
+            settings = BemineSettings.load()
+            statuses, errors = await asyncio.to_thread(
+                collect_fleet_status,
+                settings,
+            )
+            text = render_status(statuses, errors, limit=8)
+            await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+            return
+        if normalized_lower in {
+            "!mayor rundown",
+            "mayor rundown",
+            "!bemine rundown",
+            "bemine rundown",
+        }:
+            rundown = await asyncio.to_thread(_build_rundown)
             await message.reply(
-                self._default_reply(saved_attachments),
+                _discord_chunk(rundown, limit=1900)[0],
                 mention_author=False,
             )
+            return
+        if normalized_lower in {
+            "!mayor credentials",
+            "mayor credentials",
+            "!bemine credentials",
+            "bemine credentials",
+        }:
+            lines = await asyncio.to_thread(_credential_lines)
+            await message.reply(
+                _discord_chunk("Credential profiles:\n" + "\n".join(lines), limit=1900)[0],
+                mention_author=False,
+            )
+            return
+        if normalized_lower in {
+            "!mayor capabilities",
+            "mayor capabilities",
+            "!bemine capabilities",
+            "bemine capabilities",
+        }:
+            text = await asyncio.to_thread(_capability_text)
+            await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+            return
+        if normalized_lower in {
+            "!mayor kimi",
+            "mayor kimi",
+            "!mayor kimi status",
+            "mayor kimi status",
+            "!bemine kimi",
+            "bemine kimi",
+            "!bemine kimi status",
+            "bemine kimi status",
+            "kimi status",
+        }:
+            config = await asyncio.to_thread(
+                lambda: KimiHandler(BemineSettings.load().hermes_home).status()
+            )
+            await message.reply(
+                _discord_chunk(render_kimi_status(config), limit=1900)[0],
+                mention_author=False,
+            )
+            return
+        if normalized_lower in {
+            "!mayor permissions",
+            "mayor permissions",
+            "!bemine permissions",
+            "bemine permissions",
+        }:
+            text = await asyncio.to_thread(_pending_permissions_text)
+            await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+            return
+        approval = _parse_approval_command(normalized)
+        if approval:
+            request_id, totp_code = approval
+            kernel = BemineKernel(BemineSettings.load())
+            try:
+                PermissionGate(kernel.db).approve(
+                    request_id,
+                    actor=f"discord:{message.author.id}",
+                    totp_code=totp_code,
+                )
+            except Exception as exc:
+                await message.reply(f"Approval failed: {exc}", mention_author=False)
+                return
+            await message.reply(f"Approved `{request_id}`.", mention_author=False)
+            return
+        denial = _parse_deny_command(normalized)
+        if denial:
+            kernel = BemineKernel(BemineSettings.load())
+            try:
+                PermissionGate(kernel.db).deny(
+                    denial,
+                    actor=f"discord:{message.author.id}",
+                )
+            except Exception as exc:
+                await message.reply(f"Deny failed: {exc}", mention_author=False)
+                return
+            await message.reply(f"Denied `{denial}`.", mention_author=False)
+            return
+
+        await self.bot.process_commands(message)
+        await message.reply(
+            self._default_reply(saved_attachments),
+            mention_author=False,
+        )
 
     def _is_allowed(self, author: discord.abc.User) -> bool:
         if self.settings.allow_all_users:
