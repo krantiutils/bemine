@@ -23,6 +23,7 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "Core concepts:" in text
     assert "capabilities  safe credential/capability manifest" in text
     assert "permissions   explicit approval path" in text
+    assert "workers       safe managed live sessions over tmux" in text
 
 
 def test_prime_help_explains_startup_packet() -> None:
@@ -46,10 +47,14 @@ def test_handoff_help_explains_shutdown_packet() -> None:
 def test_permissions_and_tmux_help_surface_safety_rules() -> None:
     permissions = _help("permissions")
     tmux = _help("tmux")
+    workers = _help("workers")
     tmux_flat = " ".join(tmux.split())
+    workers_flat = " ".join(workers.split())
 
     assert "ask" in permissions
     assert "notifies Discord by default" in permissions
     assert "TOTP" in permissions
     assert "safe live-control transport" in tmux
     assert "Do not inject text into arbitrary raw TTYs" in tmux_flat
+    assert "adopt existing tmux sessions" in workers_flat
+    assert "Raw Codex/Claude/Kimi terminals" in workers_flat

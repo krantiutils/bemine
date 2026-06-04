@@ -15,6 +15,7 @@ Run these before changing behavior:
 ```bash
 uv run bemine status --limit 12
 uv run bemine prime --no-scan
+uv run bemine workers list
 uv run bemine capabilities
 uv run bemine jobs list
 systemctl --user is-active bemine-daemon mayor-discord-gateway
@@ -42,6 +43,8 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
   infrastructure credentials must go through permission requests.
 - Do not inject commands into arbitrary raw TTYs. Only use safe transports such
   as managed tmux panes or an explicit app-server/session adapter.
+- Use `bemine workers` for live control. It can start owned tmux workers and
+  adopt existing tmux sessions; raw TTY sessions remain read-only via status.
 - Status must consider last interaction and whether the latest agent turn asks
   for input.
 - Avoid legacy Hermes/Gas Town semantics unless intentionally migrating data.
@@ -57,6 +60,7 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
   `src/bemine/proxy.py`, `src/bemine/totp.py`
 - Jobs and daemon: `src/bemine/jobs.py`, `src/bemine/daemon.py`
 - Obsidian vault sync: `src/bemine/vault.py`
+- Managed workers: `src/bemine/workers.py`, `src/bemine/tmux_adapter.py`
 - Harness identity: `SOUL.md`
 
 ## Self Improvement Loop
@@ -81,6 +85,8 @@ Discord should feel like a natural control surface:
 - route project work into per-project channels;
 - return worker output directly on success;
 - prefix failures clearly with the dispatch issue.
+- use `BEMINE_CODEX_SANDBOX=danger-full-access` by default unless a stricter
+  Codex sandbox is proven to work in the service environment.
 
 ## Worker Prompt Expectations
 

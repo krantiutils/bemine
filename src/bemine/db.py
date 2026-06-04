@@ -131,6 +131,20 @@ CREATE TABLE IF NOT EXISTS usage_samples (
     raw_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS managed_sessions (
+    name TEXT PRIMARY KEY,
+    runtime TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    command TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    last_seen_at REAL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
     session_id UNINDEXED,
     project_id UNINDEXED,
@@ -333,6 +347,7 @@ class BemineDB:
                 "permission_requests": conn.execute("SELECT COUNT(*) FROM permission_requests").fetchone()[0],
                 "audit_events": conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
                 "usage_samples": conn.execute("SELECT COUNT(*) FROM usage_samples").fetchone()[0],
+                "managed_sessions": conn.execute("SELECT COUNT(*) FROM managed_sessions").fetchone()[0],
             }
 
     def list_projects(self) -> list[sqlite3.Row]:
@@ -701,3 +716,83 @@ class BemineDB:
                     raw_json,
                 ),
             )
+
+    def upsert_managed_session(
+        self,
+        *,
+        name: str,
+        runtime: str,
+        transport: str,
+        device_id: str,
+        project_id: str,
+        cwd: str,
+        command: str,
+        status: str,
+    ) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO managed_sessions(
+                    name, runtime, transport, device_id, project_id, cwd,
+                    command, status, created_at, updated_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    runtime=excluded.runtime,
+                    transport=excluded.transport,
+                    device_id=excluded.device_id,
+                    project_id=excluded.project_id,
+                    cwd=excluded.cwd,
+                    command=excluded.command,
+                    status=excluded.status,
+                    updated_at=excluded.updated_at,
+                    last_seen_at=excluded.last_seen_at
+                """,
+                (
+                    name,
+                    runtime,
+                    transport,
+                    device_id,
+                    project_id,
+                    cwd,
+                    command,
+                    status,
+                    now,
+                    now,
+                    now,
+                ),
+            )
+
+    def list_managed_sessions(self) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM managed_sessions
+                ORDER BY updated_at DESC, name
+                """
+            ).fetchall()
+
+    def get_managed_session(self, name: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM managed_sessions WHERE name = ?",
+                (name,),
+            ).fetchone()
+
+    def set_managed_session_status(self, name: str, *, status: str) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE managed_sessions
+                SET status = ?, updated_at = ?, last_seen_at = ?
+                WHERE name = ?
+                """,
+                (status, now, now, name),
+            )
+
+    def delete_managed_session(self, name: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute("DELETE FROM managed_sessions WHERE name = ?", (name,))
+        return bool(cursor.rowcount)

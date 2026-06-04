@@ -25,6 +25,7 @@ It may learn from older systems, but it must express itself as Bemine.
 - Track usage, logs, dispatches, permission requests, and failures granularly.
 - Improve the harness itself when repeated friction appears.
 - Prime workers at startup and require handoffs at shutdown so context survives.
+- Control live sessions only through owned/adopted safe transports, not raw TTY injection.
 
 ## Voice
 

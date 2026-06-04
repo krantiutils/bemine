@@ -13,6 +13,7 @@ The current implementation is a working vertical slice, not the full mayor yet:
 - render project rundowns from the shared kernel
 - expose the same rundown through Discord text commands
 - drive tmux sessions from a typed adapter
+- start, adopt, list, send to, capture, and stop Bemine-owned tmux workers
 - run a systemd-backed daemon with cron-style jobs
 - run scheduled reminders through the same daemon and Discord sender
 - check local Proton Mail Bridge readiness
@@ -33,11 +34,13 @@ Functional now:
   are injected into dispatched worker prompts.
 - `bemine prime` gives workers a startup packet; `bemine handoff` records
   shutdown context in the Obsidian vault and audit log.
+- `bemine workers` is the safe live-control surface for sessions Bemine starts
+  or existing tmux sessions it adopts.
 
 Not functional yet:
 
 - Claude dispatch and Kimi dispatch from Discord project channels.
-- Attaching to existing live Codex/Claude/Kimi TUI sessions and injecting text into them.
+- Attaching to raw non-tmux Codex/Claude/Kimi TTY sessions.
 - Proton Mail IMAP ingestion and schedule extraction from email.
 - Calendar sync beyond Bemine cron/reminder jobs.
 - Credential proxy operations that actually perform AWS/GitHub/HF actions; current proxy is an approval ledger and broker contract.
@@ -69,6 +72,12 @@ uv run bemine permissions ask aws:any --reason "need AWS SSO for deploy smoke te
 uv run bemine permissions approve perm_xxxxx --totp 123456
 uv run bemine proxy check perm_xxxxx
 uv run bemine handoff "implemented Discord dispatch fix" --next "test from Discord" --test "uv run pytest -q"
+uv run bemine workers start bm-codex --runtime codex --cwd /home/cdjk/bm
+uv run bemine workers adopt existing-tmux --runtime claude --cwd /path/to/project
+uv run bemine workers send bm-codex "Run bemine prime and summarize blockers"
+uv run bemine workers capture bm-codex
+uv run bemine workers stop bm-codex
+uv run bemine workers forget bm-codex
 uv run bemine tmux start bemine-demo
 uv run bemine tmux send bemine-demo "echo hello"
 uv run bemine tmux capture bemine-demo
@@ -138,6 +147,7 @@ BEMINE_DEVICE_ID=cdjk
 BEMINE_IGNORED_PROJECT_ROOTS=~/gt
 BEMINE_OPERATOR_CONTEXT_FILES=~/deploy.md
 BEMINE_HARNESS_CONTEXT_FILES=/home/cdjk/bm/SOUL.md:/home/cdjk/bm/SKILL.md
+BEMINE_CODEX_SANDBOX=danger-full-access
 BEMINE_TOTP_SECRET=
 ```
 
@@ -152,6 +162,12 @@ shown or injected into worker prompts.
 `BEMINE_HARNESS_CONTEXT_FILES` is a `:`-separated override for Bemine's own
 worker context. By default, dispatch prompts include repository `SOUL.md` and
 `SKILL.md`, redacted with the same secret filters as operator context.
+
+`BEMINE_CODEX_SANDBOX` controls the sandbox mode used by Discord Codex dispatch.
+It defaults to `danger-full-access` because `workspace-write` can fail under
+some service environments before app code starts with bubblewrap loopback
+permission errors. Valid values are `read-only`, `workspace-write`, and
+`danger-full-access`.
 
 Discord settings can use `MAYOR_DISCORD_*` or fall back to Hermes-compatible
 `DISCORD_*` environment variables:
@@ -202,6 +218,26 @@ uv run bemine handoff "wired prime and handoff" \
   --blocker "no managed app-server injection yet" \
   --test "uv run pytest -q"
 ```
+
+## Managed Workers
+
+`bemine workers` is the safe live-session control layer. It starts sessions in
+tmux and records their runtime, project root, project id, command, and live
+status in SQLite. Bemine can also adopt an existing tmux session it did not
+start:
+
+```bash
+uv run bemine workers start bm-codex --runtime codex --cwd /home/cdjk/bm
+uv run bemine workers adopt old-session --runtime claude --cwd /path/to/project
+uv run bemine workers list
+uv run bemine workers send bm-codex "Run bemine prime and report status"
+uv run bemine workers capture bm-codex
+uv run bemine workers stop bm-codex
+uv run bemine workers forget bm-codex
+```
+
+Raw terminal sessions that are not in tmux remain read-only through
+`bemine status`. Bemine should not inject into arbitrary TTYs.
 
 Mail ingestion is not wired yet. The intended next slice is read-only IMAP
 ingestion from Proton Bridge into SQLite, redacted message summaries, and
@@ -291,6 +327,11 @@ the prompt. The gateway reacts when it receives work, shows Discord typing while
 Codex runs, and replies with the final Codex message directly. Dispatch failures
 are prefixed with the project channel for triage.
 
+Codex dispatch defaults to `--sandbox danger-full-access` to avoid service-level
+bubblewrap failures such as `bwrap: loopback: Failed RTM_NEWADDR: Operation not
+permitted`. Override with `BEMINE_CODEX_SANDBOX=workspace-write` only on hosts
+where that sandbox mode can execute commands reliably.
+
 ## Credential Gate
 
 Credential access is classified into baseline shared identity and gated
@@ -366,6 +407,7 @@ The tests are integration-oriented:
 - operator context redaction and prompt injection
 - Bemine soul/skill harness context prompt injection
 - prime startup packet and handoff vault/audit persistence
+- managed worker start/adopt/send/capture/stop flow through tmux
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:

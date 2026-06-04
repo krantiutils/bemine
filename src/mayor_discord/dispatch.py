@@ -336,6 +336,7 @@ class CodexDispatcher:
         self.runner = runner or subprocess.run
         self.timeout_seconds = timeout_seconds
         self.codex_bin = codex_bin or resolve_codex_bin()
+        self.codex_sandbox = resolve_codex_sandbox()
         self.db = BemineDB(settings.db_path)
 
     def dispatch(self, project: ProjectChannel, request: DispatchRequest) -> DispatchResult:
@@ -349,7 +350,7 @@ class CodexDispatcher:
                 "--cd",
                 str(project.cwd),
                 "--sandbox",
-                "workspace-write",
+                self.codex_sandbox,
                 "--output-last-message",
                 output_file.name,
                 "-",
@@ -497,6 +498,17 @@ def resolve_codex_bin() -> str:
         if candidate.exists():
             return str(candidate)
     return "codex"
+
+
+def resolve_codex_sandbox() -> str:
+    configured = os.environ.get("BEMINE_CODEX_SANDBOX", "").strip()
+    if not configured:
+        return "danger-full-access"
+    if configured not in {"read-only", "workspace-write", "danger-full-access"}:
+        raise ValueError(
+            "BEMINE_CODEX_SANDBOX must be one of: read-only, workspace-write, danger-full-access"
+        )
+    return configured
 
 
 def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str:

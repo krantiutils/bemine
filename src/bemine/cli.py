@@ -26,6 +26,7 @@ from .rituals import (
 from .status import collect_fleet_status, render_status
 from .systemd import install_user_units, render_user_units
 from .tmux_adapter import TmuxAdapter
+from .workers import WorkerController, WorkerError, render_workers
 
 
 HELP_FORMATTER = argparse.RawDescriptionHelpFormatter
@@ -50,6 +51,7 @@ Core concepts:
   rundown       project summaries from SQLite/Obsidian
   capabilities  safe credential/capability manifest for workers
   permissions   explicit approval path for gated credentials
+  workers       safe managed live sessions over tmux
   discord       project channel routing and Discord sync
 """
 
@@ -160,6 +162,24 @@ Examples:
   uv run bemine tmux start bemine-demo --command bash
   uv run bemine tmux send bemine-demo "echo hello"
   uv run bemine tmux capture bemine-demo
+"""
+
+
+WORKERS_HELP = """\
+Start, adopt, inspect, and control Bemine-owned live workers.
+
+Use this instead of writing into arbitrary terminal TTYs. Bemine can safely
+control sessions it starts, and it can adopt existing tmux sessions. Raw
+Codex/Claude/Kimi terminals that are not in tmux remain read-only status until
+an app-server/PTY adapter exists.
+
+Examples:
+  uv run bemine workers start bm-codex --runtime codex --cwd /home/cdjk/bm
+  uv run bemine workers adopt old-tmux --runtime claude --cwd /home/cdjk/github/project
+  uv run bemine workers send bm-codex "Run bemine prime and report blockers"
+  uv run bemine workers capture bm-codex
+  uv run bemine workers stop bm-codex
+  uv run bemine workers forget bm-codex
 """
 
 
@@ -337,7 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
     tmux_sub = tmux.add_subparsers(dest="tmux_command", required=True)
     tmux_start = tmux_sub.add_parser("start", help="Start a detached managed tmux session.")
     tmux_start.add_argument("name", help="tmux session name.")
-    tmux_start.add_argument("--command", default="bash", help="Command to run in the session. Defaults to bash.")
+    tmux_start.add_argument("--command", dest="start_command", default="bash", help="Command to run in the session. Defaults to bash.")
     tmux_send = tmux_sub.add_parser("send", help="Send text to a managed tmux session.")
     tmux_send.add_argument("name", help="tmux session name.")
     tmux_send.add_argument("text", help="Text to send.")
@@ -346,6 +366,42 @@ def build_parser() -> argparse.ArgumentParser:
     tmux_capture.add_argument("name", help="tmux session name.")
     tmux_kill = tmux_sub.add_parser("kill", help="Kill a managed tmux session.")
     tmux_kill.add_argument("name", help="tmux session name.")
+
+    workers = sub.add_parser(
+        "workers",
+        help="Start, adopt, and control Bemine-owned live workers.",
+        description="Start, adopt, inspect, and control Bemine-owned live workers.",
+        epilog=dedent(WORKERS_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    workers_sub = workers.add_subparsers(dest="workers_command", required=True)
+    worker_start = workers_sub.add_parser("start", help="Start and register a tmux-backed worker.")
+    worker_start.add_argument("name", help="Stable worker/tmux session name.")
+    worker_start.add_argument("--runtime", default="codex", help="Runtime label: codex, claude, kimi, shell, or custom.")
+    worker_start.add_argument("--cwd", default="", help="Project root. Defaults to current directory.")
+    worker_start.add_argument("--command", dest="worker_command", default="", help="Override command. Defaults from runtime.")
+    worker_start.add_argument("--json", action="store_true", help="Emit worker record as JSON.")
+    worker_adopt = workers_sub.add_parser("adopt", help="Register an existing tmux session as a worker.")
+    worker_adopt.add_argument("name", help="Existing tmux session name.")
+    worker_adopt.add_argument("--runtime", default="shell", help="Runtime label for the adopted session.")
+    worker_adopt.add_argument("--cwd", default="", help="Project root for this session. Defaults to current directory.")
+    worker_adopt.add_argument("--command", dest="worker_command", default="adopted-existing-tmux-session", help="Command metadata to record.")
+    worker_adopt.add_argument("--json", action="store_true", help="Emit worker record as JSON.")
+    worker_list = workers_sub.add_parser("list", help="List registered workers and whether tmux sessions are live.")
+    worker_list.add_argument("--json", action="store_true", help="Emit worker records as JSON.")
+    worker_send = workers_sub.add_parser("send", help="Send text to a registered worker.")
+    worker_send.add_argument("name", help="Worker name.")
+    worker_send.add_argument("text", help="Text to send.")
+    worker_send.add_argument("--no-enter", action="store_true", help="Send text without pressing Enter.")
+    worker_send.add_argument("--json", action="store_true", help="Emit worker record as JSON.")
+    worker_capture = workers_sub.add_parser("capture", help="Capture a registered worker's tmux pane.")
+    worker_capture.add_argument("name", help="Worker name.")
+    worker_stop = workers_sub.add_parser("stop", help="Stop a registered worker's tmux session.")
+    worker_stop.add_argument("name", help="Worker name.")
+    worker_stop.add_argument("--json", action="store_true", help="Emit worker record as JSON.")
+    worker_forget = workers_sub.add_parser("forget", help="Remove a worker from Bemine's registry without killing tmux.")
+    worker_forget.add_argument("name", help="Worker name.")
+    worker_forget.add_argument("--json", action="store_true", help="Emit forget result as JSON.")
 
     creds = sub.add_parser(
         "credentials",
@@ -492,7 +548,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "tmux":
         tmux = TmuxAdapter()
         if args.tmux_command == "start":
-            tmux.start(args.name, args.command)
+            tmux.start(args.name, args.start_command)
             print(json.dumps({"ok": True, "session": args.name}))
         elif args.tmux_command == "send":
             tmux.send(args.name, args.text, enter=not args.no_enter)
@@ -505,6 +561,62 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     settings = _settings_from_args(args)
+    if args.command == "workers":
+        controller = WorkerController(settings)
+        try:
+            if args.workers_command == "start":
+                record = controller.start(
+                    name=args.name,
+                    runtime=args.runtime,
+                    cwd=Path(args.cwd) if args.cwd else Path.cwd(),
+                    command=args.worker_command,
+                )
+                if args.json:
+                    print(json.dumps(record.to_dict(), indent=2, sort_keys=True))
+                else:
+                    print(render_workers([record]), end="")
+            elif args.workers_command == "adopt":
+                record = controller.adopt(
+                    name=args.name,
+                    runtime=args.runtime,
+                    cwd=Path(args.cwd) if args.cwd else Path.cwd(),
+                    command=args.worker_command,
+                )
+                if args.json:
+                    print(json.dumps(record.to_dict(), indent=2, sort_keys=True))
+                else:
+                    print(render_workers([record]), end="")
+            elif args.workers_command == "list":
+                records = controller.list()
+                if args.json:
+                    print(json.dumps([record.to_dict() for record in records], indent=2, sort_keys=True))
+                else:
+                    print(render_workers(records), end="")
+            elif args.workers_command == "send":
+                record = controller.send(args.name, args.text, enter=not args.no_enter)
+                if args.json:
+                    print(json.dumps(record.to_dict(), indent=2, sort_keys=True))
+                else:
+                    print(render_workers([record]), end="")
+            elif args.workers_command == "capture":
+                print(controller.capture(args.name), end="")
+            elif args.workers_command == "stop":
+                record = controller.stop(args.name)
+                if args.json:
+                    print(json.dumps(record.to_dict(), indent=2, sort_keys=True))
+                else:
+                    print(render_workers([record]), end="")
+            elif args.workers_command == "forget":
+                forgotten = controller.forget(args.name)
+                payload = {"name": args.name, "forgotten": forgotten}
+                if args.json:
+                    print(json.dumps(payload, indent=2, sort_keys=True))
+                else:
+                    print(f"Forgotten: {args.name}" if forgotten else f"Worker not found: {args.name}")
+        except WorkerError as exc:
+            raise SystemExit(str(exc)) from exc
+        return
+
     kernel = BemineKernel(settings)
     if args.command == "scan":
         result = kernel.scan_local()

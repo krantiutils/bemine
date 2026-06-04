@@ -16,6 +16,7 @@ from mayor_discord.dispatch import (
     project_channels_from_db,
     resolve_project_channel,
     resolve_codex_bin,
+    resolve_codex_sandbox,
     write_project_channel_config,
 )
 
@@ -221,7 +222,7 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Pat
     assert "<token>" in result.output
     assert command[:2] == ["codex", "exec"]
     assert command[command.index("--cd") + 1] == str(project_root)
-    assert command[command.index("--sandbox") + 1] == "workspace-write"
+    assert command[command.index("--sandbox") + 1] == "danger-full-access"
     assert "--ask-for-approval" not in command
     assert str(image_path) in command
     assert str(note_path) not in command
@@ -335,3 +336,15 @@ def test_resolve_codex_bin_uses_explicit_env(monkeypatch) -> None:
     monkeypatch.setenv("BEMINE_CODEX_BIN", "/opt/codex")
 
     assert resolve_codex_bin() == "/opt/codex"
+
+
+def test_resolve_codex_sandbox_defaults_to_systemd_safe_mode(monkeypatch) -> None:
+    monkeypatch.delenv("BEMINE_CODEX_SANDBOX", raising=False)
+
+    assert resolve_codex_sandbox() == "danger-full-access"
+
+
+def test_resolve_codex_sandbox_can_be_overridden(monkeypatch) -> None:
+    monkeypatch.setenv("BEMINE_CODEX_SANDBOX", "workspace-write")
+
+    assert resolve_codex_sandbox() == "workspace-write"
