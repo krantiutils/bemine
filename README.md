@@ -21,10 +21,13 @@ The current implementation is the first working vertical slice:
 uv run bemine scan
 uv run bemine rundown
 uv run bemine search "blocked schema"
+uv run bemine capabilities
 uv run bemine credentials scan
 uv run bemine credentials list
 uv run bemine permissions request fmw:legacy --reason "need legacy env for migration"
+uv run bemine permissions ask aws:any --reason "need AWS SSO for deploy smoke test"
 uv run bemine permissions approve perm_xxxxx --totp 123456
+uv run bemine proxy check perm_xxxxx
 uv run bemine tmux start bemine-demo
 uv run bemine tmux send bemine-demo "echo hello"
 uv run bemine tmux capture bemine-demo
@@ -118,9 +121,24 @@ Gated credentials require permission requests and can require TOTP:
 
 ```bash
 uv run bemine credentials scan
+uv run bemine capabilities
 uv run bemine permissions request aws:any --reason "deploy smoke test"
+uv run bemine permissions ask aws:any --reason "deploy smoke test"
 uv run bemine permissions approve perm_xxxxx --totp 123456
 ```
+
+`bemine capabilities` is the worker-facing manifest. It lists available identity
+capabilities and tells workers to use `bemine permissions ask ...` and
+`bemine proxy ...` for gated credentials instead of reading secret files
+directly.
+
+`bemine permissions ask ...` creates a permission request and sends a Discord
+notification to the configured home channel. `permissions request` remains the
+quiet primitive for tests and local workflows.
+
+The legacy `~/.fmw` bundle on `cdjk-mbp` is declared as `fmw:cdjk-mbp` and is
+proxy-only. Workers should never receive the raw keys; they receive an approved
+proxy path after TOTP-gated approval.
 
 Discord supports:
 

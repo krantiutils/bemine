@@ -109,6 +109,15 @@ class CredentialInventory:
                 metadata={"declared": True},
             ),
             CredentialProfile(
+                credential_id="fmw:cdjk-mbp",
+                name="Legacy ~/.fmw credential proxy on cdjk-mbp",
+                kind="legacy_secret_bundle",
+                storage_ref="proxy://credentials/fmw/cdjk-mbp",
+                approval_policy="discord_totp",
+                totp_required=True,
+                metadata={"declared": True, "device": "cdjk-mbp", "proxy_only": True},
+            ),
+            CredentialProfile(
                 credential_id="aws:any",
                 name="AWS credentials",
                 kind="cost_incurring",
@@ -304,4 +313,3 @@ def _child_names(path: Path) -> list[str]:
     if not path.is_dir():
         return []
     return sorted(p.name for p in path.iterdir() if p.is_file())
-

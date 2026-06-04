@@ -4,9 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
+from .capabilities import build_capability_manifest, render_capability_manifest
 from .config import BemineSettings
 from .credentials import CredentialInventory, PermissionGate
 from .kernel import BemineKernel
+from .notifications import notify_permission_request_via_discord
+from .proxy import CredentialProxy
 from .tmux_adapter import TmuxAdapter
 
 
@@ -42,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--json", action="store_true")
 
+    capabilities = sub.add_parser(
+        "capabilities",
+        help="Print the worker-facing capability manifest.",
+    )
+    capabilities.add_argument("--json", action="store_true")
+
     tmux = sub.add_parser("tmux", help="Interact with tmux-backed managed sessions.")
     tmux_sub = tmux.add_subparsers(dest="tmux_command", required=True)
     tmux_start = tmux_sub.add_parser("start")
@@ -65,11 +74,9 @@ def build_parser() -> argparse.ArgumentParser:
     perms = sub.add_parser("permissions", help="Create and resolve gated credential requests.")
     perms_sub = perms.add_subparsers(dest="permissions_command", required=True)
     perm_req = perms_sub.add_parser("request")
-    perm_req.add_argument("credential_id")
-    perm_req.add_argument("--reason", required=True)
-    perm_req.add_argument("--project-id", default="")
-    perm_req.add_argument("--session-id", default="")
-    perm_req.add_argument("--runtime", default="")
+    _add_permission_request_args(perm_req, notify_default=False)
+    perm_ask = perms_sub.add_parser("ask")
+    _add_permission_request_args(perm_ask, notify_default=True)
     perm_list = perms_sub.add_parser("list")
     perm_list.add_argument("--status", default="")
     perm_list.add_argument("--json", action="store_true")
@@ -80,7 +87,28 @@ def build_parser() -> argparse.ArgumentParser:
     perm_deny = perms_sub.add_parser("deny")
     perm_deny.add_argument("request_id")
     perm_deny.add_argument("--actor", default="cli")
+
+    proxy = sub.add_parser("proxy", help="Use approved credential requests through a broker.")
+    proxy_sub = proxy.add_subparsers(dest="proxy_command", required=True)
+    proxy_check = proxy_sub.add_parser("check")
+    proxy_check.add_argument("request_id")
+    proxy_check.add_argument("--actor", default="cli")
     return parser
+
+
+def _add_permission_request_args(parser: argparse.ArgumentParser, *, notify_default: bool) -> None:
+    parser.add_argument("credential_id")
+    parser.add_argument("--reason", required=True)
+    parser.add_argument("--project-id", default="")
+    parser.add_argument("--session-id", default="")
+    parser.add_argument("--runtime", default="")
+    notify = parser.add_mutually_exclusive_group()
+    if notify_default:
+        parser.set_defaults(notify_discord=True)
+        notify.add_argument("--no-notify", dest="notify_discord", action="store_false")
+    else:
+        parser.set_defaults(notify_discord=False)
+        notify.add_argument("--notify-discord", dest="notify_discord", action="store_true")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -116,6 +144,19 @@ def main(argv: list[str] | None = None) -> None:
         else:
             for row in rows:
                 print(f"{row['runtime']} {row['cwd']} {row['updated_at']} {row['title']}")
+    elif args.command == "capabilities":
+        inventory = CredentialInventory(
+            kernel.db,
+            home=Path(args.credential_home) if args.credential_home else None,
+            device_id=settings.device_id,
+        )
+        inventory.scan()
+        rows = [dict(row) for row in kernel.db.list_credential_profiles()]
+        manifest = build_capability_manifest(rows, device_id=settings.device_id)
+        if args.json:
+            print(json.dumps(manifest, indent=2, sort_keys=True))
+        else:
+            print(render_capability_manifest(manifest), end="")
     elif args.command == "credentials":
         inventory = CredentialInventory(
             kernel.db,
@@ -138,7 +179,12 @@ def main(argv: list[str] | None = None) -> None:
                     )
     elif args.command == "permissions":
         gate = PermissionGate(kernel.db)
-        if args.permissions_command == "request":
+        if args.permissions_command in {"request", "ask"}:
+            CredentialInventory(
+                kernel.db,
+                home=Path(args.credential_home) if args.credential_home else None,
+                device_id=settings.device_id,
+            ).scan()
             request_id = gate.request(
                 credential_id=args.credential_id,
                 reason=args.reason,
@@ -147,7 +193,17 @@ def main(argv: list[str] | None = None) -> None:
                 device_id=settings.device_id,
                 runtime=args.runtime or None,
             )
-            print(json.dumps({"request_id": request_id, "status": "pending"}, sort_keys=True))
+            result = {
+                "request_id": request_id,
+                "status": "pending",
+                "notified": False,
+                "discord_message_id": "",
+            }
+            if args.notify_discord:
+                notification = notify_permission_request_via_discord(kernel.db, request_id)
+                result["notified"] = True
+                result["discord_message_id"] = notification.message_id
+            print(json.dumps(result, sort_keys=True))
         elif args.permissions_command == "list":
             rows = [
                 dict(row)
@@ -167,6 +223,10 @@ def main(argv: list[str] | None = None) -> None:
         elif args.permissions_command == "deny":
             gate.deny(args.request_id, actor=args.actor)
             print(json.dumps({"request_id": args.request_id, "status": "denied"}, sort_keys=True))
+    elif args.command == "proxy":
+        if args.proxy_command == "check":
+            result = CredentialProxy(kernel.db).check(args.request_id, actor=args.actor)
+            print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == "__main__":

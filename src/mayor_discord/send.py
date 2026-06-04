@@ -28,7 +28,10 @@ async def send_message(
     settings.require_token()
     url = f"{DISCORD_API}/channels/{channel_id}/messages"
     headers = {"Authorization": f"Bot {settings.token}"}
-    payload: dict = {"content": text}
+    payload: dict = {
+        "content": text,
+        "allowed_mentions": {"parse": []},
+    }
     if reply_to:
         payload["message_reference"] = {
             "message_id": reply_to,
@@ -113,4 +116,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

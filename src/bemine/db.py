@@ -427,7 +427,12 @@ class BemineDB:
         with self.connect() as conn:
             return conn.execute(
                 """
-                SELECT pr.*, cp.totp_required, cp.approval_policy, cp.name AS credential_name
+                SELECT
+                    pr.*,
+                    cp.totp_required,
+                    cp.approval_policy,
+                    cp.name AS credential_name,
+                    cp.kind AS credential_kind
                 FROM permission_requests pr
                 JOIN credential_profiles cp ON cp.credential_id = pr.credential_id
                 WHERE pr.request_id = ?
@@ -474,6 +479,22 @@ class BemineDB:
                 WHERE request_id = ?
                 """,
                 (status, time.time(), resolved_by, request_id),
+            )
+
+    def set_permission_discord_message(
+        self,
+        *,
+        request_id: str,
+        discord_message_id: str,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE permission_requests
+                SET discord_message_id = ?
+                WHERE request_id = ?
+                """,
+                (discord_message_id, request_id),
             )
 
     def record_audit_event(

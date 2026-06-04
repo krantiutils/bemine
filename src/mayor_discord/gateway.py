@@ -10,6 +10,7 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
+from bemine.capabilities import build_capability_manifest, render_capability_manifest
 from bemine.config import BemineSettings
 from bemine.credentials import CredentialInventory, PermissionGate
 from bemine.kernel import BemineKernel
@@ -136,6 +137,19 @@ class MayorDiscordGateway:
                     _discord_chunk("Credential profiles:\n" + "\n".join(lines), limit=1900)[0],
                     mention_author=False,
                 )
+                return
+            if normalized_lower in {
+                "!mayor capabilities",
+                "mayor capabilities",
+                "!bemine capabilities",
+                "bemine capabilities",
+            }:
+                kernel = BemineKernel(BemineSettings.load())
+                CredentialInventory(kernel.db, device_id=kernel.settings.device_id).scan()
+                rows = [dict(row) for row in kernel.db.list_credential_profiles()]
+                manifest = build_capability_manifest(rows, device_id=kernel.settings.device_id)
+                text = render_capability_manifest(manifest)
+                await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
                 return
             if normalized_lower in {
                 "!mayor permissions",
