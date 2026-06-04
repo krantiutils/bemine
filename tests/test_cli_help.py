@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+
+
+def _help(*args: str) -> str:
+    result = subprocess.run(
+        [sys.executable, "-m", "bemine.cli", *args, "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return result.stdout
+
+
+def test_top_level_help_onboards_a_new_agent() -> None:
+    text = _help()
+
+    assert "New agent quickstart:" in text
+    assert "uv run bemine prime" in text
+    assert "Core concepts:" in text
+    assert "capabilities  safe credential/capability manifest" in text
+    assert "permissions   explicit approval path" in text
+
+
+def test_prime_help_explains_startup_packet() -> None:
+    text = _help("prime")
+
+    assert "Render the startup packet a new worker should read first." in text
+    assert "Use --fleet when the worker needs cross-device status." in text
+    assert "uv run bemine prime --fleet --limit 12" in text
+    assert "Project root to describe" in text
+
+
+def test_handoff_help_explains_shutdown_packet() -> None:
+    text = _help("handoff")
+
+    assert "Record the shutdown packet for substantial work." in text
+    assert "Handoffs/ directory" in text
+    assert "before ending a meaningful session" in text
+    assert "Verification command/result" in text
+
+
+def test_permissions_and_tmux_help_surface_safety_rules() -> None:
+    permissions = _help("permissions")
+    tmux = _help("tmux")
+    tmux_flat = " ".join(tmux.split())
+
+    assert "ask" in permissions
+    assert "notifies Discord by default" in permissions
+    assert "TOTP" in permissions
+    assert "safe live-control transport" in tmux
+    assert "Do not inject text into arbitrary raw TTYs" in tmux_flat

@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from textwrap import dedent
 
 from .capabilities import build_capability_manifest, render_capability_manifest
 from .config import BemineSettings
@@ -27,6 +28,141 @@ from .systemd import install_user_units, render_user_units
 from .tmux_adapter import TmuxAdapter
 
 
+HELP_FORMATTER = argparse.RawDescriptionHelpFormatter
+
+MAIN_HELP = """\
+Bemine is the user's personal multi-device agent harness.
+
+It indexes Codex, Claude, and Kimi histories; renders project state; routes
+Discord work; records vault memory; manages cron jobs; and gates credentials.
+
+New agent quickstart:
+  uv run bemine prime
+  uv run bemine status --limit 12
+  uv run bemine rundown --limit 12
+  uv run bemine capabilities
+  uv run bemine handoff "what changed" --next "next action" --test "uv run pytest -q"
+
+Core concepts:
+  prime         startup packet for a worker/session
+  handoff       shutdown packet persisted to vault + audit log
+  status        recent sessions by last interaction and ask-state
+  rundown       project summaries from SQLite/Obsidian
+  capabilities  safe credential/capability manifest for workers
+  permissions   explicit approval path for gated credentials
+  discord       project channel routing and Discord sync
+"""
+
+
+PRIME_HELP = """\
+Render the startup packet a new worker should read first.
+
+By default this scans local Codex/Claude/Kimi histories, then prints current
+project identity, harness files, operator context files, recent sessions, and a
+project rundown. Use --fleet when the worker needs cross-device status.
+
+Examples:
+  uv run bemine prime
+  uv run bemine prime --fleet --limit 12
+  uv run bemine prime --cwd /home/cdjk/bm --json
+"""
+
+
+HANDOFF_HELP = """\
+Record the shutdown packet for substantial work.
+
+The handoff writes a timestamped Markdown file under the Obsidian vault
+Handoffs/ directory, appends the daily note, and records an audit event. Use it
+before ending a meaningful session so another agent can continue cleanly.
+
+Examples:
+  uv run bemine handoff "fixed Discord routing" --test "uv run pytest -q"
+  uv run bemine handoff --stdin --next "wire Discord command"
+  uv run bemine handoff "blocked on AWS SSO" --blocker "needs TOTP approval"
+"""
+
+
+STATUS_HELP = """\
+Show recent Codex, Claude, and Kimi sessions ordered by last interaction.
+
+Status is based on session history, not just process presence. The ask-state
+tries to identify whether the latest agent message needs user input.
+
+Examples:
+  uv run bemine status --limit 12
+  uv run bemine status --local-only --json
+  uv run bemine status --devices local,mbp2,k2
+"""
+
+
+CAPABILITIES_HELP = """\
+Print the worker-facing credential and infrastructure manifest.
+
+Workers should use this before assuming access. Baseline identities may be
+available, while AWS/Google/Porkbun/legacy secret access must go through
+permissions and proxy paths.
+
+Examples:
+  uv run bemine capabilities
+  uv run bemine capabilities --json
+"""
+
+
+PERMISSIONS_HELP = """\
+Create, inspect, approve, or deny gated credential requests.
+
+Use "ask" from workers because it notifies Discord by default. Use "request"
+for quiet local/test flows. Approval may require TOTP depending on the
+credential profile.
+
+Examples:
+  uv run bemine permissions ask aws:any --reason "deploy smoke test"
+  uv run bemine permissions list --status pending
+  uv run bemine permissions approve perm_xxxxx --totp 123456
+"""
+
+
+DISCORD_HELP = """\
+Manage Discord project routing.
+
+Project channels route messages into the corresponding project root. The sync
+command creates/updates Discord channels from indexed projects. The local route
+file is useful for gateway startup and tests.
+
+Examples:
+  uv run bemine discord write-project-channels --limit 200
+  uv run bemine discord sync-project-channels --guild-id "$MAYOR_DISCORD_GUILD_ID"
+  uv run mayor-discord-gateway --check
+"""
+
+
+JOBS_HELP = """\
+Manage daemon-backed cron jobs and reminders.
+
+Jobs are stored in SQLite and run by bemine-daemon. They can notify Discord or
+run quietly for tests/manual checks.
+
+Examples:
+  uv run bemine jobs list
+  uv run bemine jobs add-reminder morning_plan "30 8 * * *" --text "Review blockers"
+  uv run bemine jobs run daily_digest --no-notify
+"""
+
+
+TMUX_HELP = """\
+Interact with tmux-backed managed sessions.
+
+This is the safe live-control transport Bemine supports today. Do not inject
+text into arbitrary raw TTYs; use managed tmux sessions or a future app-server
+adapter.
+
+Examples:
+  uv run bemine tmux start bemine-demo --command bash
+  uv run bemine tmux send bemine-demo "echo hello"
+  uv run bemine tmux capture bemine-demo
+"""
+
+
 def _settings_from_args(args: argparse.Namespace) -> BemineSettings:
     return BemineSettings.load(
         state_dir=Path(args.state_dir) if args.state_dir else None,
@@ -40,7 +176,12 @@ def _settings_from_args(args: argparse.Namespace) -> BemineSettings:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="bemine", description="Bemine project mayor.")
+    parser = argparse.ArgumentParser(
+        prog="bemine",
+        description="Bemine project mayor.",
+        epilog=dedent(MAIN_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
     parser.add_argument("--state-dir", default="", help="State directory. Defaults to ./.bemine or BEMINE_HOME.")
     parser.add_argument("--vault", default="", help="Obsidian vault path. Defaults to ~/Documents/Mayor.")
     parser.add_argument("--codex-home", default="", help="Codex home. Defaults to ~/.codex.")
@@ -51,169 +192,276 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--credential-home", default="", help="Home directory to scan for credential metadata.")
 
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("scan", help="Scan local runtime histories into the Bemine index.")
+    sub.add_parser(
+        "scan",
+        help="Scan local runtime histories into the Bemine index.",
+        description="Scan local Codex, Claude, and Kimi histories into SQLite and update vault project pages.",
+        epilog="Example:\n  uv run bemine scan",
+        formatter_class=HELP_FORMATTER,
+    )
 
-    prime = sub.add_parser("prime", help="Print the startup packet for a Bemine worker/session.")
-    prime.add_argument("--limit", type=int, default=8)
-    prime.add_argument("--cwd", default="")
+    prime = sub.add_parser(
+        "prime",
+        help="Print the startup packet for a Bemine worker/session.",
+        description="Print the startup packet for a Bemine worker/session.",
+        epilog=dedent(PRIME_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    prime.add_argument("--limit", type=int, default=8, help="Maximum recent projects/sessions to include.")
+    prime.add_argument("--cwd", default="", help="Project root to describe. Defaults to the current directory.")
     prime.add_argument("--fleet", action="store_true", help="Include SSH fleet status, not only local sessions.")
     prime.add_argument("--no-scan", action="store_true", help="Do not scan local histories before rendering.")
-    prime.add_argument("--json", action="store_true")
+    prime.add_argument("--json", action="store_true", help="Emit machine-readable startup packet JSON.")
 
-    handoff = sub.add_parser("handoff", help="Record a shutdown handoff into the vault and audit log.")
+    handoff = sub.add_parser(
+        "handoff",
+        help="Record a shutdown handoff into the vault and audit log.",
+        description="Record a shutdown handoff into the vault and audit log.",
+        epilog=dedent(HANDOFF_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
     handoff.add_argument("summary", nargs="*", help="Summary text. Use --stdin for multiline input.")
     handoff.add_argument("--stdin", action="store_true", help="Append stdin to the summary.")
-    handoff.add_argument("--cwd", default="")
-    handoff.add_argument("--project", default="")
-    handoff.add_argument("--session-id", default="")
-    handoff.add_argument("--runtime", default="")
-    handoff.add_argument("--status", default="in_progress")
-    handoff.add_argument("--next", dest="next_steps", action="append", default=[])
-    handoff.add_argument("--blocker", action="append", default=[])
-    handoff.add_argument("--test", dest="tests", action="append", default=[])
-    handoff.add_argument("--actor", default="cli")
-    handoff.add_argument("--json", action="store_true")
+    handoff.add_argument("--cwd", default="", help="Project root for the handoff. Defaults to current directory.")
+    handoff.add_argument("--project", default="", help="Project display name. Defaults to the cwd basename.")
+    handoff.add_argument("--session-id", default="", help="Runtime session id, if known.")
+    handoff.add_argument("--runtime", default="", help="Runtime name such as codex, claude, or kimi.")
+    handoff.add_argument("--status", default="in_progress", help="Work state to record, e.g. done, blocked, in_progress.")
+    handoff.add_argument("--next", dest="next_steps", action="append", default=[], help="Next step. Repeat for multiple items.")
+    handoff.add_argument("--blocker", action="append", default=[], help="Blocker or approval needed. Repeat for multiple items.")
+    handoff.add_argument("--test", dest="tests", action="append", default=[], help="Verification command/result. Repeat for multiple items.")
+    handoff.add_argument("--actor", default="cli", help="Actor recorded in audit log.")
+    handoff.add_argument("--json", action="store_true", help="Emit machine-readable handoff result JSON.")
 
-    rundown = sub.add_parser("rundown", help="Print project rundown.")
-    rundown.add_argument("--limit", type=int, default=30)
+    rundown = sub.add_parser(
+        "rundown",
+        help="Print project rundown.",
+        description="Print indexed project summaries from SQLite and Obsidian vault state.",
+        epilog="Examples:\n  uv run bemine rundown\n  uv run bemine rundown --limit 12",
+        formatter_class=HELP_FORMATTER,
+    )
+    rundown.add_argument("--limit", type=int, default=30, help="Maximum projects to show.")
 
-    search = sub.add_parser("search", help="Search indexed sessions with FTS5.")
-    search.add_argument("query")
-    search.add_argument("--limit", type=int, default=20)
-    search.add_argument("--json", action="store_true")
+    search = sub.add_parser(
+        "search",
+        help="Search indexed sessions with FTS5.",
+        description="Search Codex/Claude/Kimi session summaries indexed in SQLite FTS5.",
+        epilog='Examples:\n  uv run bemine search "AWS SSO"\n  uv run bemine search "blocked schema" --json',
+        formatter_class=HELP_FORMATTER,
+    )
+    search.add_argument("query", help="FTS5 query text.")
+    search.add_argument("--limit", type=int, default=20, help="Maximum matching sessions to return.")
+    search.add_argument("--json", action="store_true", help="Emit matching session rows as JSON.")
 
-    status = sub.add_parser("status", help="Show recent agent interactions across devices.")
-    status.add_argument("--limit", type=int, default=12)
-    status.add_argument("--json", action="store_true")
+    status = sub.add_parser(
+        "status",
+        help="Show recent agent interactions across devices.",
+        description="Show recent agent interactions across devices.",
+        epilog=dedent(STATUS_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    status.add_argument("--limit", type=int, default=12, help="Maximum sessions to print after sorting by last interaction.")
+    status.add_argument("--json", action="store_true", help="Emit statuses and SSH errors as JSON.")
     status.add_argument(
         "--devices",
         default="",
         help="Comma-separated devices. Defaults to local,mbp,mbp2,k2,pi,windows.",
     )
-    status.add_argument("--local-only", action="store_true")
+    status.add_argument("--local-only", action="store_true", help="Only inspect local histories; skip SSH devices.")
 
     capabilities = sub.add_parser(
         "capabilities",
         help="Print the worker-facing capability manifest.",
+        description="Print the worker-facing capability manifest.",
+        epilog=dedent(CAPABILITIES_HELP),
+        formatter_class=HELP_FORMATTER,
     )
-    capabilities.add_argument("--json", action="store_true")
+    capabilities.add_argument("--json", action="store_true", help="Emit credential capability manifest as JSON.")
 
     context = sub.add_parser(
         "context",
         help="Show redacted operator context injected into workers.",
+        description="Show redacted operator context injected into workers.",
+        epilog="Examples:\n  uv run bemine context show\n  uv run bemine context show --json",
+        formatter_class=HELP_FORMATTER,
     )
     context_sub = context.add_subparsers(dest="context_command", required=True)
-    context_show = context_sub.add_parser("show")
-    context_show.add_argument("--limit", type=int, default=12_000)
-    context_show.add_argument("--json", action="store_true")
+    context_show = context_sub.add_parser(
+        "show",
+        help="Print redacted operator context files such as ~/deploy.md.",
+        description="Print redacted operator context files such as ~/deploy.md.",
+        formatter_class=HELP_FORMATTER,
+    )
+    context_show.add_argument("--limit", type=int, default=12_000, help="Maximum characters of redacted context to print.")
+    context_show.add_argument("--json", action="store_true", help="Emit context file list and text as JSON.")
 
-    kimi = sub.add_parser("kimi", help="Inspect or call the configured Kimi provider.")
+    kimi = sub.add_parser(
+        "kimi",
+        help="Inspect or call the configured Kimi provider.",
+        description="Inspect or call the configured Kimi provider through Bemine's handler.",
+        epilog="Examples:\n  uv run bemine kimi status\n  uv run bemine kimi ask \"summarize this\" --max-tokens 512",
+        formatter_class=HELP_FORMATTER,
+    )
     kimi_sub = kimi.add_subparsers(dest="kimi_command", required=True)
-    kimi_status = kimi_sub.add_parser("status")
-    kimi_status.add_argument("--json", action="store_true")
-    kimi_ask = kimi_sub.add_parser("ask")
-    kimi_ask.add_argument("prompt")
-    kimi_ask.add_argument("--system", default="")
-    kimi_ask.add_argument("--max-tokens", type=int, default=512)
-    kimi_ask.add_argument("--timeout", type=float, default=60.0)
-    kimi_ask.add_argument("--json", action="store_true")
+    kimi_status = kimi_sub.add_parser("status", help="Show provider/config status without printing the API key.")
+    kimi_status.add_argument("--json", action="store_true", help="Emit provider/config status as JSON.")
+    kimi_ask = kimi_sub.add_parser("ask", help="Send one prompt to Kimi and record usage.")
+    kimi_ask.add_argument("prompt", help="Prompt text to send.")
+    kimi_ask.add_argument("--system", default="", help="Optional system prompt.")
+    kimi_ask.add_argument("--max-tokens", type=int, default=512, help="Maximum output tokens.")
+    kimi_ask.add_argument("--timeout", type=float, default=60.0, help="Request timeout in seconds.")
+    kimi_ask.add_argument("--json", action="store_true", help="Emit response and usage as JSON.")
 
-    mail = sub.add_parser("mail", help="Inspect mail bridge integrations.")
+    mail = sub.add_parser(
+        "mail",
+        help="Inspect mail bridge integrations.",
+        description="Inspect local mail bridge integrations. Proton Mail ingestion is not wired yet.",
+        epilog="Example:\n  uv run bemine mail bridge-status",
+        formatter_class=HELP_FORMATTER,
+    )
     mail_sub = mail.add_subparsers(dest="mail_command", required=True)
-    bridge_status = mail_sub.add_parser("bridge-status")
-    bridge_status.add_argument("--imap-host", default="127.0.0.1")
-    bridge_status.add_argument("--imap-port", type=int, default=1143)
-    bridge_status.add_argument("--smtp-host", default="127.0.0.1")
-    bridge_status.add_argument("--smtp-port", type=int, default=1025)
-    bridge_status.add_argument("--json", action="store_true")
+    bridge_status = mail_sub.add_parser("bridge-status", help="Check Proton Bridge process and local IMAP/SMTP ports.")
+    bridge_status.add_argument("--imap-host", default="127.0.0.1", help="Bridge IMAP host.")
+    bridge_status.add_argument("--imap-port", type=int, default=1143, help="Bridge IMAP port.")
+    bridge_status.add_argument("--smtp-host", default="127.0.0.1", help="Bridge SMTP host.")
+    bridge_status.add_argument("--smtp-port", type=int, default=1025, help="Bridge SMTP port.")
+    bridge_status.add_argument("--json", action="store_true", help="Emit readiness checks as JSON.")
 
-    tmux = sub.add_parser("tmux", help="Interact with tmux-backed managed sessions.")
+    tmux = sub.add_parser(
+        "tmux",
+        help="Interact with tmux-backed managed sessions.",
+        description="Interact with tmux-backed managed sessions.",
+        epilog=dedent(TMUX_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
     tmux_sub = tmux.add_subparsers(dest="tmux_command", required=True)
-    tmux_start = tmux_sub.add_parser("start")
-    tmux_start.add_argument("name")
-    tmux_start.add_argument("--command", default="bash")
-    tmux_send = tmux_sub.add_parser("send")
-    tmux_send.add_argument("name")
-    tmux_send.add_argument("text")
-    tmux_send.add_argument("--no-enter", action="store_true")
-    tmux_capture = tmux_sub.add_parser("capture")
-    tmux_capture.add_argument("name")
-    tmux_kill = tmux_sub.add_parser("kill")
-    tmux_kill.add_argument("name")
+    tmux_start = tmux_sub.add_parser("start", help="Start a detached managed tmux session.")
+    tmux_start.add_argument("name", help="tmux session name.")
+    tmux_start.add_argument("--command", default="bash", help="Command to run in the session. Defaults to bash.")
+    tmux_send = tmux_sub.add_parser("send", help="Send text to a managed tmux session.")
+    tmux_send.add_argument("name", help="tmux session name.")
+    tmux_send.add_argument("text", help="Text to send.")
+    tmux_send.add_argument("--no-enter", action="store_true", help="Send text without pressing Enter.")
+    tmux_capture = tmux_sub.add_parser("capture", help="Capture the tmux pane contents.")
+    tmux_capture.add_argument("name", help="tmux session name.")
+    tmux_kill = tmux_sub.add_parser("kill", help="Kill a managed tmux session.")
+    tmux_kill.add_argument("name", help="tmux session name.")
 
-    creds = sub.add_parser("credentials", help="Inventory credential profiles without printing secrets.")
+    creds = sub.add_parser(
+        "credentials",
+        help="Inventory credential profiles without printing secrets.",
+        description="Inventory credential profiles without printing secrets.",
+        epilog="Examples:\n  uv run bemine credentials scan\n  uv run bemine credentials list --json",
+        formatter_class=HELP_FORMATTER,
+    )
     creds_sub = creds.add_subparsers(dest="credentials_command", required=True)
-    creds_sub.add_parser("scan")
-    creds_list = creds_sub.add_parser("list")
-    creds_list.add_argument("--json", action="store_true")
+    creds_sub.add_parser("scan", help="Scan standard locations and ~/.fmw metadata without printing secret values.")
+    creds_list = creds_sub.add_parser("list", help="List discovered credential profiles and gate policy.")
+    creds_list.add_argument("--json", action="store_true", help="Emit profiles as JSON.")
 
-    perms = sub.add_parser("permissions", help="Create and resolve gated credential requests.")
+    perms = sub.add_parser(
+        "permissions",
+        help="Create and resolve gated credential requests.",
+        description="Create and resolve gated credential requests.",
+        epilog=dedent(PERMISSIONS_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
     perms_sub = perms.add_subparsers(dest="permissions_command", required=True)
-    perm_req = perms_sub.add_parser("request")
+    perm_req = perms_sub.add_parser("request", help="Create a quiet local permission request.")
     _add_permission_request_args(perm_req, notify_default=False)
-    perm_ask = perms_sub.add_parser("ask")
+    perm_ask = perms_sub.add_parser("ask", help="Create a permission request and notify Discord by default.")
     _add_permission_request_args(perm_ask, notify_default=True)
-    perm_list = perms_sub.add_parser("list")
-    perm_list.add_argument("--status", default="")
-    perm_list.add_argument("--json", action="store_true")
-    perm_approve = perms_sub.add_parser("approve")
-    perm_approve.add_argument("request_id")
-    perm_approve.add_argument("--actor", default="cli")
-    perm_approve.add_argument("--totp", default="")
-    perm_deny = perms_sub.add_parser("deny")
-    perm_deny.add_argument("request_id")
-    perm_deny.add_argument("--actor", default="cli")
+    perm_list = perms_sub.add_parser("list", help="List permission requests.")
+    perm_list.add_argument("--status", default="", help="Filter by status, e.g. pending, approved, denied.")
+    perm_list.add_argument("--json", action="store_true", help="Emit requests as JSON.")
+    perm_approve = perms_sub.add_parser("approve", help="Approve a pending request, optionally with TOTP.")
+    perm_approve.add_argument("request_id", help="Permission request id, e.g. perm_xxxxx.")
+    perm_approve.add_argument("--actor", default="cli", help="Approver identity for audit log.")
+    perm_approve.add_argument("--totp", default="", help="TOTP code when required.")
+    perm_deny = perms_sub.add_parser("deny", help="Deny a pending request.")
+    perm_deny.add_argument("request_id", help="Permission request id, e.g. perm_xxxxx.")
+    perm_deny.add_argument("--actor", default="cli", help="Denying actor for audit log.")
 
-    proxy = sub.add_parser("proxy", help="Use approved credential requests through a broker.")
+    proxy = sub.add_parser(
+        "proxy",
+        help="Use approved credential requests through a broker.",
+        description="Use approved credential requests through a broker contract instead of raw secret reads.",
+        epilog="Example:\n  uv run bemine proxy check perm_xxxxx",
+        formatter_class=HELP_FORMATTER,
+    )
     proxy_sub = proxy.add_subparsers(dest="proxy_command", required=True)
-    proxy_check = proxy_sub.add_parser("check")
-    proxy_check.add_argument("request_id")
-    proxy_check.add_argument("--actor", default="cli")
+    proxy_check = proxy_sub.add_parser("check", help="Verify that a request is approved for proxy use.")
+    proxy_check.add_argument("request_id", help="Permission request id.")
+    proxy_check.add_argument("--actor", default="cli", help="Actor requesting proxy use.")
 
-    jobs = sub.add_parser("jobs", help="Manage scheduled Bemine jobs.")
+    jobs = sub.add_parser(
+        "jobs",
+        help="Manage scheduled Bemine jobs.",
+        description="Manage scheduled Bemine jobs.",
+        epilog=dedent(JOBS_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
     jobs_sub = jobs.add_subparsers(dest="jobs_command", required=True)
-    jobs_sub.add_parser("seed")
-    jobs_list = jobs_sub.add_parser("list")
-    jobs_list.add_argument("--json", action="store_true")
-    jobs_run = jobs_sub.add_parser("run")
-    jobs_run.add_argument("job_id")
-    jobs_run.add_argument("--no-notify", dest="notify", action="store_false")
+    jobs_sub.add_parser("seed", help="Seed built-in jobs such as daily_digest and morning_plan.")
+    jobs_list = jobs_sub.add_parser("list", help="List jobs, schedules, next run times, and failures.")
+    jobs_list.add_argument("--json", action="store_true", help="Emit jobs as JSON.")
+    jobs_run = jobs_sub.add_parser("run", help="Run one job immediately.")
+    jobs_run.add_argument("job_id", help="Job id to run.")
+    jobs_run.add_argument("--no-notify", dest="notify", action="store_false", help="Do not send Discord notification.")
     jobs_run.set_defaults(notify=True)
-    jobs_reminder = jobs_sub.add_parser("add-reminder")
-    jobs_reminder.add_argument("job_id")
+    jobs_reminder = jobs_sub.add_parser("add-reminder", help="Create or update a recurring reminder job.")
+    jobs_reminder.add_argument("job_id", help="Stable reminder job id.")
     jobs_reminder.add_argument("schedule", help="Five-field cron schedule, e.g. '30 8 * * *'.")
-    jobs_reminder.add_argument("--text", required=True)
-    jobs_reminder.add_argument("--no-notify", dest="notify", action="store_false")
+    jobs_reminder.add_argument("--text", required=True, help="Reminder text to send.")
+    jobs_reminder.add_argument("--no-notify", dest="notify", action="store_false", help="Record job without Discord delivery.")
     jobs_reminder.set_defaults(notify=True)
-    jobs_enable = jobs_sub.add_parser("enable")
-    jobs_enable.add_argument("job_id")
-    jobs_disable = jobs_sub.add_parser("disable")
-    jobs_disable.add_argument("job_id")
+    jobs_enable = jobs_sub.add_parser("enable", help="Enable a job.")
+    jobs_enable.add_argument("job_id", help="Job id.")
+    jobs_disable = jobs_sub.add_parser("disable", help="Disable a job.")
+    jobs_disable.add_argument("job_id", help="Job id.")
 
-    daemon = sub.add_parser("daemon", help="Run the Bemine scheduler daemon.")
-    daemon.add_argument("--once", action="store_true")
-    daemon.add_argument("--poll-seconds", type=int, default=30)
-    daemon.add_argument("--json", action="store_true")
+    daemon = sub.add_parser(
+        "daemon",
+        help="Run the Bemine scheduler daemon.",
+        description="Run the Bemine scheduler daemon that executes due SQLite-backed jobs.",
+        epilog="Examples:\n  uv run bemine daemon --once\n  uv run bemine daemon --poll-seconds 30",
+        formatter_class=HELP_FORMATTER,
+    )
+    daemon.add_argument("--once", action="store_true", help="Run due jobs once, then exit.")
+    daemon.add_argument("--poll-seconds", type=int, default=30, help="Polling interval for daemon mode.")
+    daemon.add_argument("--json", action="store_true", help="Emit one-shot run results as JSON.")
 
-    systemd = sub.add_parser("systemd", help="Install persistent systemd user units.")
+    systemd = sub.add_parser(
+        "systemd",
+        help="Install persistent systemd user units.",
+        description="Install or render user-level systemd units for bemine-daemon and mayor-discord-gateway.",
+        epilog="Examples:\n  uv run bemine systemd install --now\n  uv run bemine systemd render",
+        formatter_class=HELP_FORMATTER,
+    )
     systemd_sub = systemd.add_subparsers(dest="systemd_command", required=True)
-    systemd_install = systemd_sub.add_parser("install")
-    systemd_install.add_argument("--now", action="store_true")
-    systemd_install.add_argument("--no-linger", dest="linger", action="store_false")
+    systemd_install = systemd_sub.add_parser("install", help="Install systemd user units.")
+    systemd_install.add_argument("--now", action="store_true", help="Enable and start units immediately.")
+    systemd_install.add_argument("--no-linger", dest="linger", action="store_false", help="Do not enable user lingering.")
     systemd_install.set_defaults(linger=True)
-    systemd_render = systemd_sub.add_parser("render")
-    systemd_render.add_argument("--json", action="store_true")
+    systemd_render = systemd_sub.add_parser("render", help="Print unit files without installing.")
+    systemd_render.add_argument("--json", action="store_true", help="Emit rendered unit text as JSON.")
 
-    discord = sub.add_parser("discord", help="Manage Discord integration.")
+    discord = sub.add_parser(
+        "discord",
+        help="Manage Discord integration.",
+        description="Manage Discord integration.",
+        epilog=dedent(DISCORD_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
     discord_sub = discord.add_subparsers(dest="discord_command", required=True)
     write_channels = discord_sub.add_parser(
         "write-project-channels",
         help="Write the local Discord project route file from indexed projects.",
     )
-    write_channels.add_argument("--limit", type=int, default=200)
-    sync_channels = discord_sub.add_parser("sync-project-channels")
-    sync_channels.add_argument("--guild-id", default=os.environ.get("MAYOR_DISCORD_GUILD_ID", ""))
-    sync_channels.add_argument("--limit", type=int, default=200)
+    write_channels.add_argument("--limit", type=int, default=200, help="Maximum indexed projects to write.")
+    sync_channels = discord_sub.add_parser("sync-project-channels", help="Create/update Discord project channels from indexed projects.")
+    sync_channels.add_argument("--guild-id", default=os.environ.get("MAYOR_DISCORD_GUILD_ID", ""), help="Discord guild/server id.")
+    sync_channels.add_argument("--limit", type=int, default=200, help="Maximum indexed projects to sync.")
     sync_channels.add_argument(
         "--prune",
         action="store_true",
@@ -223,11 +471,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_permission_request_args(parser: argparse.ArgumentParser, *, notify_default: bool) -> None:
-    parser.add_argument("credential_id")
-    parser.add_argument("--reason", required=True)
-    parser.add_argument("--project-id", default="")
-    parser.add_argument("--session-id", default="")
-    parser.add_argument("--runtime", default="")
+    parser.add_argument("credential_id", help="Credential id from `bemine capabilities`, e.g. aws:any.")
+    parser.add_argument("--reason", required=True, help="Human-readable reason for gated access.")
+    parser.add_argument("--project-id", default="", help="Project id requesting access.")
+    parser.add_argument("--session-id", default="", help="Runtime session id requesting access.")
+    parser.add_argument("--runtime", default="", help="Runtime name requesting access, e.g. codex.")
     notify = parser.add_mutually_exclusive_group()
     if notify_default:
         parser.set_defaults(notify_discord=True)
