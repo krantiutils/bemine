@@ -16,6 +16,7 @@ import aiohttp
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
+from bemine.operator_context import load_operator_context
 from bemine.project_filters import ignored_project_reason
 from bemine.status import _redact
 
@@ -501,6 +502,7 @@ def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str
     attachment_lines = [
         f"- {path}" for path in request.attachments
     ] or ["- none"]
+    operator_context = load_operator_context().text or "No operator context files found."
     return "\n".join(
         [
             "You are Bemine's Codex worker for a Discord-routed task.",
@@ -518,6 +520,16 @@ def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str
             "",
             "Saved attachments:",
             *attachment_lines,
+            "",
+            "Shared operator context:",
+            operator_context,
+            "",
+            "Credential and infrastructure rules:",
+            "- Use `bemine capabilities` before assuming credential access.",
+            "- Hugging Face identity/token access is baseline shared when present; never print the token.",
+            "- AWS, Google, Porkbun, and other cost-incurring or infrastructure credentials require explicit permission.",
+            "- If a task needs gated access, ask through `bemine permissions ask <credential_id> --reason \"<why>\"`.",
+            "- Deployment runbooks live in operator context, especially `~/deploy.md`.",
             "",
             "Operational rules:",
             "- Work inside the project root unless the user clearly asks for coordination only.",

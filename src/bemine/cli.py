@@ -14,6 +14,7 @@ from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
 from .notifications import notify_permission_request_via_discord
+from .operator_context import load_operator_context, render_operator_context
 from .proxy import CredentialProxy
 from .status import collect_fleet_status, render_status
 from .systemd import install_user_units, render_user_units
@@ -69,6 +70,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the worker-facing capability manifest.",
     )
     capabilities.add_argument("--json", action="store_true")
+
+    context = sub.add_parser(
+        "context",
+        help="Show redacted operator context injected into workers.",
+    )
+    context_sub = context.add_subparsers(dest="context_command", required=True)
+    context_show = context_sub.add_parser("show")
+    context_show.add_argument("--limit", type=int, default=12_000)
+    context_show.add_argument("--json", action="store_true")
 
     kimi = sub.add_parser("kimi", help="Inspect or call the configured Kimi provider.")
     kimi_sub = kimi.add_subparsers(dest="kimi_command", required=True)
@@ -267,6 +277,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(manifest, indent=2, sort_keys=True))
         else:
             print(render_capability_manifest(manifest), end="")
+    elif args.command == "context":
+        if args.context_command == "show":
+            context = load_operator_context(limit=args.limit)
+            if args.json:
+                print(json.dumps(context.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_operator_context(context), end="")
     elif args.command == "kimi":
         handler = KimiHandler(settings.hermes_home)
         if args.kimi_command == "status":

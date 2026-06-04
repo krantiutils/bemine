@@ -27,6 +27,7 @@ Functional now:
 - Image attachments are passed to Codex; non-image attachments are saved and listed in the prompt.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
+- `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
 
 Not functional yet:
 
@@ -45,6 +46,7 @@ uv run bemine status
 uv run bemine rundown
 uv run bemine search "blocked schema"
 uv run bemine capabilities
+uv run bemine context show
 uv run bemine kimi status
 uv run bemine mail bridge-status
 uv run bemine jobs list
@@ -126,12 +128,17 @@ BEMINE_KIMI_HOME=~/devlog/raw/kimi
 BEMINE_HERMES_HOME=~/.hermes
 BEMINE_DEVICE_ID=cdjk
 BEMINE_IGNORED_PROJECT_ROOTS=~/gt
+BEMINE_OPERATOR_CONTEXT_FILES=~/deploy.md
 BEMINE_TOTP_SECRET=
 ```
 
 `BEMINE_IGNORED_PROJECT_ROOTS` is a `:`-separated list on Linux/macOS. When it
 is not set, Bemine ignores `~/gt` as a legacy workspace root so migrated
 projects do not reappear from old session history.
+
+`BEMINE_OPERATOR_CONTEXT_FILES` is a `:`-separated list of runbook files. When
+it is not set, Bemine reads `~/deploy.md`. Context is redacted before it is
+shown or injected into worker prompts.
 
 Discord settings can use `MAYOR_DISCORD_*` or fall back to Hermes-compatible
 `DISCORD_*` environment variables:
@@ -191,6 +198,29 @@ permission requests, usage samples, audit events, locks, and FTS5.
 
 Obsidian is the human memory: project pages, daily logs, decisions, handoffs,
 job notes, and summaries.
+
+## Operator Context
+
+Every Discord-routed Codex worker receives a redacted operator context block.
+By default this comes from `~/deploy.md`, so workers know how to approach
+Hetzner, Porkbun DNS, Traefik, Docker deploys, and similar shared operational
+procedures.
+
+Inspect exactly what workers see:
+
+```bash
+uv run bemine context show
+uv run bemine context show --json
+```
+
+The context renderer redacts private keys, common API tokens, and assignment
+values for keys such as `PORKBUN_API_KEY`, `PORKBUN_SECRET_API_KEY`,
+`HF_TOKEN`, `AWS_SECRET_ACCESS_KEY`, and `PASSWORD`.
+
+Credential policy still applies. If a worker needs Hugging Face, it should run
+`bemine capabilities` and use baseline shared HF identity when present. If it
+needs gated infrastructure secrets such as AWS, Google, or Porkbun credentials,
+it must create a permission request and wait for approval.
 
 ## Status
 
@@ -284,6 +314,10 @@ Approval codes are redacted before Discord messages are stored locally.
 
 ## Tests
 
+The agent working on Bemine is responsible for running relevant tests before
+claiming a change is done. For dispatcher, daemon, Discord, credential, and
+mail changes, run the full suite unless there is a clear reason not to.
+
 The tests are integration-oriented:
 
 - CLI scan over fake Codex and Claude logs
@@ -296,10 +330,22 @@ The tests are integration-oriented:
 - Kimi handler wire-shape and usage recording
 - cron scheduling, daily digest/reminder execution, and systemd unit rendering
 - Proton Bridge readiness checks
+- operator context redaction and prompt injection
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:
 
 ```bash
 uv run pytest -q
+```
+
+Useful live smoke checks on this machine:
+
+```bash
+uv run bemine status
+uv run bemine jobs list
+uv run bemine jobs run daily_digest --no-notify
+uv run bemine mail bridge-status
+uv run bemine context show
+systemctl --user is-active bemine-daemon mayor-discord-gateway
 ```
