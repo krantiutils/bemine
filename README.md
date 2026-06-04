@@ -21,6 +21,10 @@ The current implementation is the first working vertical slice:
 uv run bemine scan
 uv run bemine rundown
 uv run bemine search "blocked schema"
+uv run bemine credentials scan
+uv run bemine credentials list
+uv run bemine permissions request fmw:legacy --reason "need legacy env for migration"
+uv run bemine permissions approve perm_xxxxx --totp 123456
 uv run bemine tmux start bemine-demo
 uv run bemine tmux send bemine-demo "echo hello"
 uv run bemine tmux capture bemine-demo
@@ -54,6 +58,7 @@ BEMINE_CODEX_HOME=~/.codex
 BEMINE_CLAUDE_HOME=~/.claude
 BEMINE_KIMI_HOME=~/devlog/raw/kimi
 BEMINE_DEVICE_ID=cdjk
+BEMINE_TOTP_SECRET=
 ```
 
 Discord settings can use `MAYOR_DISCORD_*` or fall back to Hermes-compatible
@@ -89,6 +94,45 @@ permission requests, usage samples, audit events, locks, and FTS5.
 Obsidian is the human memory: project pages, daily logs, decisions, handoffs,
 job notes, and summaries.
 
+## Credential Gate
+
+Credential access is classified into baseline shared identity and gated
+cost-incurring or legacy-secret access.
+
+Baseline shared identity examples:
+
+- GitHub personal account
+- GitHub `ampixa` org access
+- Codeberg account
+- Hugging Face `ampixa` org token
+- Git signing layer
+
+Gated examples:
+
+- `fmw:legacy`
+- AWS credentials
+- Google API credentials
+- paid provider credentials
+
+Gated credentials require permission requests and can require TOTP:
+
+```bash
+uv run bemine credentials scan
+uv run bemine permissions request aws:any --reason "deploy smoke test"
+uv run bemine permissions approve perm_xxxxx --totp 123456
+```
+
+Discord supports:
+
+```text
+bemine credentials
+bemine permissions
+bemine approve perm_xxxxx 123456
+bemine deny perm_xxxxx
+```
+
+Approval codes are redacted before Discord messages are stored locally.
+
 ## Tests
 
 The tests are integration-oriented:
@@ -97,6 +141,8 @@ The tests are integration-oriented:
 - SQLite + FTS5 search verification
 - Obsidian project page update verification
 - security and usage ledger verification
+- TOTP-gated credential request and approval flow
+- Discord approval-code redaction
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:
@@ -104,4 +150,3 @@ Run:
 ```bash
 uv run pytest -q
 ```
-

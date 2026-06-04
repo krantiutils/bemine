@@ -373,6 +373,23 @@ class BemineDB:
                 ),
             )
 
+    def list_credential_profiles(self) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM credential_profiles
+                ORDER BY kind, credential_id
+                """
+            ).fetchall()
+
+    def get_credential_profile(self, credential_id: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM credential_profiles WHERE credential_id = ?",
+                (credential_id,),
+            ).fetchone()
+
     def create_permission_request(
         self,
         *,
@@ -404,6 +421,59 @@ class BemineDB:
                     discord_message_id,
                     time.time(),
                 ),
+            )
+
+    def get_permission_request(self, request_id: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT pr.*, cp.totp_required, cp.approval_policy, cp.name AS credential_name
+                FROM permission_requests pr
+                JOIN credential_profiles cp ON cp.credential_id = pr.credential_id
+                WHERE pr.request_id = ?
+                """,
+                (request_id,),
+            ).fetchone()
+
+    def list_permission_requests(self, *, status: str | None = None) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            if status:
+                return conn.execute(
+                    """
+                    SELECT pr.*, cp.name AS credential_name
+                    FROM permission_requests pr
+                    JOIN credential_profiles cp ON cp.credential_id = pr.credential_id
+                    WHERE pr.status = ?
+                    ORDER BY pr.created_at DESC
+                    """,
+                    (status,),
+                ).fetchall()
+            return conn.execute(
+                """
+                SELECT pr.*, cp.name AS credential_name
+                FROM permission_requests pr
+                JOIN credential_profiles cp ON cp.credential_id = pr.credential_id
+                ORDER BY pr.created_at DESC
+                """
+            ).fetchall()
+
+    def resolve_permission_request(
+        self,
+        *,
+        request_id: str,
+        status: str,
+        resolved_by: str,
+    ) -> None:
+        if status not in {"approved", "denied"}:
+            raise ValueError("status must be approved or denied")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE permission_requests
+                SET status = ?, resolved_at = ?, resolved_by = ?
+                WHERE request_id = ?
+                """,
+                (status, time.time(), resolved_by, request_id),
             )
 
     def record_audit_event(

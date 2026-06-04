@@ -11,6 +11,7 @@ import discord
 from discord.ext import commands
 
 from bemine.config import BemineSettings
+from bemine.credentials import CredentialInventory, PermissionGate
 from bemine.kernel import BemineKernel
 
 from .config import Settings
@@ -20,6 +21,10 @@ from .store import Store
 LOG = logging.getLogger("mayor.discord.gateway")
 SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 VOICE_SUFFIXES = {".ogg", ".opus", ".mp3", ".m4a", ".wav", ".webm"}
+APPROVAL_CODE_RE = re.compile(
+    r"\b((?:!?(?:mayor|bemine)\s+)?approve\s+\S+\s+)(\d{6,8})\b",
+    re.IGNORECASE,
+)
 
 
 def _safe_filename(name: str) -> str:
@@ -82,11 +87,13 @@ class MayorDiscordGateway:
                 return
 
             saved_attachments = await self._record_message(message)
+            normalized = message.content.strip()
+            normalized_lower = normalized.lower()
 
-            if message.content.strip().lower() in {"!mayor ping", "mayor ping"}:
+            if normalized_lower in {"!mayor ping", "mayor ping"}:
                 await message.reply("Mayor gateway online.", mention_author=False)
                 return
-            if message.content.strip().lower() in {"!mayor status", "mayor status"}:
+            if normalized_lower in {"!mayor status", "mayor status"}:
                 stats = self.store.stats()
                 await message.reply(
                     "Mayor gateway online.\n"
@@ -96,7 +103,7 @@ class MayorDiscordGateway:
                     mention_author=False,
                 )
                 return
-            if message.content.strip().lower() in {
+            if normalized_lower in {
                 "!mayor rundown",
                 "mayor rundown",
                 "!bemine rundown",
@@ -110,6 +117,70 @@ class MayorDiscordGateway:
                     _discord_chunk(rundown, limit=1900)[0],
                     mention_author=False,
                 )
+                return
+            if normalized_lower in {
+                "!mayor credentials",
+                "mayor credentials",
+                "!bemine credentials",
+                "bemine credentials",
+            }:
+                kernel = BemineKernel(BemineSettings.load())
+                CredentialInventory(kernel.db, device_id=kernel.settings.device_id).scan()
+                rows = kernel.db.list_credential_profiles()
+                lines = [
+                    f"{row['credential_id']} [{row['kind']}] {row['approval_policy']}"
+                    + (" totp" if row["totp_required"] else "")
+                    for row in rows
+                ]
+                await message.reply(
+                    _discord_chunk("Credential profiles:\n" + "\n".join(lines), limit=1900)[0],
+                    mention_author=False,
+                )
+                return
+            if normalized_lower in {
+                "!mayor permissions",
+                "mayor permissions",
+                "!bemine permissions",
+                "bemine permissions",
+            }:
+                kernel = BemineKernel(BemineSettings.load())
+                rows = kernel.db.list_permission_requests(status="pending")
+                if not rows:
+                    text = "No pending permission requests."
+                else:
+                    text = "Pending permission requests:\n" + "\n".join(
+                        f"{row['request_id']} {row['credential_id']} - {row['reason']}"
+                        for row in rows
+                    )
+                await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
+                return
+            approval = _parse_approval_command(normalized)
+            if approval:
+                request_id, totp_code = approval
+                kernel = BemineKernel(BemineSettings.load())
+                try:
+                    PermissionGate(kernel.db).approve(
+                        request_id,
+                        actor=f"discord:{message.author.id}",
+                        totp_code=totp_code,
+                    )
+                except Exception as exc:
+                    await message.reply(f"Approval failed: {exc}", mention_author=False)
+                    return
+                await message.reply(f"Approved `{request_id}`.", mention_author=False)
+                return
+            denial = _parse_deny_command(normalized)
+            if denial:
+                kernel = BemineKernel(BemineSettings.load())
+                try:
+                    PermissionGate(kernel.db).deny(
+                        denial,
+                        actor=f"discord:{message.author.id}",
+                    )
+                except Exception as exc:
+                    await message.reply(f"Deny failed: {exc}", mention_author=False)
+                    return
+                await message.reply(f"Denied `{denial}`.", mention_author=False)
                 return
 
             await self.bot.process_commands(message)
@@ -146,7 +217,7 @@ class MayorDiscordGateway:
             guild_id=guild_id,
             author_id=str(message.author.id),
             author_name=author_name,
-            content=message.content or "",
+            content=_redact_sensitive_message(message.content or ""),
             is_dm=is_dm,
             created_at=message.created_at.isoformat(),
         )
@@ -202,6 +273,34 @@ def _discord_chunk(text: str, *, limit: int = 1900) -> list[str]:
     if current:
         chunks.append("\n".join(current))
     return chunks or [text[:limit]]
+
+
+def _redact_sensitive_message(content: str) -> str:
+    return APPROVAL_CODE_RE.sub(lambda m: f"{m.group(1)}<totp-redacted>", content)
+
+
+def _parse_approval_command(content: str) -> tuple[str, str] | None:
+    parts = content.strip().split()
+    if not parts:
+        return None
+    if parts[0].lower() in {"!mayor", "mayor", "!bemine", "bemine"}:
+        parts = parts[1:]
+    if len(parts) < 2 or parts[0].lower() != "approve":
+        return None
+    request_id = parts[1]
+    totp_code = parts[2] if len(parts) >= 3 else ""
+    return request_id, totp_code
+
+
+def _parse_deny_command(content: str) -> str | None:
+    parts = content.strip().split()
+    if not parts:
+        return None
+    if parts[0].lower() in {"!mayor", "mayor", "!bemine", "bemine"}:
+        parts = parts[1:]
+    if len(parts) < 2 or parts[0].lower() not in {"deny", "reject"}:
+        return None
+    return parts[1]
 
 
 def main() -> None:
