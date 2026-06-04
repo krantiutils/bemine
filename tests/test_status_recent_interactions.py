@@ -139,6 +139,61 @@ def test_cli_status_local_only_outputs_recent_interaction_json(tmp_path: Path) -
     assert "latest interaction is user input" in payload["statuses"][0]["ask_summary"]
 
 
+def test_status_filters_ignored_project_roots(tmp_path: Path, monkeypatch) -> None:
+    ignored_root = tmp_path / "legacy"
+    kept_root = tmp_path / "github" / "active"
+    monkeypatch.setenv("BEMINE_IGNORED_PROJECT_ROOTS", str(ignored_root))
+    ignored_file = tmp_path / "codex" / "sessions" / "2026" / "06" / "04" / (
+        "rollout-2026-06-04T10-19-22-ignored.jsonl"
+    )
+    kept_file = tmp_path / "claude" / "projects" / "-active" / "claude-1.jsonl"
+    ignored_file.parent.mkdir(parents=True)
+    kept_file.parent.mkdir(parents=True)
+    _write_jsonl(
+        ignored_file,
+        [
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": "ignored-session",
+                    "cwd": str(ignored_root / "project"),
+                    "model": "openai",
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"text": "ignored session"}],
+                },
+            },
+        ],
+    )
+    _write_jsonl(
+        kept_file,
+        [
+            {
+                "sessionId": "kept-session",
+                "cwd": str(kept_root),
+                "gitBranch": "main",
+                "type": "assistant",
+                "message": {"content": [{"text": "kept session"}]},
+            }
+        ],
+    )
+
+    statuses = collect_local_status(
+        device_id="testbox",
+        codex_home=tmp_path / "codex",
+        claude_home=tmp_path / "claude",
+        kimi_home=tmp_path / "kimi",
+        limit_per_runtime=4,
+    )
+
+    assert [status.cwd for status in statuses] == [str(kept_root)]
+
+
 def test_status_ask_detection_ignores_explanatory_agent_text() -> None:
     asks, summary = _infer_ask(
         last_role="assistant",

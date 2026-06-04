@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import BemineSettings
+from .project_filters import ignored_project_reason
 from .util import compact_text
 
 
@@ -77,6 +78,7 @@ def collect_fleet_status(
             )
         except Exception as exc:
             errors.append(StatusError(device_id=device, error=compact_text(str(exc), limit=160)))
+    statuses = [status for status in statuses if not _status_is_ignored(status)]
     statuses.sort(key=lambda item: item.last_interaction_at, reverse=True)
     return _dedupe_statuses(statuses), errors
 
@@ -118,7 +120,7 @@ def collect_local_status(
         )
     )
     rows.sort(key=lambda item: item.last_interaction_at, reverse=True)
-    return rows
+    return [row for row in rows if not _status_is_ignored(row)]
 
 
 def _dedupe_statuses(statuses: list[SessionStatus]) -> list[SessionStatus]:
@@ -131,6 +133,10 @@ def _dedupe_statuses(statuses: list[SessionStatus]) -> list[SessionStatus]:
         seen.add(key)
         deduped.append(status)
     return deduped
+
+
+def _status_is_ignored(status: SessionStatus) -> bool:
+    return bool(status.cwd and ignored_project_reason(status.cwd))
 
 
 def collect_ssh_status(

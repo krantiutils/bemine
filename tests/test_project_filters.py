@@ -18,6 +18,16 @@ def test_ignored_project_reason_filters_default_legacy_gt_root(
     assert ignored_project_reason(tmp_path / "github" / "urja") is None
 
 
+def test_ignored_project_reason_filters_remote_home_gt_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("BEMINE_IGNORED_PROJECT_ROOTS", raising=False)
+
+    assert (
+        ignored_project_reason("/Users/cdjk/gt/deacon/dogs/boot")
+        == "ignored project root: /Users/cdjk/gt"
+    )
+    assert ignored_project_reason("/Users/cdjk/github/deacon") is None
+
+
 def test_ignored_project_roots_can_be_overridden(tmp_path: Path, monkeypatch) -> None:
     root_a = tmp_path / "legacy-a"
     root_b = tmp_path / "legacy-b"
