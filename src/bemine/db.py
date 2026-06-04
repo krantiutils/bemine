@@ -1,0 +1,478 @@
+from __future__ import annotations
+
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
+
+from .models import ProjectRundown, SessionRecord
+from .util import project_id_from_cwd, project_name_from_cwd
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS devices (
+    device_id TEXT PRIMARY KEY,
+    alias TEXT NOT NULL,
+    last_seen_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+    project_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    first_seen_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_devices (
+    project_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    last_seen_at REAL NOT NULL,
+    PRIMARY KEY(project_id, device_id, cwd),
+    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+    FOREIGN KEY(device_id) REFERENCES devices(device_id)
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id TEXT PRIMARY KEY,
+    runtime TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    model TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    message_count INTEGER NOT NULL,
+    tool_count INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    ingested_at REAL NOT NULL,
+    FOREIGN KEY(project_id) REFERENCES projects(project_id),
+    FOREIGN KEY(device_id) REFERENCES devices(device_id)
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    trigger_type TEXT NOT NULL,
+    schedule TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    last_run_at TEXT,
+    next_run_at TEXT,
+    failure_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+    run_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    output TEXT NOT NULL,
+    FOREIGN KEY(job_id) REFERENCES jobs(job_id)
+);
+
+CREATE TABLE IF NOT EXISTS credential_profiles (
+    credential_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    storage_ref TEXT NOT NULL,
+    approval_policy TEXT NOT NULL,
+    totp_required INTEGER NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS permission_requests (
+    request_id TEXT PRIMARY KEY,
+    credential_id TEXT NOT NULL,
+    project_id TEXT,
+    session_id TEXT,
+    device_id TEXT,
+    runtime TEXT,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL,
+    discord_message_id TEXT,
+    created_at REAL NOT NULL,
+    resolved_at REAL,
+    resolved_by TEXT,
+    FOREIGN KEY(credential_id) REFERENCES credential_profiles(credential_id)
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    category TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    device_id TEXT,
+    project_id TEXT,
+    session_id TEXT,
+    payload_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS usage_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    provider TEXT NOT NULL,
+    account TEXT,
+    runtime TEXT,
+    session_id TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_estimate REAL,
+    limit_name TEXT,
+    limit_remaining REAL,
+    raw_json TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
+    session_id UNINDEXED,
+    project_id UNINDEXED,
+    runtime,
+    cwd,
+    title,
+    summary,
+    tokenize='unicode61'
+);
+"""
+
+
+class BemineDB:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.init()
+
+    def connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    def init(self) -> None:
+        with self.connect() as conn:
+            conn.executescript(SCHEMA)
+
+    def upsert_device(self, device_id: str, alias: str | None = None) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO devices(device_id, alias, last_seen_at)
+                VALUES(?, ?, ?)
+                ON CONFLICT(device_id) DO UPDATE SET
+                    alias=excluded.alias,
+                    last_seen_at=excluded.last_seen_at
+                """,
+                (device_id, alias or device_id, now),
+            )
+
+    def upsert_session(self, record: SessionRecord) -> str:
+        project_id = project_id_from_cwd(record.cwd)
+        project_name = project_name_from_cwd(record.cwd)
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO projects(project_id, name, cwd, first_seen_at, last_seen_at)
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    name=excluded.name,
+                    cwd=excluded.cwd,
+                    last_seen_at=excluded.last_seen_at
+                """,
+                (project_id, project_name, record.cwd, now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO project_devices(project_id, device_id, cwd, last_seen_at)
+                VALUES(?, ?, ?, ?)
+                ON CONFLICT(project_id, device_id, cwd) DO UPDATE SET
+                    last_seen_at=excluded.last_seen_at
+                """,
+                (project_id, record.device_id, record.cwd, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO sessions(
+                    session_id, runtime, device_id, project_id, cwd, source_path,
+                    started_at, updated_at, model, title, summary, message_count,
+                    tool_count, status, ingested_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    runtime=excluded.runtime,
+                    device_id=excluded.device_id,
+                    project_id=excluded.project_id,
+                    cwd=excluded.cwd,
+                    source_path=excluded.source_path,
+                    started_at=excluded.started_at,
+                    updated_at=excluded.updated_at,
+                    model=excluded.model,
+                    title=excluded.title,
+                    summary=excluded.summary,
+                    message_count=excluded.message_count,
+                    tool_count=excluded.tool_count,
+                    status=excluded.status,
+                    ingested_at=excluded.ingested_at
+                """,
+                (
+                    record.session_id,
+                    record.runtime,
+                    record.device_id,
+                    project_id,
+                    record.cwd,
+                    str(record.source_path),
+                    record.started_at,
+                    record.updated_at,
+                    record.model,
+                    record.title,
+                    record.summary,
+                    record.message_count,
+                    record.tool_count,
+                    record.status,
+                    now,
+                ),
+            )
+            conn.execute("DELETE FROM session_fts WHERE session_id = ?", (record.session_id,))
+            conn.execute(
+                """
+                INSERT INTO session_fts(session_id, project_id, runtime, cwd, title, summary)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.session_id,
+                    project_id,
+                    record.runtime,
+                    record.cwd,
+                    record.title,
+                    record.summary,
+                ),
+            )
+        return project_id
+
+    def rundown(self, *, limit: int = 30) -> list[ProjectRundown]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    p.project_id,
+                    p.name,
+                    p.cwd,
+                    MAX(s.updated_at) AS latest_at,
+                    COUNT(s.session_id) AS session_count,
+                    GROUP_CONCAT(DISTINCT s.runtime) AS runtimes,
+                    GROUP_CONCAT(DISTINCT s.device_id) AS devices
+                FROM projects p
+                JOIN sessions s ON s.project_id = p.project_id
+                GROUP BY p.project_id
+                ORDER BY latest_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            results: list[ProjectRundown] = []
+            for row in rows:
+                summary_rows = conn.execute(
+                    """
+                    SELECT runtime, title, summary
+                    FROM sessions
+                    WHERE project_id = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 3
+                    """,
+                    (row["project_id"],),
+                ).fetchall()
+                summaries = [
+                    f"{r['runtime']}: {r['title'] or r['summary']}".strip()
+                    for r in summary_rows
+                    if (r["title"] or r["summary"])
+                ]
+                results.append(
+                    ProjectRundown(
+                        project_id=row["project_id"],
+                        name=row["name"],
+                        cwd=row["cwd"],
+                        devices=sorted((row["devices"] or "").split(",")) if row["devices"] else [],
+                        latest_at=row["latest_at"] or "",
+                        session_count=int(row["session_count"] or 0),
+                        runtimes=sorted((row["runtimes"] or "").split(",")) if row["runtimes"] else [],
+                        summaries=summaries,
+                    )
+                )
+            return results
+
+    def search_sessions(self, query: str, *, limit: int = 20) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT s.*
+                FROM session_fts f
+                JOIN sessions s ON s.session_id = f.session_id
+                WHERE session_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (query, limit),
+            ).fetchall()
+
+    def counts(self) -> dict[str, int]:
+        with self.connect() as conn:
+            return {
+                "devices": conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0],
+                "projects": conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0],
+                "sessions": conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
+                "jobs": conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0],
+                "credential_profiles": conn.execute("SELECT COUNT(*) FROM credential_profiles").fetchone()[0],
+                "permission_requests": conn.execute("SELECT COUNT(*) FROM permission_requests").fetchone()[0],
+                "audit_events": conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
+                "usage_samples": conn.execute("SELECT COUNT(*) FROM usage_samples").fetchone()[0],
+            }
+
+    def upsert_credential_profile(
+        self,
+        *,
+        credential_id: str,
+        name: str,
+        kind: str,
+        storage_ref: str,
+        approval_policy: str,
+        totp_required: bool,
+    ) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO credential_profiles(
+                    credential_id, name, kind, storage_ref, approval_policy,
+                    totp_required, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(credential_id) DO UPDATE SET
+                    name=excluded.name,
+                    kind=excluded.kind,
+                    storage_ref=excluded.storage_ref,
+                    approval_policy=excluded.approval_policy,
+                    totp_required=excluded.totp_required,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    credential_id,
+                    name,
+                    kind,
+                    storage_ref,
+                    approval_policy,
+                    1 if totp_required else 0,
+                    now,
+                    now,
+                ),
+            )
+
+    def create_permission_request(
+        self,
+        *,
+        request_id: str,
+        credential_id: str,
+        reason: str,
+        project_id: str | None = None,
+        session_id: str | None = None,
+        device_id: str | None = None,
+        runtime: str | None = None,
+        discord_message_id: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO permission_requests(
+                    request_id, credential_id, project_id, session_id, device_id,
+                    runtime, reason, status, discord_message_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    request_id,
+                    credential_id,
+                    project_id,
+                    session_id,
+                    device_id,
+                    runtime,
+                    reason,
+                    discord_message_id,
+                    time.time(),
+                ),
+            )
+
+    def record_audit_event(
+        self,
+        *,
+        category: str,
+        event_type: str,
+        actor: str,
+        payload_json: str,
+        device_id: str | None = None,
+        project_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_events(
+                    ts, category, event_type, actor, device_id, project_id,
+                    session_id, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    time.time(),
+                    category,
+                    event_type,
+                    actor,
+                    device_id,
+                    project_id,
+                    session_id,
+                    payload_json,
+                ),
+            )
+
+    def record_usage_sample(
+        self,
+        *,
+        provider: str,
+        raw_json: str,
+        account: str | None = None,
+        runtime: str | None = None,
+        session_id: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        total_tokens: int = 0,
+        cost_estimate: float | None = None,
+        limit_name: str | None = None,
+        limit_remaining: float | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO usage_samples(
+                    ts, provider, account, runtime, session_id, input_tokens,
+                    output_tokens, total_tokens, cost_estimate, limit_name,
+                    limit_remaining, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    time.time(),
+                    provider,
+                    account,
+                    runtime,
+                    session_id,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    cost_estimate,
+                    limit_name,
+                    limit_remaining,
+                    raw_json,
+                ),
+            )
