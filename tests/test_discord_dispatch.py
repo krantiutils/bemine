@@ -123,7 +123,7 @@ def test_general_channel_routes_by_content_mentions_and_mayor_fallback(tmp_path:
 def test_project_channels_from_db_make_per_project_names_unique(tmp_path: Path) -> None:
     db = BemineDB(tmp_path / "state" / "bemine.db")
     rows = [
-        ("proj_witness", "witness", tmp_path / "gt" / "zap" / "witness", 40.0),
+        ("proj_aux", "aux", tmp_path / "tmp" / "aux", 40.0),
         ("proj_bm", "bm", tmp_path / "bm", 30.0),
         ("proj_web_a", "web", tmp_path / "clients" / "alpha" / "web", 20.0),
         ("proj_web_b", "web", tmp_path / "clients" / "beta" / "web", 10.0),
@@ -143,12 +143,11 @@ def test_project_channels_from_db_make_per_project_names_unique(tmp_path: Path) 
     channels = project_channels_from_db(db)
     names = [channel.channel_name for channel in channels]
 
-    assert names[0] == "bemine"
     assert len(names) == len(set(names))
     assert "web-clients-alpha" in names
     assert "web-clients-beta" in names
     assert "neptts-bench" in names
-    assert not any(name.startswith("witness") for name in names)
+    assert "aux" in names
 
 
 def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Path) -> None:

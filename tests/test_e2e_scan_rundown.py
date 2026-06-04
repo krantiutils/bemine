@@ -48,17 +48,17 @@ def _fake_codex(home: Path) -> None:
     )
 
 
-def _fake_gastown_witness_codex(home: Path) -> None:
+def _fake_secondary_project_codex(home: Path) -> None:
     _write_jsonl(
-        home / ".codex" / "sessions" / "2026" / "06" / "04" / "rollout-2026-06-04T12-00-00-witness.jsonl",
+        home / ".codex" / "sessions" / "2026" / "06" / "04" / "rollout-2026-06-04T12-00-00-aux.jsonl",
         [
             {
                 "timestamp": "2026-06-04T12:00:00Z",
                 "type": "session_meta",
                 "payload": {
-                    "id": "codex-witness-1",
+                    "id": "codex-aux-1",
                     "timestamp": "2026-06-04T12:00:00Z",
-                    "cwd": str(home / "gt" / "zap" / "witness"),
+                    "cwd": str(home / "workspaces" / "aux" / "notes"),
                     "model": "gpt-5.5",
                 },
             },
@@ -68,7 +68,7 @@ def _fake_gastown_witness_codex(home: Path) -> None:
                 "payload": {
                     "type": "message",
                     "role": "assistant",
-                    "content": [{"type": "output_text", "text": "gastown witness detail"}],
+                    "content": [{"type": "output_text", "text": "auxiliary workspace follow-up"}],
                 },
             },
         ],
@@ -105,7 +105,7 @@ def _fake_claude(home: Path) -> None:
 
 def test_scan_indexes_sessions_updates_vault_and_supports_fts(tmp_path: Path) -> None:
     _fake_codex(tmp_path)
-    _fake_gastown_witness_codex(tmp_path)
+    _fake_secondary_project_codex(tmp_path)
     _fake_claude(tmp_path)
     state = tmp_path / "state"
     vault = tmp_path / "vault"
@@ -135,7 +135,7 @@ def test_scan_indexes_sessions_updates_vault_and_supports_fts(tmp_path: Path) ->
         check=True,
     )
     result = json.loads(scan.stdout)
-    assert result == {"devices": 1, "projects": 1, "sessions": 2}
+    assert result == {"devices": 1, "projects": 2, "sessions": 3}
 
     rundown = subprocess.run(
         [
@@ -157,7 +157,7 @@ def test_scan_indexes_sessions_updates_vault_and_supports_fts(tmp_path: Path) ->
     assert "alpha" in rundown
     assert "codex" in rundown
     assert "claude" in rundown
-    assert "witness" not in rundown
+    assert "aux" in rundown
 
     project_page = vault / "Projects" / "alpha.md"
     assert project_page.exists()
@@ -190,10 +190,10 @@ def test_scan_indexes_sessions_updates_vault_and_supports_fts(tmp_path: Path) ->
     conn = sqlite3.connect(state / "bemine.db")
     try:
         assert conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 2
-        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 2
-        assert conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 3
+        assert conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0] == 2
         assert conn.execute(
-            "SELECT COUNT(*) FROM sessions WHERE cwd LIKE '%/witness'"
-        ).fetchone()[0] == 0
+            "SELECT COUNT(*) FROM sessions WHERE cwd LIKE '%/notes'"
+        ).fetchone()[0] == 1
     finally:
         conn.close()

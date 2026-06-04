@@ -95,8 +95,13 @@ BEMINE_CLAUDE_HOME=~/.claude
 BEMINE_KIMI_HOME=~/devlog/raw/kimi
 BEMINE_HERMES_HOME=~/.hermes
 BEMINE_DEVICE_ID=cdjk
+BEMINE_IGNORED_PROJECT_ROOTS=~/gt
 BEMINE_TOTP_SECRET=
 ```
+
+`BEMINE_IGNORED_PROJECT_ROOTS` is a `:`-separated list on Linux/macOS. When it
+is not set, Bemine ignores `~/gt` as a legacy workspace root so migrated
+projects do not reappear from old session history.
 
 Discord settings can use `MAYOR_DISCORD_*` or fall back to Hermes-compatible
 `DISCORD_*` environment variables:

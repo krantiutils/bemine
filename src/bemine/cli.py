@@ -153,6 +153,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     discord = sub.add_parser("discord", help="Manage Discord integration.")
     discord_sub = discord.add_subparsers(dest="discord_command", required=True)
+    write_channels = discord_sub.add_parser(
+        "write-project-channels",
+        help="Write the local Discord project route file from indexed projects.",
+    )
+    write_channels.add_argument("--limit", type=int, default=200)
     sync_channels = discord_sub.add_parser("sync-project-channels")
     sync_channels.add_argument("--guild-id", default=os.environ.get("MAYOR_DISCORD_GUILD_ID", ""))
     sync_channels.add_argument("--limit", type=int, default=200)
@@ -416,7 +421,20 @@ def main(argv: list[str] | None = None) -> None:
                 for unit in units:
                     print(f"# {unit.name}\n{unit.text}")
     elif args.command == "discord":
-        if args.discord_command == "sync-project-channels":
+        if args.discord_command == "write-project-channels":
+            from mayor_discord.dispatch import (
+                project_channels_from_db,
+                write_project_channel_config,
+            )
+
+            channels = project_channels_from_db(kernel.db, limit=args.limit)
+            path = write_project_channel_config(
+                settings.state_dir,
+                channels,
+                preserve_existing=False,
+            )
+            print(json.dumps({"path": str(path), "projects": len(channels)}, sort_keys=True))
+        elif args.discord_command == "sync-project-channels":
             from mayor_discord.config import Settings as DiscordSettings
             from mayor_discord.dispatch import sync_project_channels_to_discord
 
