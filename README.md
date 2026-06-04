@@ -16,6 +16,7 @@ The current implementation is a working vertical slice, not the full mayor yet:
 - run a systemd-backed daemon with cron-style jobs
 - run scheduled reminders through the same daemon and Discord sender
 - check local Proton Mail Bridge readiness
+- render worker startup packets and record vault-backed handoffs
 - track audit events, permission requests, credential policies, and usage samples
 
 Functional now:
@@ -30,6 +31,8 @@ Functional now:
 - `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
 - `SOUL.md` and `SKILL.md` define Bemine's identity and harness workflow, and
   are injected into dispatched worker prompts.
+- `bemine prime` gives workers a startup packet; `bemine handoff` records
+  shutdown context in the Obsidian vault and audit log.
 
 Not functional yet:
 
@@ -44,6 +47,8 @@ Not functional yet:
 
 ```bash
 uv run bemine scan
+uv run bemine prime
+uv run bemine prime --fleet
 uv run bemine status
 uv run bemine rundown
 uv run bemine search "blocked schema"
@@ -63,6 +68,7 @@ uv run bemine permissions request fmw:legacy --reason "need legacy env for migra
 uv run bemine permissions ask aws:any --reason "need AWS SSO for deploy smoke test"
 uv run bemine permissions approve perm_xxxxx --totp 123456
 uv run bemine proxy check perm_xxxxx
+uv run bemine handoff "implemented Discord dispatch fix" --next "test from Discord" --test "uv run pytest -q"
 uv run bemine tmux start bemine-demo
 uv run bemine tmux send bemine-demo "echo hello"
 uv run bemine tmux capture bemine-demo
@@ -176,6 +182,25 @@ Default Bridge endpoints:
 ```bash
 IMAP 127.0.0.1:1143
 SMTP 127.0.0.1:1025
+```
+
+## Prime And Handoff
+
+`bemine prime` is the startup ritual for any Bemine worker/session. It prints
+the current device, CWD-derived project identity, required harness/operator
+context files, operating rules, recent sessions, and project rundown. By default
+it scans local histories first; use `--no-scan` for a quick render and `--fleet`
+when SSH fleet status is needed.
+
+`bemine handoff` is the shutdown ritual. It writes a timestamped Markdown file
+under `Handoffs/`, appends a daily note under `Daily/`, and records an audit
+event. Use it whenever substantial work should survive context loss:
+
+```bash
+uv run bemine handoff "wired prime and handoff" \
+  --next "expose from Discord" \
+  --blocker "no managed app-server injection yet" \
+  --test "uv run pytest -q"
 ```
 
 Mail ingestion is not wired yet. The intended next slice is read-only IMAP
@@ -340,6 +365,7 @@ The tests are integration-oriented:
 - Proton Bridge readiness checks
 - operator context redaction and prompt injection
 - Bemine soul/skill harness context prompt injection
+- prime startup packet and handoff vault/audit persistence
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:

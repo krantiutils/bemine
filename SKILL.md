@@ -14,6 +14,7 @@ Run these before changing behavior:
 
 ```bash
 uv run bemine status --limit 12
+uv run bemine prime --no-scan
 uv run bemine capabilities
 uv run bemine jobs list
 systemctl --user is-active bemine-daemon mayor-discord-gateway
@@ -34,6 +35,8 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
   CLI dispatch, filesystem state, SQLite, or systemd rendering.
 - A feature is not functional until it is wired into CLI or Discord and has a
   test proving the intended workflow.
+- Start substantial sessions with `bemine prime`; end substantial sessions with
+  `bemine handoff`.
 - Do not leak secrets. Redact operator context before injecting it into prompts.
 - Baseline identity credentials can be advertised as capabilities; costly or
   infrastructure credentials must go through permission requests.
@@ -65,7 +68,8 @@ When the user hits friction:
 3. Add a test that would have caught the failure.
 4. Update `README.md`, `SKILL.md`, or `SOUL.md` only when the behavior or
    operating contract changed.
-5. Restart the relevant service and verify the live path.
+5. Record a handoff when the work changes the harness state meaningfully.
+6. Restart the relevant service and verify the live path.
 
 ## Discord Expectations
 

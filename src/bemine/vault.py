@@ -28,6 +28,21 @@ class ObsidianVault:
         path.write_text(_replace_block(existing, status), encoding="utf-8")
         return path
 
+    def write_handoff(self, *, project_name: str, text: str, when: datetime | None = None) -> Path:
+        when = when or datetime.now(timezone.utc)
+        stamp = when.strftime("%Y-%m-%d-%H%M%S")
+        path = self.root / "Handoffs" / f"{stamp}-{safe_filename(project_name, 'project')}.md"
+        path.write_text(text.rstrip() + "\n", encoding="utf-8")
+        return path
+
+    def append_daily_entry(self, *, when: datetime | None = None, title: str, text: str) -> Path:
+        when = when or datetime.now(timezone.utc)
+        path = self.root / "Daily" / f"{when.date().isoformat()}.md"
+        existing = path.read_text(encoding="utf-8") if path.exists() else f"# {when.date().isoformat()}\n"
+        entry = "\n".join(["", f"## {title}", "", text.rstrip(), ""])
+        path.write_text(existing.rstrip() + "\n" + entry, encoding="utf-8")
+        return path
+
     def _render_status_block(self, rundown: ProjectRundown) -> str:
         generated = datetime.now(timezone.utc).isoformat()
         lines = [
@@ -59,4 +74,3 @@ def _replace_block(existing: str, block: str) -> str:
         _, after = rest.split(STATUS_END, 1)
         return before.rstrip() + "\n\n" + block + after
     return existing.rstrip() + "\n\n" + block
-

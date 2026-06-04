@@ -16,6 +16,12 @@ from .kernel import BemineKernel
 from .notifications import notify_permission_request_via_discord
 from .operator_context import load_operator_context, render_operator_context
 from .proxy import CredentialProxy
+from .rituals import (
+    build_prime_packet,
+    record_handoff,
+    render_prime_packet,
+    summary_from_args,
+)
 from .status import collect_fleet_status, render_status
 from .systemd import install_user_units, render_user_units
 from .tmux_adapter import TmuxAdapter
@@ -46,6 +52,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("scan", help="Scan local runtime histories into the Bemine index.")
+
+    prime = sub.add_parser("prime", help="Print the startup packet for a Bemine worker/session.")
+    prime.add_argument("--limit", type=int, default=8)
+    prime.add_argument("--cwd", default="")
+    prime.add_argument("--fleet", action="store_true", help="Include SSH fleet status, not only local sessions.")
+    prime.add_argument("--no-scan", action="store_true", help="Do not scan local histories before rendering.")
+    prime.add_argument("--json", action="store_true")
+
+    handoff = sub.add_parser("handoff", help="Record a shutdown handoff into the vault and audit log.")
+    handoff.add_argument("summary", nargs="*", help="Summary text. Use --stdin for multiline input.")
+    handoff.add_argument("--stdin", action="store_true", help="Append stdin to the summary.")
+    handoff.add_argument("--cwd", default="")
+    handoff.add_argument("--project", default="")
+    handoff.add_argument("--session-id", default="")
+    handoff.add_argument("--runtime", default="")
+    handoff.add_argument("--status", default="in_progress")
+    handoff.add_argument("--next", dest="next_steps", action="append", default=[])
+    handoff.add_argument("--blocker", action="append", default=[])
+    handoff.add_argument("--test", dest="tests", action="append", default=[])
+    handoff.add_argument("--actor", default="cli")
+    handoff.add_argument("--json", action="store_true")
 
     rundown = sub.add_parser("rundown", help="Print project rundown.")
     rundown.add_argument("--limit", type=int, default=30)
@@ -234,6 +261,37 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "scan":
         result = kernel.scan_local()
         print(json.dumps(result.__dict__, sort_keys=True))
+    elif args.command == "prime":
+        if not args.no_scan:
+            kernel.scan_local()
+        packet = build_prime_packet(
+            settings,
+            cwd=Path(args.cwd) if args.cwd else None,
+            limit=args.limit,
+            fleet=args.fleet,
+        )
+        if args.json:
+            print(json.dumps(packet.to_dict(), indent=2, sort_keys=True))
+        else:
+            print(render_prime_packet(packet), end="")
+    elif args.command == "handoff":
+        result = record_handoff(
+            settings,
+            summary=summary_from_args(args.summary, read_stdin=args.stdin),
+            cwd=Path(args.cwd) if args.cwd else None,
+            project_name=args.project,
+            session_id=args.session_id,
+            runtime=args.runtime,
+            status=args.status,
+            next_steps=args.next_steps,
+            blockers=args.blocker,
+            tests=args.tests,
+            actor=args.actor,
+        )
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        else:
+            print(f"Handoff recorded: {result.path}")
     elif args.command == "rundown":
         print(kernel.project_rundown(limit=args.limit), end="")
     elif args.command == "search":
