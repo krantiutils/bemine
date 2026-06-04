@@ -157,11 +157,15 @@ logic.
 project under `Bemine Projects`. If the category reaches Discord's 50-channel
 limit, Bemine creates numbered overflow categories such as `Bemine Projects 2`.
 
-Messages in those project channels are dispatched to Codex with the channel's
-project root as `--cd`. Image attachments are passed to Codex with `--image`;
-other attachments are saved and listed in the prompt. The gateway reacts when it
-receives work, shows Discord typing while Codex runs, and replies with the final
-Codex message.
+Project channels are a routing signal, not the only place to talk to Bemine.
+Messages in project channels dispatch directly to that project. Messages in
+general channels can route by mentioned channel, explicit text such as `tts:`
+or `#bemine`, or fall back to the mayor project when no project is clear.
+
+Dispatched messages use the selected project root as `--cd`. Image attachments
+are passed to Codex with `--image`; other attachments are saved and listed in
+the prompt. The gateway reacts when it receives work, shows Discord typing while
+Codex runs, and replies with the final Codex message.
 
 ## Credential Gate
 

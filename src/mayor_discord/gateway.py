@@ -20,7 +20,7 @@ from bemine.kernel import BemineKernel
 from bemine.status import collect_fleet_status, render_status
 
 from .config import Settings
-from .dispatch import CodexDispatcher, DispatchRequest, resolve_project_channel
+from .dispatch import CodexDispatcher, DispatchRequest, ProjectRoute, infer_project_route
 from .store import Store
 
 
@@ -277,8 +277,8 @@ class MayorDiscordGateway:
             return
 
         settings = BemineSettings.load()
-        project = _project_channel_for_message(message, settings=settings)
-        if project and (normalized or saved_attachments):
+        route = _project_route_for_message(message, settings=settings)
+        if route and (normalized or saved_attachments):
             await _acknowledge_message(message, emoji=WORKING_REACTION)
             request = DispatchRequest(
                 channel_id=str(message.channel.id),
@@ -287,10 +287,11 @@ class MayorDiscordGateway:
                 author_name=getattr(message.author, "global_name", None) or str(message.author),
                 content=normalized,
                 attachments=saved_attachments,
+                route_reason=route.reason,
             )
             result = await asyncio.to_thread(
                 CodexDispatcher(settings).dispatch,
-                project,
+                route.project,
                 request,
             )
             await _acknowledge_message(
@@ -298,9 +299,9 @@ class MayorDiscordGateway:
                 emoji=SUCCESS_REACTION if result.ok else WARNING_REACTION,
             )
             header = (
-                f"Codex result for `#{project.channel_name}`"
+                f"Codex result for `#{route.project.channel_name}`"
                 if result.ok
-                else f"Codex dispatch issue for `#{project.channel_name}`"
+                else f"Codex dispatch issue for `#{route.project.channel_name}`"
             )
             for chunk in _discord_chunk(f"{header}:\n{result.output}", limit=1900):
                 await message.reply(chunk, mention_author=False)
@@ -322,9 +323,9 @@ class MayorDiscordGateway:
             return (
                 "Received by Mayor. "
                 f"Saved {len(saved_attachments)} attachment(s). "
-                "Use a project channel for Codex dispatch."
+                "I could not infer a route for this attachment-only message."
             )
-        return "Received by Mayor. Use a project channel for Codex dispatch."
+        return "Received by Mayor."
 
     async def _record_message(self, message: discord.Message) -> list[Path]:
         message_id = str(message.id)
@@ -379,25 +380,43 @@ class MayorDiscordGateway:
         await self.bot.start(self.settings.token)
 
 
-def _project_channel_for_message(
+def _project_route_for_message(
     message: discord.Message,
     *,
     settings: BemineSettings,
-):
-    return resolve_project_channel(
+) -> ProjectRoute | None:
+    return infer_project_route(
         channel_name=_message_channel_name(message),
         category_name=_message_category_name(message),
+        content=str(message.content or ""),
         state_dir=settings.state_dir,
         repo_dir=Path.cwd(),
+        mentioned_channels=_mentioned_channels(message),
+        allow_default=True,
     )
 
 
 def _message_channel_name(message: discord.Message) -> str:
-    return str(getattr(message.channel, "name", "") or "")
+    return _channel_name(message.channel)
 
 
 def _message_category_name(message: discord.Message) -> str:
-    category = getattr(message.channel, "category", None)
+    return _channel_category_name(message.channel)
+
+
+def _mentioned_channels(message: discord.Message) -> list[tuple[str, str]]:
+    return [
+        (_channel_name(channel), _channel_category_name(channel))
+        for channel in getattr(message, "channel_mentions", [])
+    ]
+
+
+def _channel_name(channel: object) -> str:
+    return str(getattr(channel, "name", "") or "")
+
+
+def _channel_category_name(channel: object) -> str:
+    category = getattr(channel, "category", None)
     return str(getattr(category, "name", "") or "")
 
 

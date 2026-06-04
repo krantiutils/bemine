@@ -335,6 +335,44 @@ class BemineDB:
                 "usage_samples": conn.execute("SELECT COUNT(*) FROM usage_samples").fetchone()[0],
             }
 
+    def list_projects(self) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT project_id, name, cwd, first_seen_at, last_seen_at
+                FROM projects
+                ORDER BY last_seen_at DESC
+                """
+            ).fetchall()
+
+    def delete_projects(self, project_ids: list[str]) -> int:
+        ids = sorted({project_id for project_id in project_ids if project_id})
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            conn.execute(
+                f"DELETE FROM session_fts WHERE project_id IN ({placeholders})",
+                ids,
+            )
+            conn.execute(
+                f"DELETE FROM sessions WHERE project_id IN ({placeholders})",
+                ids,
+            )
+            conn.execute(
+                f"DELETE FROM project_devices WHERE project_id IN ({placeholders})",
+                ids,
+            )
+            conn.execute(
+                f"UPDATE permission_requests SET project_id = NULL WHERE project_id IN ({placeholders})",
+                ids,
+            )
+            cursor = conn.execute(
+                f"DELETE FROM projects WHERE project_id IN ({placeholders})",
+                ids,
+            )
+        return int(cursor.rowcount if cursor.rowcount >= 0 else len(ids))
+
     def upsert_job(
         self,
         *,

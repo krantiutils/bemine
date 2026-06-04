@@ -156,6 +156,11 @@ def build_parser() -> argparse.ArgumentParser:
     sync_channels = discord_sub.add_parser("sync-project-channels")
     sync_channels.add_argument("--guild-id", default=os.environ.get("MAYOR_DISCORD_GUILD_ID", ""))
     sync_channels.add_argument("--limit", type=int, default=200)
+    sync_channels.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete project-category channels that are no longer tracked.",
+    )
     return parser
 
 
@@ -425,6 +430,7 @@ def main(argv: list[str] | None = None) -> None:
                     discord_settings.token,
                     guild_id,
                     limit=args.limit,
+                    prune=args.prune,
                 )
             )
             print(json.dumps(result, indent=2, sort_keys=True))

@@ -7,6 +7,7 @@ from .config import BemineSettings
 from .db import BemineDB
 from .discovery import discover_claude_sessions, discover_codex_sessions, discover_kimi_sessions
 from .models import ProjectRundown
+from .project_filters import ignored_project_reason
 from .rundown import render_rundown
 from .vault import ObsidianVault
 
@@ -45,8 +46,20 @@ class BemineKernel:
         records.extend(discover_codex_sessions(self.settings.codex_home, device_id=self.settings.device_id))
         records.extend(discover_claude_sessions(self.settings.claude_home, device_id=self.settings.device_id))
         records.extend(discover_kimi_sessions(self.settings.kimi_home, device_id=self.settings.device_id))
+        ignored_sessions = [
+            record for record in records if ignored_project_reason(record.cwd)
+        ]
+        records = [
+            record for record in records if not ignored_project_reason(record.cwd)
+        ]
         for record in records:
             self.db.upsert_session(record)
+        ignored_project_ids = [
+            str(project["project_id"])
+            for project in self.db.list_projects()
+            if ignored_project_reason(str(project["cwd"]), name=str(project["name"]))
+        ]
+        purged_projects = self.db.delete_projects(ignored_project_ids)
         projects = self.db.rundown(limit=200)
         for project in projects:
             page = self.vault.update_project_page(project)
@@ -62,7 +75,14 @@ class BemineKernel:
             event_type="local_scan_finished",
             actor="kernel",
             device_id=self.settings.device_id,
-            payload_json=json.dumps(result.__dict__, sort_keys=True),
+            payload_json=json.dumps(
+                {
+                    **result.__dict__,
+                    "ignored_sessions": len(ignored_sessions),
+                    "purged_projects": purged_projects,
+                },
+                sort_keys=True,
+            ),
         )
         return result
 

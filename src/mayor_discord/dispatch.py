@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ import aiohttp
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
+from bemine.project_filters import ignored_project_reason
 from bemine.status import _redact
 
 PROJECT_CATEGORY_NAME = "Bemine Projects"
@@ -39,6 +41,7 @@ class DispatchRequest:
     author_name: str
     content: str
     attachments: list[Path]
+    route_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,12 @@ class DispatchResult:
     elapsed_seconds: float
     returncode: int | None = None
     timed_out: bool = False
+
+
+@dataclass(frozen=True)
+class ProjectRoute:
+    project: ProjectChannel
+    reason: str
 
 
 def load_project_channels(
@@ -68,7 +77,7 @@ def load_project_channels(
             raise ValueError(f"{config_path} must contain a JSON object")
         for name, value in raw.items():
             channel = _project_channel_from_config(str(name), value)
-            if channel.cwd.exists():
+            if channel.cwd.exists() and not ignored_project_reason(channel.cwd, name=channel.project_name):
                 mapping[_channel_key(name)] = channel
     return mapping
 
@@ -84,7 +93,12 @@ def project_channels_from_db(db: BemineDB, *, limit: int = 200) -> list[ProjectC
             """,
             (limit,),
         ).fetchall()
-    return _project_channels_from_rows([dict(row) for row in rows])
+    rows = [
+        dict(row)
+        for row in rows
+        if not ignored_project_reason(str(row["cwd"]), name=str(row["name"]))
+    ]
+    return _project_channels_from_rows(rows)
 
 
 def write_project_channel_config(
@@ -92,11 +106,12 @@ def write_project_channel_config(
     channels: list[ProjectChannel],
     *,
     aliases: Mapping[str, ProjectChannel] | None = None,
+    preserve_existing: bool = True,
 ) -> Path:
     state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / DISPATCH_CONFIG_NAME
     payload: dict[str, dict[str, str]] = {}
-    if path.exists():
+    if preserve_existing and path.exists():
         raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             for name, value in raw.items():
@@ -104,7 +119,8 @@ def write_project_channel_config(
                     existing = _project_channel_from_config(str(name), value)
                 except (KeyError, TypeError, ValueError):
                     continue
-                payload[existing.channel_name] = _project_channel_payload(existing)
+                if not ignored_project_reason(existing.cwd, name=existing.project_name):
+                    payload[existing.channel_name] = _project_channel_payload(existing)
     for channel in channels:
         payload[channel.channel_name] = _project_channel_payload(channel)
     for alias_name, channel in (aliases or {}).items():
@@ -132,6 +148,51 @@ def resolve_project_channel(
     return load_project_channels(state_dir, repo_dir=repo_dir).get(_channel_key(channel_name))
 
 
+def infer_project_route(
+    *,
+    channel_name: str,
+    category_name: str,
+    content: str,
+    state_dir: Path,
+    repo_dir: Path | None = None,
+    mentioned_channels: Iterable[tuple[str, str]] = (),
+    allow_default: bool = True,
+) -> ProjectRoute | None:
+    project = resolve_project_channel(
+        channel_name=channel_name,
+        category_name=category_name,
+        state_dir=state_dir,
+        repo_dir=repo_dir,
+    )
+    if project:
+        return ProjectRoute(project=project, reason="project-channel")
+
+    for mentioned_name, mentioned_category in mentioned_channels:
+        mentioned_project = resolve_project_channel(
+            channel_name=mentioned_name,
+            category_name=mentioned_category,
+            state_dir=state_dir,
+            repo_dir=repo_dir,
+        )
+        if mentioned_project:
+            return ProjectRoute(project=mentioned_project, reason=f"mentioned-channel:{mentioned_name}")
+
+    channels = load_project_channels(state_dir, repo_dir=repo_dir)
+    channel_match = channels.get(_channel_key(channel_name))
+    if channel_match:
+        return ProjectRoute(project=channel_match, reason=f"channel-name:{channel_name}")
+
+    content_match = _project_from_content(content, channels)
+    if content_match:
+        return ProjectRoute(project=content_match, reason="content-project-reference")
+
+    if allow_default:
+        fallback = channels.get("bemine") or channels.get("mayor")
+        if fallback:
+            return ProjectRoute(project=fallback, reason="default-mayor")
+    return None
+
+
 def ensure_default_project_config(
     state_dir: Path,
     *,
@@ -157,11 +218,17 @@ async def sync_project_channels_to_discord(
     guild_id: str,
     *,
     limit: int = 200,
+    prune: bool = False,
 ) -> dict[str, Any]:
     db = BemineDB(settings.db_path)
     channels = project_channels_from_db(db, limit=limit)
     aliases = _project_aliases(channels)
-    config_path = write_project_channel_config(settings.state_dir, channels, aliases=aliases)
+    config_path = write_project_channel_config(
+        settings.state_dir,
+        channels,
+        aliases=aliases,
+        preserve_existing=False,
+    )
     target_names = {channel.channel_name for channel in channels}
     target_names.update(aliases.keys())
 
@@ -172,20 +239,23 @@ async def sync_project_channels_to_discord(
     }
     async with aiohttp.ClientSession(headers=headers) as session:
         categories, existing = await _ensure_project_categories(session, guild_id)
-        existing_by_name = {
-            str(channel.get("name")): channel
+        project_category_ids = {str(category.get("id") or "") for category in categories}
+        existing_project_channels = [
+            channel
             for channel in existing
             if channel.get("type") == 0
-            and str(channel.get("parent_id") or "") in {str(category.get("id") or "") for category in categories}
-        }
-        category_counts = {
-            str(category.get("id") or ""): sum(
-                1
-                for channel in existing
-                if channel.get("type") == 0 and str(channel.get("parent_id") or "") == str(category.get("id") or "")
-            )
-            for category in categories
-        }
+            and str(channel.get("parent_id") or "") in project_category_ids
+        ]
+        existing_by_name = {str(channel.get("name")): channel for channel in existing_project_channels}
+        deleted: list[dict[str, str]] = []
+        if prune:
+            for name, channel in list(existing_by_name.items()):
+                if name in target_names:
+                    continue
+                await _delete_discord_channel(session, str(channel.get("id") or ""))
+                deleted.append({"id": str(channel.get("id") or ""), "name": name})
+                existing_by_name.pop(name, None)
+        category_counts = _category_counts(categories, existing_by_name.values())
         created: list[dict[str, str]] = []
         skipped: list[str] = []
         for name in sorted(target_names):
@@ -209,6 +279,13 @@ async def sync_project_channels_to_discord(
                     "category_name": str(category.get("name") or ""),
                 }
             )
+        deleted_categories: list[dict[str, str]] = []
+        if prune:
+            deleted_categories = await _delete_empty_overflow_categories(
+                session,
+                categories,
+                category_counts,
+            )
 
     db.record_audit_event(
         category="discord",
@@ -220,8 +297,11 @@ async def sync_project_channels_to_discord(
                 "guild_id": guild_id,
                 "category_ids": [str(category.get("id") or "") for category in categories],
                 "created": created,
+                "deleted": deleted,
+                "deleted_categories": deleted_categories,
                 "skipped_count": len(skipped),
                 "config_path": str(config_path),
+                "prune": prune,
             },
             sort_keys=True,
         ),
@@ -231,6 +311,8 @@ async def sync_project_channels_to_discord(
         "category_ids": [str(category.get("id") or "") for category in categories],
         "category_names": [str(category.get("name") or PROJECT_CATEGORY_NAME) for category in categories],
         "created": created,
+        "deleted": deleted,
+        "deleted_categories": deleted_categories,
         "skipped": skipped,
         "config_path": str(config_path),
         "project_count": len(channels),
@@ -364,7 +446,9 @@ def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str
     ] or ["- none"]
     return "\n".join(
         [
-            "You are Bemine's Codex worker for a Discord project channel.",
+            "You are Bemine's Codex worker for a Discord-routed task.",
+            f"Route reason: {request.route_reason or 'unspecified'}",
+            f"Source channel: #{request.channel_name}",
             f"Project channel: #{project.channel_name}",
             f"Project id: {project.project_id or '(unknown)'}",
             f"Project name: {project.project_name or project.channel_name}",
@@ -441,6 +525,53 @@ def _is_project_category_name(value: str) -> bool:
 
 def _is_image_path(path: Path) -> bool:
     return path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+
+def _project_from_content(
+    content: str,
+    channels: Mapping[str, ProjectChannel],
+) -> ProjectChannel | None:
+    text = _content_key(content)
+    if not text:
+        return None
+    ordered = sorted(channels.values(), key=lambda channel: len(channel.channel_name), reverse=True)
+    for channel in ordered:
+        for variant in _project_variants(channel):
+            if _content_mentions_project(text, variant):
+                return channel
+    return None
+
+
+def _project_variants(channel: ProjectChannel) -> set[str]:
+    raw_values = {channel.channel_name, channel.project_name}
+    variants: set[str] = set()
+    for raw in raw_values:
+        if not raw:
+            continue
+        normalized = raw.strip().lower()
+        variants.add(normalized)
+        variants.add(normalized.replace("_", "-"))
+        variants.add(normalized.replace("_", " "))
+        variants.add(normalized.replace("-", " "))
+    return {_content_key(variant) for variant in variants if _content_key(variant)}
+
+
+def _content_key(value: str) -> str:
+    text = value.lower().replace("_", "-")
+    text = re.sub(r"[^a-z0-9#:\\-]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _content_mentions_project(text: str, project_key: str) -> bool:
+    escaped = re.escape(project_key)
+    return any(
+        re.search(pattern, text)
+        for pattern in (
+            rf"(^|\s)#{escaped}(\s|:|$)",
+            rf"(^|\s){escaped}:(\s|$)",
+            rf"(^|\s)(?:project|for|in|on)\s+{escaped}(\s|:|$)",
+        )
+    )
 
 
 def _project_channels_from_rows(rows: list[Mapping[str, Any]]) -> list[ProjectChannel]:
@@ -641,6 +772,47 @@ async def _create_text_channel(
         "POST",
         f"https://discord.com/api/v10/guilds/{guild_id}/channels",
         json_payload={"name": name, "type": 0, "parent_id": parent_id},
+    )
+
+
+def _category_counts(
+    categories: list[Mapping[str, Any]],
+    channels: Iterable[Mapping[str, Any]],
+) -> dict[str, int]:
+    category_counts = {str(category.get("id") or ""): 0 for category in categories}
+    for channel in channels:
+        parent_id = str(channel.get("parent_id") or "")
+        if parent_id in category_counts:
+            category_counts[parent_id] += 1
+    return category_counts
+
+
+async def _delete_empty_overflow_categories(
+    session: aiohttp.ClientSession,
+    categories: list[Mapping[str, Any]],
+    category_counts: dict[str, int],
+) -> list[dict[str, str]]:
+    deleted: list[dict[str, str]] = []
+    for category in list(categories):
+        category_name = str(category.get("name") or "")
+        category_id = str(category.get("id") or "")
+        if _channel_key(category_name) == _channel_key(PROJECT_CATEGORY_NAME):
+            continue
+        if category_counts.get(category_id, 0) != 0:
+            continue
+        await _delete_discord_channel(session, category_id)
+        deleted.append({"id": category_id, "name": category_name})
+    return deleted
+
+
+async def _delete_discord_channel(
+    session: aiohttp.ClientSession,
+    channel_id: str,
+) -> Mapping[str, Any]:
+    return await _discord_json(
+        session,
+        "DELETE",
+        f"https://discord.com/api/v10/channels/{channel_id}",
     )
 
 

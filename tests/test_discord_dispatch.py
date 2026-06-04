@@ -11,6 +11,7 @@ from mayor_discord.dispatch import (
     CodexDispatcher,
     DispatchRequest,
     ProjectChannel,
+    infer_project_route,
     load_project_channels,
     project_channels_from_db,
     resolve_project_channel,
@@ -63,9 +64,66 @@ def test_project_channel_config_resolves_only_inside_project_category(tmp_path: 
     )
 
 
+def test_general_channel_routes_by_content_mentions_and_mayor_fallback(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    bemine_root = tmp_path / "bm"
+    tts_root = tmp_path / "streaming-tts"
+    bemine_root.mkdir()
+    tts_root.mkdir()
+    bemine = ProjectChannel(channel_name="bemine", cwd=bemine_root, project_name="bm")
+    tts = ProjectChannel(channel_name="tts", cwd=tts_root, project_name="streaming-tts")
+    write_project_channel_config(state_dir, [bemine, tts])
+
+    direct = infer_project_route(
+        channel_name="tts",
+        category_name=PROJECT_CATEGORY_NAME,
+        content="what is blocked?",
+        state_dir=state_dir,
+        repo_dir=tmp_path,
+    )
+    assert direct is not None
+    assert direct.project.channel_name == "tts"
+    assert direct.reason == "project-channel"
+
+    mentioned = infer_project_route(
+        channel_name="general",
+        category_name="Text Channels",
+        content="can you check this?",
+        mentioned_channels=[("tts", PROJECT_CATEGORY_NAME)],
+        state_dir=state_dir,
+        repo_dir=tmp_path,
+    )
+    assert mentioned is not None
+    assert mentioned.project.channel_name == "tts"
+    assert mentioned.reason == "mentioned-channel:tts"
+
+    explicit = infer_project_route(
+        channel_name="general",
+        category_name="Text Channels",
+        content="tts: summarize the current failures",
+        state_dir=state_dir,
+        repo_dir=tmp_path,
+    )
+    assert explicit is not None
+    assert explicit.project.channel_name == "tts"
+    assert explicit.reason == "content-project-reference"
+
+    mayor = infer_project_route(
+        channel_name="general",
+        category_name="Text Channels",
+        content="what should I look at next?",
+        state_dir=state_dir,
+        repo_dir=tmp_path,
+    )
+    assert mayor is not None
+    assert mayor.project.channel_name == "bemine"
+    assert mayor.reason == "default-mayor"
+
+
 def test_project_channels_from_db_make_per_project_names_unique(tmp_path: Path) -> None:
     db = BemineDB(tmp_path / "state" / "bemine.db")
     rows = [
+        ("proj_witness", "witness", tmp_path / "gt" / "zap" / "witness", 40.0),
         ("proj_bm", "bm", tmp_path / "bm", 30.0),
         ("proj_web_a", "web", tmp_path / "clients" / "alpha" / "web", 20.0),
         ("proj_web_b", "web", tmp_path / "clients" / "beta" / "web", 10.0),
@@ -90,6 +148,7 @@ def test_project_channels_from_db_make_per_project_names_unique(tmp_path: Path) 
     assert "web-clients-alpha" in names
     assert "web-clients-beta" in names
     assert "neptts-bench" in names
+    assert not any(name.startswith("witness") for name in names)
 
 
 def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Path) -> None:
