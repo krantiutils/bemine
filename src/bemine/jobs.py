@@ -88,6 +88,39 @@ def render_jobs(rows: list[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def upsert_reminder_job(
+    db: BemineDB,
+    *,
+    job_id: str,
+    schedule: str,
+    text: str,
+    notify_discord: bool = True,
+    now: datetime | None = None,
+) -> None:
+    text = text.strip()
+    if not text:
+        raise ValueError("reminder text is required")
+    if not job_id.strip():
+        raise ValueError("job_id is required")
+    now = now or _now()
+    db.upsert_job(
+        job_id=job_id.strip(),
+        name=f"Reminder: {text[:48]}",
+        enabled=True,
+        trigger_type="cron",
+        schedule=schedule,
+        config_json=json.dumps(
+            {
+                "type": "reminder",
+                "text": text,
+                "notify_discord": notify_discord,
+            },
+            sort_keys=True,
+        ),
+        next_run_at=next_run_after(schedule, now).isoformat(),
+    )
+
+
 def due_jobs(db: BemineDB, *, now: datetime | None = None) -> list[Mapping[str, Any]]:
     now = now or _now()
     rows = db.list_jobs(enabled=True)
@@ -279,7 +312,26 @@ def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, An
     job_type = str(config.get("type") or job_id)
     if job_type == "daily_digest":
         return generate_daily_digest(settings, config)
+    if job_type == "reminder":
+        return generate_reminder(job_id, config)
     raise ValueError(f"unsupported job type: {job_type}")
+
+
+def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:
+    text = str(config.get("text") or "").strip()
+    if not text:
+        raise ValueError("reminder text is required")
+    return _redact(
+        "\n".join(
+            [
+                "**Bemine reminder**",
+                f"Job: `{job_id}`",
+                f"Time: {_now().isoformat()}",
+                "",
+                text,
+            ]
+        )
+    )
 
 
 def _discord_sender(db: BemineDB) -> DiscordSender:

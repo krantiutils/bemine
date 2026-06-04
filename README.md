@@ -5,7 +5,7 @@ Personal multi-device agent mayor.
 `bemine` is the kernel for managing project work across machines, agent
 runtimes, Discord, terminal/tmux, and an Obsidian memory vault.
 
-The current implementation is the first working vertical slice:
+The current implementation is a working vertical slice, not the full mayor yet:
 
 - scan local Codex, Claude, and Kimi histories
 - index sessions and projects in SQLite with FTS5
@@ -14,7 +14,28 @@ The current implementation is the first working vertical slice:
 - expose the same rundown through Discord text commands
 - drive tmux sessions from a typed adapter
 - run a systemd-backed daemon with cron-style jobs
+- run scheduled reminders through the same daemon and Discord sender
+- check local Proton Mail Bridge readiness
 - track audit events, permission requests, credential policies, and usage samples
+
+Functional now:
+
+- `bemine status` gives recent Codex, Claude, and Kimi sessions across known SSH devices.
+- `bemine rundown` gives indexed project summaries from SQLite/Obsidian.
+- Discord `status`, `rundown`, credential approval commands, and per-project Codex dispatch work.
+- Per-project Discord channels route messages into `codex exec --cd <project>`.
+- Image attachments are passed to Codex; non-image attachments are saved and listed in the prompt.
+- `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
+- `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
+
+Not functional yet:
+
+- Claude dispatch and Kimi dispatch from Discord project channels.
+- Attaching to existing live Codex/Claude/Kimi TUI sessions and injecting text into them.
+- Proton Mail IMAP ingestion and schedule extraction from email.
+- Calendar sync beyond Bemine cron/reminder jobs.
+- Credential proxy operations that actually perform AWS/GitHub/HF actions; current proxy is an approval ledger and broker contract.
+- Cross-device project transfer.
 
 ## Commands
 
@@ -25,8 +46,11 @@ uv run bemine rundown
 uv run bemine search "blocked schema"
 uv run bemine capabilities
 uv run bemine kimi status
+uv run bemine mail bridge-status
 uv run bemine jobs list
+uv run bemine jobs add-reminder morning_plan "30 8 * * *" --text "Review calendar, inbox, and blockers"
 uv run bemine jobs run daily_digest --no-notify
+uv run bemine jobs run morning_plan --no-notify
 uv run bemine daemon --once
 uv run bemine systemd install --now
 uv run bemine credentials scan
@@ -66,10 +90,16 @@ It scans local histories, checks recent fleet status on `local,mbp,mbp2,k2`,
 builds a project rundown, records the run, and sends the digest to Discord when
 `notify_discord` is enabled.
 
+Reminder jobs are also real daemon jobs. They use five-field cron schedules and
+can be used for routine management:
+
 ```bash
 uv run bemine jobs seed
 uv run bemine jobs list
+uv run bemine jobs add-reminder morning_plan "30 8 * * *" --text "Review calendar, inbox, and blockers"
+uv run bemine jobs add-reminder evening_review "0 18 * * *" --text "Review active sessions and write handoffs"
 uv run bemine jobs run daily_digest --no-notify
+uv run bemine jobs run morning_plan --no-notify
 uv run bemine-daemon --once --json
 ```
 
@@ -113,6 +143,31 @@ MAYOR_DISCORD_ALLOWED_USERS=
 MAYOR_DISCORD_ALLOW_ALL_USERS=false
 ```
 
+## Mail And Routine
+
+Routine management currently means daemon-backed cron jobs plus Discord
+notifications. Use `jobs add-reminder` for recurring personal reminders and
+`jobs list` to see next runs.
+
+Proton Mail Bridge is treated as a local integration point. Bemine can verify
+that Bridge is installed, the process is running, and IMAP/SMTP ports are open:
+
+```bash
+uv run bemine mail bridge-status
+uv run bemine mail bridge-status --json
+```
+
+Default Bridge endpoints:
+
+```bash
+IMAP 127.0.0.1:1143
+SMTP 127.0.0.1:1025
+```
+
+Mail ingestion is not wired yet. The intended next slice is read-only IMAP
+ingestion from Proton Bridge into SQLite, redacted message summaries, and
+routine/schedule extraction into reminder jobs.
+
 ## Architecture
 
 ```text
@@ -123,9 +178,10 @@ Bemine Kernel
         |
         +-- Project Registry
         +-- Runtime Adapters: Codex, Claude, Kimi
-        +-- Device Adapters: local shell, tmux, SSH later
+        +-- Device Adapters: local shell, tmux, SSH status
         +-- Memory Adapters: SQLite, Obsidian
         +-- Jobs / Scheduler
+        +-- Mail Adapter: Proton Bridge status now, IMAP ingestion next
         +-- Credential Gate / Permission Requests
         +-- Observability Ledger / Usage Samples
 ```
@@ -238,7 +294,8 @@ The tests are integration-oriented:
 - Discord approval-code redaction
 - Discord per-project channel routing and Codex dispatch adapter
 - Kimi handler wire-shape and usage recording
-- cron scheduling, daily digest execution, and systemd unit rendering
+- cron scheduling, daily digest/reminder execution, and systemd unit rendering
+- Proton Bridge readiness checks
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:

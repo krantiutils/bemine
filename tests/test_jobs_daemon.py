@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
-from bemine.jobs import next_run_after, run_job_by_id, seed_default_jobs
+from bemine.jobs import next_run_after, run_job_by_id, seed_default_jobs, upsert_reminder_job
 from bemine.systemd import render_user_units
 
 
@@ -110,6 +110,50 @@ def test_daily_digest_job_records_run_and_uses_sender(tmp_path: Path) -> None:
         }
         assert "job_run_finished" in events
         assert "job_notification_sent" in events
+    finally:
+        conn.close()
+
+
+def test_reminder_job_records_run_and_sends_notification(tmp_path: Path) -> None:
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    db = BemineDB(settings.db_path)
+    upsert_reminder_job(
+        db,
+        job_id="morning_plan",
+        schedule="30 8 * * *",
+        text="Review calendar, inbox, and top project blockers.",
+        notify_discord=True,
+        now=datetime(2026, 6, 4, 8, 0),
+    )
+    sent: list[str] = []
+
+    result = run_job_by_id(
+        settings,
+        "morning_plan",
+        sender=lambda text: sent.append(text) or {"id": "discord-2", "channel_id": "home"},
+    )
+
+    assert result.status == "success"
+    assert result.notified is True
+    assert sent
+    assert "Bemine reminder" in sent[0]
+    assert "Review calendar, inbox, and top project blockers." in sent[0]
+
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        run = conn.execute("SELECT status, output FROM job_runs").fetchone()
+        assert run[0] == "success"
+        assert "morning_plan" in run[1]
+        job = conn.execute("SELECT schedule, failure_count FROM jobs WHERE job_id = 'morning_plan'").fetchone()
+        assert job == ("30 8 * * *", 0)
     finally:
         conn.close()
 

@@ -9,7 +9,8 @@ from pathlib import Path
 from .capabilities import build_capability_manifest, render_capability_manifest
 from .config import BemineSettings
 from .credentials import CredentialInventory, PermissionGate
-from .jobs import BemineDaemon, render_jobs, run_job_by_id, seed_default_jobs
+from .jobs import BemineDaemon, render_jobs, run_job_by_id, seed_default_jobs, upsert_reminder_job
+from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
 from .notifications import notify_permission_request_via_discord
@@ -80,6 +81,15 @@ def build_parser() -> argparse.ArgumentParser:
     kimi_ask.add_argument("--timeout", type=float, default=60.0)
     kimi_ask.add_argument("--json", action="store_true")
 
+    mail = sub.add_parser("mail", help="Inspect mail bridge integrations.")
+    mail_sub = mail.add_subparsers(dest="mail_command", required=True)
+    bridge_status = mail_sub.add_parser("bridge-status")
+    bridge_status.add_argument("--imap-host", default="127.0.0.1")
+    bridge_status.add_argument("--imap-port", type=int, default=1143)
+    bridge_status.add_argument("--smtp-host", default="127.0.0.1")
+    bridge_status.add_argument("--smtp-port", type=int, default=1025)
+    bridge_status.add_argument("--json", action="store_true")
+
     tmux = sub.add_parser("tmux", help="Interact with tmux-backed managed sessions.")
     tmux_sub = tmux.add_subparsers(dest="tmux_command", required=True)
     tmux_start = tmux_sub.add_parser("start")
@@ -132,6 +142,12 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_run.add_argument("job_id")
     jobs_run.add_argument("--no-notify", dest="notify", action="store_false")
     jobs_run.set_defaults(notify=True)
+    jobs_reminder = jobs_sub.add_parser("add-reminder")
+    jobs_reminder.add_argument("job_id")
+    jobs_reminder.add_argument("schedule", help="Five-field cron schedule, e.g. '30 8 * * *'.")
+    jobs_reminder.add_argument("--text", required=True)
+    jobs_reminder.add_argument("--no-notify", dest="notify", action="store_false")
+    jobs_reminder.set_defaults(notify=True)
     jobs_enable = jobs_sub.add_parser("enable")
     jobs_enable.add_argument("job_id")
     jobs_disable = jobs_sub.add_parser("disable")
@@ -287,6 +303,18 @@ def main(argv: list[str] | None = None) -> None:
                 print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
             else:
                 print(result.text)
+    elif args.command == "mail":
+        if args.mail_command == "bridge-status":
+            status = check_proton_bridge(
+                imap_host=args.imap_host,
+                imap_port=args.imap_port,
+                smtp_host=args.smtp_host,
+                smtp_port=args.smtp_port,
+            )
+            if args.json:
+                print(json.dumps(status.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_proton_bridge_status(status), end="")
     elif args.command == "credentials":
         inventory = CredentialInventory(
             kernel.db,
@@ -384,6 +412,16 @@ def main(argv: list[str] | None = None) -> None:
                     sort_keys=True,
                 )
             )
+        elif args.jobs_command == "add-reminder":
+            upsert_reminder_job(
+                kernel.db,
+                job_id=args.job_id,
+                schedule=args.schedule,
+                text=args.text,
+                notify_discord=args.notify,
+            )
+            job = dict(kernel.db.get_job(args.job_id) or {})
+            print(json.dumps(job, indent=2, sort_keys=True))
         elif args.jobs_command == "enable":
             kernel.db.set_job_enabled(args.job_id, enabled=True)
             print(json.dumps({"job_id": args.job_id, "enabled": True}, sort_keys=True))
