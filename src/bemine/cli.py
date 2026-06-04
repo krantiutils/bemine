@@ -10,6 +10,7 @@ from .credentials import CredentialInventory, PermissionGate
 from .kernel import BemineKernel
 from .notifications import notify_permission_request_via_discord
 from .proxy import CredentialProxy
+from .status import collect_fleet_status, render_status
 from .tmux_adapter import TmuxAdapter
 
 
@@ -44,6 +45,16 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--json", action="store_true")
+
+    status = sub.add_parser("status", help="Show recent agent interactions across devices.")
+    status.add_argument("--limit", type=int, default=12)
+    status.add_argument("--json", action="store_true")
+    status.add_argument(
+        "--devices",
+        default="",
+        help="Comma-separated devices. Defaults to local,mbp,mbp2,k2,pi,windows.",
+    )
+    status.add_argument("--local-only", action="store_true")
 
     capabilities = sub.add_parser(
         "capabilities",
@@ -144,6 +155,27 @@ def main(argv: list[str] | None = None) -> None:
         else:
             for row in rows:
                 print(f"{row['runtime']} {row['cwd']} {row['updated_at']} {row['title']}")
+    elif args.command == "status":
+        if args.local_only:
+            devices = ["local"]
+        elif args.devices:
+            devices = [part.strip() for part in args.devices.split(",") if part.strip()]
+        else:
+            devices = None
+        statuses, errors = collect_fleet_status(settings, devices=devices)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "statuses": [status.to_dict() for status in statuses[: args.limit]],
+                        "errors": [error.__dict__ for error in errors],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(render_status(statuses, errors, limit=args.limit), end="")
     elif args.command == "capabilities":
         inventory = CredentialInventory(
             kernel.db,

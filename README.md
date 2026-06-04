@@ -19,6 +19,7 @@ The current implementation is the first working vertical slice:
 
 ```bash
 uv run bemine scan
+uv run bemine status
 uv run bemine rundown
 uv run bemine search "blocked schema"
 uv run bemine capabilities
@@ -96,6 +97,26 @@ permission requests, usage samples, audit events, locks, and FTS5.
 
 Obsidian is the human memory: project pages, daily logs, decisions, handoffs,
 job notes, and summaries.
+
+## Status
+
+`bemine status` reports recent Codex, Claude, and Kimi interactions ordered by
+session log write time across the local machine and known SSH devices
+(`mbp`, `mbp2`, `k2`, `pi`, `windows`). It treats "active" as last interaction,
+not just whether a process exists.
+
+Each item includes an `ask:` line. `ask: yes` means the latest agent message
+appears to be waiting for user input, approval, permission, or clarification.
+Summaries are intentionally short and redact common one-time codes and tokens.
+
+```bash
+uv run bemine status
+uv run bemine status --local-only
+uv run bemine status --devices local,mbp2 --json
+```
+
+Discord `status`, `bemine status`, and `mayor status` use the same status
+logic.
 
 ## Credential Gate
 

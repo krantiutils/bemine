@@ -14,6 +14,7 @@ from bemine.capabilities import build_capability_manifest, render_capability_man
 from bemine.config import BemineSettings
 from bemine.credentials import CredentialInventory, PermissionGate
 from bemine.kernel import BemineKernel
+from bemine.status import collect_fleet_status, render_status
 
 from .config import Settings
 from .store import Store
@@ -94,15 +95,21 @@ class MayorDiscordGateway:
             if normalized_lower in {"!mayor ping", "mayor ping"}:
                 await message.reply("Mayor gateway online.", mention_author=False)
                 return
-            if normalized_lower in {"!mayor status", "mayor status"}:
-                stats = self.store.stats()
-                await message.reply(
-                    "Mayor gateway online.\n"
-                    f"Inbound: {stats['inbound_messages']}\n"
-                    f"Attachments: {stats['inbound_attachments']}\n"
-                    f"Outbound: {stats['outbound_messages']}",
-                    mention_author=False,
-                )
+            if normalized_lower in {
+                "status",
+                "!mayor status",
+                "mayor status",
+                "!bemine status",
+                "bemine status",
+            }:
+                async with message.channel.typing():
+                    settings = BemineSettings.load()
+                    statuses, errors = await asyncio.to_thread(
+                        collect_fleet_status,
+                        settings,
+                    )
+                    text = render_status(statuses, errors, limit=8)
+                await message.reply(_discord_chunk(text, limit=1900)[0], mention_author=False)
                 return
             if normalized_lower in {
                 "!mayor rundown",
