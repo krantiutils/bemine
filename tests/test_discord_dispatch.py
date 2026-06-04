@@ -15,6 +15,7 @@ from mayor_discord.dispatch import (
     load_project_channels,
     project_channels_from_db,
     resolve_project_channel,
+    resolve_codex_bin,
     write_project_channel_config,
 )
 
@@ -191,7 +192,12 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Pat
         output_path.write_text("finished without ghp_abcdefghijklmnopqrstuvwxyz", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "stdout fallback", "")
 
-    dispatcher = CodexDispatcher(settings, runner=fake_runner, timeout_seconds=42)
+    dispatcher = CodexDispatcher(
+        settings,
+        runner=fake_runner,
+        timeout_seconds=42,
+        codex_bin="codex",
+    )
     result = dispatcher.dispatch(
         ProjectChannel(
             channel_name="bemine",
@@ -275,3 +281,53 @@ def test_codex_dispatch_timeout_is_audited(tmp_path: Path) -> None:
             ).fetchone()["payload_json"]
         )
     assert payload["timed_out"] is True
+
+
+def test_codex_dispatch_missing_binary_returns_discord_visible_failure(tmp_path: Path) -> None:
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+
+    def missing_runner(*args, **kwargs):
+        raise FileNotFoundError("codex")
+
+    result = CodexDispatcher(
+        settings,
+        runner=missing_runner,
+        codex_bin="/missing/codex",
+    ).dispatch(
+        ProjectChannel(channel_name="bemine", cwd=project_root),
+        DispatchRequest(
+            channel_id="channel-1",
+            channel_name="bemine",
+            message_id="message-1",
+            author_name="voidash",
+            content="hello",
+            attachments=[],
+        ),
+    )
+
+    assert result.ok is False
+    assert "codex` binary was not found" in result.output
+    with BemineDB(settings.db_path).connect() as conn:
+        payload = json.loads(
+            conn.execute(
+                "SELECT payload_json FROM audit_events ORDER BY id DESC LIMIT 1"
+            ).fetchone()["payload_json"]
+        )
+    assert payload["ok"] is False
+    assert payload["codex_bin"] == "/missing/codex"
+
+
+def test_resolve_codex_bin_uses_explicit_env(monkeypatch) -> None:
+    monkeypatch.setenv("BEMINE_CODEX_BIN", "/opt/codex")
+
+    assert resolve_codex_bin() == "/opt/codex"

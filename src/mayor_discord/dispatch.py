@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -326,10 +328,12 @@ class CodexDispatcher:
         *,
         runner: Runner | None = None,
         timeout_seconds: int = 900,
+        codex_bin: str | None = None,
     ) -> None:
         self.settings = settings
         self.runner = runner or subprocess.run
         self.timeout_seconds = timeout_seconds
+        self.codex_bin = codex_bin or resolve_codex_bin()
         self.db = BemineDB(settings.db_path)
 
     def dispatch(self, project: ProjectChannel, request: DispatchRequest) -> DispatchResult:
@@ -338,7 +342,7 @@ class CodexDispatcher:
         prompt = build_codex_prompt(project, request)
         with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=True) as output_file:
             command = [
-                "codex",
+                self.codex_bin,
                 "exec",
                 "--cd",
                 str(project.cwd),
@@ -376,6 +380,43 @@ class CodexDispatcher:
                     timed_out=True,
                 )
                 self._audit_result("codex_dispatch_finished", project, request, result)
+                return result
+            except FileNotFoundError as exc:
+                elapsed = time.monotonic() - started
+                result = DispatchResult(
+                    ok=False,
+                    project=project,
+                    output=(
+                        "Codex dispatch could not start because the `codex` binary was not found. "
+                        "Set `BEMINE_CODEX_BIN` to the absolute Codex executable path."
+                    ),
+                    elapsed_seconds=elapsed,
+                    returncode=None,
+                )
+                self._audit_result(
+                    "codex_dispatch_finished",
+                    project,
+                    request,
+                    result,
+                    extra={"error": str(exc), "codex_bin": self.codex_bin},
+                )
+                return result
+            except Exception as exc:
+                elapsed = time.monotonic() - started
+                result = DispatchResult(
+                    ok=False,
+                    project=project,
+                    output=f"Codex dispatch failed before completion: {_redact(str(exc))}",
+                    elapsed_seconds=elapsed,
+                    returncode=None,
+                )
+                self._audit_result(
+                    "codex_dispatch_finished",
+                    project,
+                    request,
+                    result,
+                    extra={"error_type": type(exc).__name__, "error": _redact(str(exc))},
+                )
                 return result
 
             output_file.seek(0)
@@ -426,18 +467,36 @@ class CodexDispatcher:
         project: ProjectChannel,
         request: DispatchRequest,
         result: DispatchResult,
+        extra: Mapping[str, Any] | None = None,
     ) -> None:
-        self._audit(
-            event_type,
-            project,
-            request,
-            {
-                "ok": result.ok,
-                "returncode": result.returncode,
-                "timed_out": result.timed_out,
-                "elapsed_seconds": round(result.elapsed_seconds, 3),
-            },
-        )
+        payload = {
+            "ok": result.ok,
+            "returncode": result.returncode,
+            "timed_out": result.timed_out,
+            "elapsed_seconds": round(result.elapsed_seconds, 3),
+        }
+        if extra:
+            payload.update(extra)
+        self._audit(event_type, project, request, payload)
+
+
+def resolve_codex_bin() -> str:
+    configured = os.environ.get("BEMINE_CODEX_BIN", "").strip()
+    if configured:
+        return configured
+    found = shutil.which("codex")
+    if found:
+        return found
+    home = Path.home()
+    for candidate in (
+        home / ".npm-global" / "bin" / "codex",
+        home / ".local" / "bin" / "codex",
+        Path("/usr/local/bin/codex"),
+        Path("/opt/homebrew/bin/codex"),
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return "codex"
 
 
 def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str:
