@@ -10,6 +10,7 @@ dependencies = [
 
 [project.scripts]
 bemine = "bemine.cli:main"
+bemine-daemon = "bemine.daemon:main"
 bemine-discord-gateway = "mayor_discord.gateway:main"
 bemine-discord-send = "mayor_discord.send:main"
 mayor-discord-gateway = "mayor_discord.gateway:main"

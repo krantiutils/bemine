@@ -7,11 +7,13 @@ from pathlib import Path
 from .capabilities import build_capability_manifest, render_capability_manifest
 from .config import BemineSettings
 from .credentials import CredentialInventory, PermissionGate
+from .jobs import BemineDaemon, render_jobs, run_job_by_id, seed_default_jobs
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
 from .notifications import notify_permission_request_via_discord
 from .proxy import CredentialProxy
 from .status import collect_fleet_status, render_status
+from .systemd import install_user_units, render_user_units
 from .tmux_adapter import TmuxAdapter
 
 
@@ -118,6 +120,34 @@ def build_parser() -> argparse.ArgumentParser:
     proxy_check = proxy_sub.add_parser("check")
     proxy_check.add_argument("request_id")
     proxy_check.add_argument("--actor", default="cli")
+
+    jobs = sub.add_parser("jobs", help="Manage scheduled Bemine jobs.")
+    jobs_sub = jobs.add_subparsers(dest="jobs_command", required=True)
+    jobs_sub.add_parser("seed")
+    jobs_list = jobs_sub.add_parser("list")
+    jobs_list.add_argument("--json", action="store_true")
+    jobs_run = jobs_sub.add_parser("run")
+    jobs_run.add_argument("job_id")
+    jobs_run.add_argument("--no-notify", dest="notify", action="store_false")
+    jobs_run.set_defaults(notify=True)
+    jobs_enable = jobs_sub.add_parser("enable")
+    jobs_enable.add_argument("job_id")
+    jobs_disable = jobs_sub.add_parser("disable")
+    jobs_disable.add_argument("job_id")
+
+    daemon = sub.add_parser("daemon", help="Run the Bemine scheduler daemon.")
+    daemon.add_argument("--once", action="store_true")
+    daemon.add_argument("--poll-seconds", type=int, default=30)
+    daemon.add_argument("--json", action="store_true")
+
+    systemd = sub.add_parser("systemd", help="Install persistent systemd user units.")
+    systemd_sub = systemd.add_subparsers(dest="systemd_command", required=True)
+    systemd_install = systemd_sub.add_parser("install")
+    systemd_install.add_argument("--now", action="store_true")
+    systemd_install.add_argument("--no-linger", dest="linger", action="store_false")
+    systemd_install.set_defaults(linger=True)
+    systemd_render = systemd_sub.add_parser("render")
+    systemd_render.add_argument("--json", action="store_true")
     return parser
 
 
@@ -309,6 +339,69 @@ def main(argv: list[str] | None = None) -> None:
         if args.proxy_command == "check":
             result = CredentialProxy(kernel.db).check(args.request_id, actor=args.actor)
             print(json.dumps(result, sort_keys=True))
+    elif args.command == "jobs":
+        if args.jobs_command == "seed":
+            seed_default_jobs(kernel.db)
+            print(json.dumps({"ok": True, "jobs": len(kernel.db.list_jobs())}, sort_keys=True))
+        elif args.jobs_command == "list":
+            seed_default_jobs(kernel.db)
+            rows = [dict(row) for row in kernel.db.list_jobs()]
+            if args.json:
+                print(json.dumps(rows, indent=2, sort_keys=True))
+            else:
+                print(render_jobs(rows), end="")
+        elif args.jobs_command == "run":
+            result = run_job_by_id(
+                settings,
+                args.job_id,
+                sender=None if args.notify else (lambda text: {"id": "", "channel_id": ""}),
+            )
+            print(
+                json.dumps(
+                    {
+                        "job_id": result.job_id,
+                        "status": result.status,
+                        "notified": result.notified,
+                    },
+                    sort_keys=True,
+                )
+            )
+        elif args.jobs_command == "enable":
+            kernel.db.set_job_enabled(args.job_id, enabled=True)
+            print(json.dumps({"job_id": args.job_id, "enabled": True}, sort_keys=True))
+        elif args.jobs_command == "disable":
+            kernel.db.set_job_enabled(args.job_id, enabled=False)
+            print(json.dumps({"job_id": args.job_id, "enabled": False}, sort_keys=True))
+    elif args.command == "daemon":
+        daemon = BemineDaemon(settings, poll_seconds=args.poll_seconds)
+        if args.once:
+            results = daemon.run_once()
+            payload = [result.__dict__ for result in results]
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            elif not results:
+                print("No due jobs.")
+            else:
+                for result in results:
+                    print(f"{result.job_id}: {result.status} notified={result.notified}")
+        else:
+            daemon.run_forever()
+    elif args.command == "systemd":
+        if args.systemd_command == "install":
+            written = install_user_units(
+                repo_dir=Path.cwd(),
+                state_dir=settings.state_dir,
+                now=args.now,
+                enable_linger=args.linger,
+            )
+            print(json.dumps({"written": [str(path) for path in written]}, indent=2, sort_keys=True))
+        elif args.systemd_command == "render":
+            units = render_user_units(repo_dir=Path.cwd(), state_dir=settings.state_dir)
+            if args.json:
+                print(json.dumps({unit.name: unit.text for unit in units}, indent=2, sort_keys=True))
+            else:
+                for unit in units:
+                    print(f"# {unit.name}\n{unit.text}")
 
 
 if __name__ == "__main__":

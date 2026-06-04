@@ -1,0 +1,129 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from bemine.config import BemineSettings
+from bemine.db import BemineDB
+from bemine.jobs import next_run_after, run_job_by_id, seed_default_jobs
+from bemine.systemd import render_user_units
+
+
+def test_cron_next_run_for_daily_digest_uses_local_time() -> None:
+    tz = ZoneInfo("Asia/Kathmandu")
+
+    assert next_run_after("0 18 * * *", datetime(2026, 6, 4, 17, 59, tzinfo=tz)) == datetime(
+        2026, 6, 4, 18, 0, tzinfo=tz
+    )
+    assert next_run_after("0 18 * * *", datetime(2026, 6, 4, 18, 0, tzinfo=tz)) == datetime(
+        2026, 6, 5, 18, 0, tzinfo=tz
+    )
+
+
+def test_daily_digest_job_records_run_and_uses_sender(tmp_path: Path) -> None:
+    codex_file = tmp_path / ".codex" / "sessions" / "2026" / "06" / "04" / (
+        "rollout-2026-06-04T10-19-22-session-1.jsonl"
+    )
+    codex_file.parent.mkdir(parents=True)
+    codex_file.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in [
+                {
+                    "timestamp": "2026-06-04T10:00:00Z",
+                    "type": "session_meta",
+                    "payload": {"id": "session-1", "cwd": "/repo/bemine", "model": "openai"},
+                },
+                {
+                    "timestamp": "2026-06-04T10:01:00Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"text": "Please approve the AWS SSO code 123456."}],
+                    },
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    db = BemineDB(settings.db_path)
+    seed_default_jobs(db)
+    db.upsert_job(
+        job_id="daily_digest",
+        name="Daily project digest",
+        enabled=True,
+        trigger_type="cron",
+        schedule="0 18 * * *",
+        config_json=json.dumps(
+            {
+                "type": "daily_digest",
+                "devices": ["local"],
+                "status_limit": 4,
+                "rundown_limit": 4,
+                "notify_discord": True,
+            },
+            sort_keys=True,
+        ),
+        next_run_at="2026-06-04T18:00:00+05:45",
+    )
+    sent: list[str] = []
+
+    result = run_job_by_id(
+        settings,
+        "daily_digest",
+        sender=lambda text: sent.append(text) or {"id": "discord-1", "channel_id": "home"},
+    )
+
+    assert result.status == "success"
+    assert result.notified is True
+    assert sent and "Bemine daily digest" in sent[0]
+    assert "ask: yes" in sent[0]
+    assert "123456" not in sent[0]
+
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        run = conn.execute("SELECT status, output FROM job_runs").fetchone()
+        assert run[0] == "success"
+        assert "Bemine daily digest" in run[1]
+        assert "123456" not in run[1]
+        job = conn.execute("SELECT last_run_at, next_run_at, failure_count FROM jobs").fetchone()
+        assert job[0]
+        assert job[1]
+        assert job[2] == 0
+        events = {
+            row[0]
+            for row in conn.execute("SELECT event_type FROM audit_events").fetchall()
+        }
+        assert "job_run_finished" in events
+        assert "job_notification_sent" in events
+    finally:
+        conn.close()
+
+
+def test_systemd_units_run_gateway_and_daemon_from_repo(tmp_path: Path) -> None:
+    units = render_user_units(
+        repo_dir=tmp_path / "repo",
+        state_dir=tmp_path / "repo" / ".bemine",
+        uv_path="/usr/bin/uv",
+    )
+    rendered = {unit.name: unit.text for unit in units}
+
+    assert set(rendered) == {"bemine-daemon.service", "mayor-discord-gateway.service"}
+    assert "WorkingDirectory=" + str(tmp_path / "repo") in rendered["bemine-daemon.service"]
+    assert "ExecStart=/usr/bin/uv run bemine-daemon" in rendered["bemine-daemon.service"]
+    assert "ExecStart=/usr/bin/uv run mayor-discord-gateway" in rendered["mayor-discord-gateway.service"]
+    assert "Environment=BEMINE_HOME=" + str(tmp_path / "repo" / ".bemine") in rendered["bemine-daemon.service"]

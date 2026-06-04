@@ -13,6 +13,7 @@ The current implementation is the first working vertical slice:
 - render project rundowns from the shared kernel
 - expose the same rundown through Discord text commands
 - drive tmux sessions from a typed adapter
+- run a systemd-backed daemon with cron-style jobs
 - track audit events, permission requests, credential policies, and usage samples
 
 ## Commands
@@ -23,6 +24,11 @@ uv run bemine status
 uv run bemine rundown
 uv run bemine search "blocked schema"
 uv run bemine capabilities
+uv run bemine kimi status
+uv run bemine jobs list
+uv run bemine jobs run daily_digest --no-notify
+uv run bemine daemon --once
+uv run bemine systemd install --now
 uv run bemine credentials scan
 uv run bemine credentials list
 uv run bemine permissions request fmw:legacy --reason "need legacy env for migration"
@@ -49,6 +55,31 @@ uv run mayor-discord-gateway
 uv run mayor-discord-send --text "legacy alias"
 ```
 
+## Daemon And Jobs
+
+`bemine-daemon` is the one background process. It seeds and runs jobs from the
+SQLite `jobs` table, recording each execution in `job_runs`.
+
+The first built-in job is `daily_digest`, scheduled at `0 18 * * *` local time.
+It scans local histories, checks recent fleet status on `local,mbp,mbp2,k2`,
+builds a project rundown, records the run, and sends the digest to Discord when
+`notify_discord` is enabled.
+
+```bash
+uv run bemine jobs seed
+uv run bemine jobs list
+uv run bemine jobs run daily_digest --no-notify
+uv run bemine-daemon --once --json
+```
+
+Persistent startup uses user systemd units:
+
+```bash
+uv run bemine systemd render
+uv run bemine systemd install --now
+systemctl --user status bemine-daemon mayor-discord-gateway
+```
+
 ## Configuration
 
 Runtime state defaults to `./.bemine`.
@@ -61,6 +92,7 @@ BEMINE_VAULT=/path/to/obsidian-vault
 BEMINE_CODEX_HOME=~/.codex
 BEMINE_CLAUDE_HOME=~/.claude
 BEMINE_KIMI_HOME=~/devlog/raw/kimi
+BEMINE_HERMES_HOME=~/.hermes
 BEMINE_DEVICE_ID=cdjk
 BEMINE_TOTP_SECRET=
 ```
@@ -87,7 +119,7 @@ Bemine Kernel
         +-- Runtime Adapters: Codex, Claude, Kimi
         +-- Device Adapters: local shell, tmux, SSH later
         +-- Memory Adapters: SQLite, Obsidian
-        +-- Jobs / Scheduler later
+        +-- Jobs / Scheduler
         +-- Credential Gate / Permission Requests
         +-- Observability Ledger / Usage Samples
 ```
@@ -182,6 +214,8 @@ The tests are integration-oriented:
 - security and usage ledger verification
 - TOTP-gated credential request and approval flow
 - Discord approval-code redaction
+- Kimi handler wire-shape and usage recording
+- cron scheduling, daily digest execution, and systemd unit rendering
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:

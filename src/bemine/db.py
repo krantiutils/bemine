@@ -335,6 +335,102 @@ class BemineDB:
                 "usage_samples": conn.execute("SELECT COUNT(*) FROM usage_samples").fetchone()[0],
             }
 
+    def upsert_job(
+        self,
+        *,
+        job_id: str,
+        name: str,
+        enabled: bool,
+        trigger_type: str,
+        schedule: str,
+        config_json: str,
+        next_run_at: str | None = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO jobs(
+                    job_id, name, enabled, trigger_type, schedule, config_json,
+                    last_run_at, next_run_at, failure_count
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 0)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    name=excluded.name,
+                    enabled=excluded.enabled,
+                    trigger_type=excluded.trigger_type,
+                    schedule=excluded.schedule,
+                    config_json=excluded.config_json,
+                    next_run_at=COALESCE(jobs.next_run_at, excluded.next_run_at)
+                """,
+                (
+                    job_id,
+                    name,
+                    1 if enabled else 0,
+                    trigger_type,
+                    schedule,
+                    config_json,
+                    next_run_at,
+                ),
+            )
+
+    def get_job(self, job_id: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+
+    def list_jobs(self, *, enabled: bool | None = None) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            if enabled is None:
+                return conn.execute("SELECT * FROM jobs ORDER BY job_id").fetchall()
+            return conn.execute(
+                "SELECT * FROM jobs WHERE enabled = ? ORDER BY job_id",
+                (1 if enabled else 0,),
+            ).fetchall()
+
+    def set_job_enabled(self, job_id: str, *, enabled: bool) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE jobs SET enabled = ? WHERE job_id = ?",
+                (1 if enabled else 0, job_id),
+            )
+
+    def update_job_after_run(
+        self,
+        *,
+        job_id: str,
+        last_run_at: str,
+        next_run_at: str,
+        success: bool,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE jobs
+                SET last_run_at = ?,
+                    next_run_at = ?,
+                    failure_count = CASE WHEN ? THEN 0 ELSE failure_count + 1 END
+                WHERE job_id = ?
+                """,
+                (last_run_at, next_run_at, 1 if success else 0, job_id),
+            )
+
+    def record_job_run(
+        self,
+        *,
+        run_id: str,
+        job_id: str,
+        started_at: str,
+        finished_at: str,
+        status: str,
+        output: str,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO job_runs(run_id, job_id, started_at, finished_at, status, output)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (run_id, job_id, started_at, finished_at, status, output),
+            )
+
     def upsert_credential_profile(
         self,
         *,
