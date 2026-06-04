@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
-from mayor_discord.gateway import ACK_REACTION, _acknowledge_message, _best_effort_typing
+from mayor_discord.dispatch import DispatchResult, ProjectChannel, ProjectRoute
+from mayor_discord.gateway import (
+    ACK_REACTION,
+    _acknowledge_message,
+    _best_effort_typing,
+    _dispatch_response_text,
+)
 
 
 class FakeMessage:
@@ -67,3 +74,19 @@ def test_best_effort_typing_ignores_missing_typing_support() -> None:
             return "handled"
 
     assert asyncio.run(run()) == "handled"
+
+
+def test_dispatch_response_omits_success_header() -> None:
+    project = ProjectChannel(channel_name="bemine", cwd=Path("/tmp"))
+    route = ProjectRoute(project=project, reason="default")
+    result = DispatchResult(ok=True, project=project, output="done", elapsed_seconds=1.0)
+
+    assert _dispatch_response_text(result, route) == "done"
+
+
+def test_dispatch_response_keeps_failure_context() -> None:
+    project = ProjectChannel(channel_name="bemine", cwd=Path("/tmp"))
+    route = ProjectRoute(project=project, reason="default")
+    result = DispatchResult(ok=False, project=project, output="failed", elapsed_seconds=1.0)
+
+    assert _dispatch_response_text(result, route) == "Codex dispatch issue for `#bemine`:\nfailed"

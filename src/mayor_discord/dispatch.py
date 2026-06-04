@@ -16,6 +16,7 @@ import aiohttp
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
+from bemine.harness_context import load_harness_context
 from bemine.operator_context import load_operator_context
 from bemine.project_filters import ignored_project_reason
 from bemine.status import _redact
@@ -502,6 +503,7 @@ def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str
     attachment_lines = [
         f"- {path}" for path in request.attachments
     ] or ["- none"]
+    harness_context = load_harness_context().text or "No harness context files found."
     operator_context = load_operator_context().text or "No operator context files found."
     return "\n".join(
         [
@@ -520,6 +522,9 @@ def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str
             "",
             "Saved attachments:",
             *attachment_lines,
+            "",
+            "Bemine harness context:",
+            harness_context,
             "",
             "Shared operator context:",
             operator_context,

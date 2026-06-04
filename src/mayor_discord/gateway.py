@@ -20,7 +20,13 @@ from bemine.kernel import BemineKernel
 from bemine.status import collect_fleet_status, render_status
 
 from .config import Settings
-from .dispatch import CodexDispatcher, DispatchRequest, ProjectRoute, infer_project_route
+from .dispatch import (
+    CodexDispatcher,
+    DispatchRequest,
+    DispatchResult,
+    ProjectRoute,
+    infer_project_route,
+)
 from .store import Store
 
 
@@ -298,12 +304,7 @@ class MayorDiscordGateway:
                 message,
                 emoji=SUCCESS_REACTION if result.ok else WARNING_REACTION,
             )
-            header = (
-                f"Codex result for `#{route.project.channel_name}`"
-                if result.ok
-                else f"Codex dispatch issue for `#{route.project.channel_name}`"
-            )
-            for chunk in _discord_chunk(f"{header}:\n{result.output}", limit=1900):
+            for chunk in _discord_chunk(_dispatch_response_text(result, route), limit=1900):
                 await message.reply(chunk, mention_author=False)
             return
 
@@ -437,6 +438,12 @@ def _discord_chunk(text: str, *, limit: int = 1900) -> list[str]:
     if current:
         chunks.append("\n".join(current))
     return chunks or [text[:limit]]
+
+
+def _dispatch_response_text(result: DispatchResult, route: ProjectRoute) -> str:
+    if result.ok:
+        return result.output
+    return f"Codex dispatch issue for `#{route.project.channel_name}`:\n{result.output}"
 
 
 def _redact_sensitive_message(content: str) -> str:

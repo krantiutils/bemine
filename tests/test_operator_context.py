@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bemine.harness_context import load_harness_context
 from bemine.operator_context import load_operator_context, redact_operator_context
 
 
@@ -69,3 +70,18 @@ def test_cli_context_show_uses_default_deploy_file(tmp_path: Path, monkeypatch) 
     assert payload["files"] == [str(home / "deploy.md")]
     assert "hf_abcdefghijklmnopqrstuvwxyz" not in payload["text"]
     assert "<redacted>" in payload["text"]
+
+
+def test_harness_context_loads_soul_and_skill(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "SOUL.md").write_text("TOKEN=hf_abcdefghijklmnopqrstuvwxyz\nsoul", encoding="utf-8")
+    (repo / "SKILL.md").write_text("---\nname: bemine-harness\n---\nskill", encoding="utf-8")
+
+    context = load_harness_context(repo_dir=repo)
+
+    assert context.files == [repo / "SOUL.md", repo / "SKILL.md"]
+    assert "soul" in context.text
+    assert "skill" in context.text
+    assert "hf_abcdefghijklmnopqrstuvwxyz" not in context.text
+    assert "<redacted>" in context.text

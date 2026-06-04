@@ -227,6 +227,8 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Pat
     assert str(note_path) not in command
     assert "Project channel: #bemine" in str(seen["input"])
     assert str(note_path) in str(seen["input"])
+    assert "Bemine harness context:" in str(seen["input"])
+    assert "Bemine Soul" in str(seen["input"])
     assert "Shared operator context:" in str(seen["input"])
     assert "Credential and infrastructure rules:" in str(seen["input"])
     assert seen["timeout"] == 42

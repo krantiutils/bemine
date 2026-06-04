@@ -28,6 +28,8 @@ Functional now:
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
 - `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
+- `SOUL.md` and `SKILL.md` define Bemine's identity and harness workflow, and
+  are injected into dispatched worker prompts.
 
 Not functional yet:
 
@@ -129,6 +131,7 @@ BEMINE_HERMES_HOME=~/.hermes
 BEMINE_DEVICE_ID=cdjk
 BEMINE_IGNORED_PROJECT_ROOTS=~/gt
 BEMINE_OPERATOR_CONTEXT_FILES=~/deploy.md
+BEMINE_HARNESS_CONTEXT_FILES=/home/cdjk/bm/SOUL.md:/home/cdjk/bm/SKILL.md
 BEMINE_TOTP_SECRET=
 ```
 
@@ -139,6 +142,10 @@ projects do not reappear from old session history.
 `BEMINE_OPERATOR_CONTEXT_FILES` is a `:`-separated list of runbook files. When
 it is not set, Bemine reads `~/deploy.md`. Context is redacted before it is
 shown or injected into worker prompts.
+
+`BEMINE_HARNESS_CONTEXT_FILES` is a `:`-separated override for Bemine's own
+worker context. By default, dispatch prompts include repository `SOUL.md` and
+`SKILL.md`, redacted with the same secret filters as operator context.
 
 Discord settings can use `MAYOR_DISCORD_*` or fall back to Hermes-compatible
 `DISCORD_*` environment variables:
@@ -256,7 +263,8 @@ or `#bemine`, or fall back to the mayor project when no project is clear.
 Dispatched messages use the selected project root as `--cd`. Image attachments
 are passed to Codex with `--image`; other attachments are saved and listed in
 the prompt. The gateway reacts when it receives work, shows Discord typing while
-Codex runs, and replies with the final Codex message.
+Codex runs, and replies with the final Codex message directly. Dispatch failures
+are prefixed with the project channel for triage.
 
 ## Credential Gate
 
@@ -331,6 +339,7 @@ The tests are integration-oriented:
 - cron scheduling, daily digest/reminder execution, and systemd unit rendering
 - Proton Bridge readiness checks
 - operator context redaction and prompt injection
+- Bemine soul/skill harness context prompt injection
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:
