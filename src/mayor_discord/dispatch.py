@@ -348,8 +348,6 @@ class CodexDispatcher:
                 str(project.cwd),
                 "--sandbox",
                 "workspace-write",
-                "--ask-for-approval",
-                "never",
                 "--output-last-message",
                 output_file.name,
                 "-",

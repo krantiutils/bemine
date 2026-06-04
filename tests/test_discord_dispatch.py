@@ -222,7 +222,7 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(tmp_path: Pat
     assert command[:2] == ["codex", "exec"]
     assert command[command.index("--cd") + 1] == str(project_root)
     assert command[command.index("--sandbox") + 1] == "workspace-write"
-    assert command[command.index("--ask-for-approval") + 1] == "never"
+    assert "--ask-for-approval" not in command
     assert str(image_path) in command
     assert str(note_path) not in command
     assert "Project channel: #bemine" in str(seen["input"])
