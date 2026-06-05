@@ -134,7 +134,10 @@ def test_general_channel_routes_by_content_mentions_and_mayor_fallback(
     assert mayor.reason == "default-mayor"
 
 
-def test_project_channels_from_db_make_per_project_names_unique(tmp_path: Path) -> None:
+def test_project_channels_from_db_make_per_project_names_unique(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("BEMINE_CONFIG", str(tmp_path / "missing-bemine.toml"))
     db = BemineDB(tmp_path / "state" / "bemine.db")
     rows = [
         ("proj_aux", "aux", tmp_path / "tmp" / "aux", 40.0),

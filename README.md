@@ -57,6 +57,7 @@ uv run bemine status
 uv run bemine rundown
 uv run bemine search "blocked schema"
 uv run bemine capabilities
+uv run bemine config show
 uv run bemine context show
 uv run bemine dispatch status
 uv run bemine kimi status
@@ -107,9 +108,9 @@ uv run mayor-discord-send --text "legacy alias"
 SQLite `jobs` table, recording each execution in `job_runs`.
 
 The first built-in job is `daily_digest`, scheduled at `0 18 * * *` local time.
-It scans local histories, checks recent fleet status on `local,mbp,mbp2,k2`,
-builds a project rundown, records the run, and sends the digest to Discord when
-`notify_discord` is enabled.
+It scans local histories, checks recent fleet status using `[status].devices`
+from `bemine.toml`, builds a project rundown, records the run, and sends the
+digest to Discord when `notify_discord` is enabled.
 
 Reminder jobs are also real daemon jobs. They use five-field cron schedules and
 can be used for routine management:
@@ -134,57 +135,35 @@ systemctl --user status bemine-daemon mayor-discord-gateway
 
 ## Configuration
 
-Runtime state defaults to `./.bemine`.
-
-The Obsidian vault defaults to `~/Documents/Mayor`.
+Bemine's human-facing config lives in `bemine.toml`. Use `BEMINE_CONFIG` or
+`uv run bemine --config /path/to/bemine.toml ...` to point another machine at a
+different file.
 
 ```bash
-BEMINE_HOME=/path/to/state
-BEMINE_VAULT=/path/to/obsidian-vault
-BEMINE_CODEX_HOME=~/.codex
-BEMINE_CLAUDE_HOME=~/.claude
-BEMINE_KIMI_HOME=~/devlog/raw/kimi
-BEMINE_HERMES_HOME=~/.hermes
-BEMINE_DEVICE_ID=cdjk
-BEMINE_IGNORED_PROJECT_ROOTS=~/gt
-BEMINE_OPERATOR_CONTEXT_FILES=~/deploy.md
-BEMINE_HARNESS_CONTEXT_FILES=/home/cdjk/bm/SOUL.md:/home/cdjk/bm/SKILL.md
-BEMINE_CODEX_SANDBOX=danger-full-access
-BEMINE_CODEX_MODEL=
-BEMINE_DISPATCH_RUNTIME=kimi
-BEMINE_KIMI_DISPATCH_MAX_TOKENS=1600
-BEMINE_TOTP_SECRET=
+uv run bemine config path
+uv run bemine config paths
+uv run bemine config show
+uv run bemine config show --format toml
+uv run bemine dispatch status
 ```
 
-`BEMINE_IGNORED_PROJECT_ROOTS` is a `:`-separated list on Linux/macOS. When it
-is not set, Bemine ignores `~/gt` as a legacy workspace root so migrated
-projects do not reappear from old session history.
+The config file holds the choices humans care about most:
 
-`BEMINE_OPERATOR_CONTEXT_FILES` is a `:`-separated list of runbook files. When
-it is not set, Bemine reads `~/deploy.md`. Context is redacted before it is
-shown or injected into worker prompts.
+- active dispatch runtime and model (`[dispatch]`, `[kimi]`, `[codex]`)
+- memory/state/runtime paths (`[paths]`)
+- known devices for status polling (`[status]`)
+- context files injected into workers (`[context]`)
+- ignored legacy project roots (`[projects]`)
+- Discord non-secret routing settings (`[discord]`)
+- secret env-var names (`[security]`)
 
-`BEMINE_HARNESS_CONTEXT_FILES` is a `:`-separated override for Bemine's own
-worker context. By default, dispatch prompts include repository `SOUL.md` and
-`SKILL.md`, redacted with the same secret filters as operator context.
+Secrets stay outside `bemine.toml`. Discord tokens, TOTP secrets, and provider
+API keys should remain in env files or credential stores. The config names those
+env vars, for example `discord.token_env = "MAYOR_DISCORD_BOT_TOKEN"` and
+`security.totp_secret_env = "BEMINE_TOTP_SECRET"`.
 
-`BEMINE_DISPATCH_RUNTIME` controls the default runtime for Discord project
-channels when no per-project runtime is stored. It defaults to `kimi`. Existing
-project-channel config can still set a project to `codex`. Kimi dispatch uses
-the Hermes-backed Kimi API configuration and records token usage in SQLite.
-`BEMINE_KIMI_DISPATCH_MAX_TOKENS` controls the response budget.
-
-Use `bemine dispatch status` to see the active Discord dispatch runtime and
-resolved model/provider. For Kimi, the model is read from Hermes config
-(`~/.hermes/config.yaml`, currently `kimi-k2.6` on this machine). For Codex,
-set `BEMINE_CODEX_MODEL` to pin the model; when it is empty, Codex uses its own
-`$CODEX_HOME/config.toml` default.
-
-`BEMINE_CODEX_SANDBOX` controls the sandbox mode used by Discord Codex dispatch.
-It defaults to `danger-full-access` because `workspace-write` can fail under
-some service environments before app code starts with bubblewrap loopback
-permission errors. Valid values are `read-only`, `workspace-write`, and
-`danger-full-access`.
+Existing `BEMINE_*`, `MAYOR_DISCORD_*`, and `DISCORD_*` environment variables
+still work as emergency/deployment overrides.
 
 Discord settings can use `MAYOR_DISCORD_*` or fall back to Hermes-compatible
 `DISCORD_*` environment variables:
@@ -353,6 +332,12 @@ is currently configured through the direct Kimi API path, so it reports the
 chosen model and usage but does not expose local tool-call events yet. The target
 architecture is a long-running configured session/worker for the selected
 runtime rather than per-message runtime switching.
+
+Discord DMs also run through a local Bemine tool router before project dispatch.
+Plain language requests can call local tools such as `config.update_dispatch`,
+`config.show`, `dispatch.status`, `status.show`, `rundown.show`,
+`capabilities.show`, and `permissions.pending`. Tool calls are shown in the
+Discord reply as `tool: <name>`, then the gateway returns the result directly.
 
 Codex dispatch defaults to `--sandbox danger-full-access` to avoid service-level
 bubblewrap failures such as `bwrap: loopback: Failed RTM_NEWADDR: Operation not

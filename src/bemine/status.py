@@ -54,7 +54,7 @@ def collect_fleet_status(
     limit_per_runtime: int = 8,
     timeout: int = 8,
 ) -> tuple[list[SessionStatus], list[StatusError]]:
-    selected = devices or list(DEFAULT_STATUS_DEVICES)
+    selected = devices or settings.status_devices or list(DEFAULT_STATUS_DEVICES)
     statuses: list[SessionStatus] = []
     errors: list[StatusError] = []
     for device in selected:

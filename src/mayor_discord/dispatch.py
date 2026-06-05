@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from bemine.config import BemineSettings
+from bemine.config import BemineSettings, config_int, config_path, config_string
 from bemine.db import BemineDB
 from bemine.harness_context import load_harness_context
 from bemine.kimi_handler import (
@@ -976,6 +976,7 @@ class CodexDispatcher:
 
 def resolve_codex_bin() -> str:
     configured = os.environ.get("BEMINE_CODEX_BIN", "").strip()
+    configured = configured or config_string("codex", "bin", "")
     if configured:
         return configured
     found = shutil.which("codex")
@@ -995,6 +996,7 @@ def resolve_codex_bin() -> str:
 
 def resolve_codex_sandbox() -> str:
     configured = os.environ.get("BEMINE_CODEX_SANDBOX", "").strip()
+    configured = configured or config_string("codex", "sandbox", "")
     if not configured:
         return "danger-full-access"
     if configured not in {"read-only", "workspace-write", "danger-full-access"}:
@@ -1005,20 +1007,24 @@ def resolve_codex_sandbox() -> str:
 
 
 def resolve_codex_model() -> str:
-    return os.environ.get("BEMINE_CODEX_MODEL", "").strip()
+    return os.environ.get("BEMINE_CODEX_MODEL", "").strip() or config_string(
+        "codex", "model", ""
+    )
 
 
 def resolve_dispatch_runtime(runtime: str | None = None) -> str:
     configured = (runtime or "").strip().lower()
     if not configured:
         configured = os.environ.get("BEMINE_DISPATCH_RUNTIME", "").strip().lower()
+    if not configured:
+        configured = config_string("dispatch", "runtime", "").lower()
     return configured or "kimi"
 
 
 def resolve_kimi_dispatch_max_tokens() -> int:
     raw = os.environ.get("BEMINE_KIMI_DISPATCH_MAX_TOKENS", "").strip()
     if not raw:
-        return 1600
+        return config_int("kimi", "dispatch_max_tokens", 1600)
     try:
         value = int(raw)
     except ValueError as exc:
@@ -1034,6 +1040,8 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
         "runtime": runtime,
         "runtime_source": "BEMINE_DISPATCH_RUNTIME"
         if os.environ.get("BEMINE_DISPATCH_RUNTIME", "").strip()
+        else "bemine.toml"
+        if config_string("dispatch", "runtime", "")
         else "default",
     }
     if runtime == "kimi":
@@ -1045,7 +1053,9 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
                 "api_mode": config.api_mode,
                 "base_url": config.base_url,
                 "api_key_present": config.api_key_present,
-                "model_source": config.config_path,
+                "model_source": str(config_path())
+                if config_string("kimi", "model", "")
+                else config.config_path,
                 "tool_calls": "not available on Bemine's current Kimi API dispatch path",
             }
         )
@@ -1056,6 +1066,8 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
                 "provider": "codex",
                 "model": model or "codex config/default",
                 "model_source": "BEMINE_CODEX_MODEL"
+                if os.environ.get("BEMINE_CODEX_MODEL", "").strip()
+                else "bemine.toml"
                 if model
                 else "$CODEX_HOME/config.toml",
                 "codex_bin": resolve_codex_bin(),

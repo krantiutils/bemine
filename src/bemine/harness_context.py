@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import config_list
 from .operator_context import redact_operator_context
 
 
@@ -33,7 +34,9 @@ def load_harness_context(
     if limit <= 0:
         raise ValueError("limit must be positive")
     paths = files if files is not None else _configured_harness_files(repo_dir=repo_dir)
-    existing = [path.expanduser().resolve() for path in paths if path.expanduser().exists()]
+    existing = [
+        path.expanduser().resolve() for path in paths if path.expanduser().exists()
+    ]
     blocks: list[str] = []
     for path in existing:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -61,6 +64,12 @@ def render_harness_context(context: HarnessContext) -> str:
 def _configured_harness_files(*, repo_dir: Path | None = None) -> list[Path]:
     raw = os.environ.get("BEMINE_HARNESS_CONTEXT_FILES", "").strip()
     if raw:
-        return [Path(part).expanduser() for part in raw.split(os.pathsep) if part.strip()]
+        return [
+            Path(part).expanduser() for part in raw.split(os.pathsep) if part.strip()
+        ]
+    if repo_dir is None:
+        configured = config_list("context", "harness_files")
+        if configured:
+            return [Path(part).expanduser() for part in configured]
     root = (repo_dir or Path(__file__).resolve().parents[2]).expanduser()
     return [root / "SOUL.md", root / "SKILL.md"]

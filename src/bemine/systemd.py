@@ -13,13 +13,18 @@ class UnitFile:
     text: str
 
 
-def render_user_units(*, repo_dir: Path, state_dir: Path, uv_path: str | None = None) -> list[UnitFile]:
+def render_user_units(
+    *, repo_dir: Path, state_dir: Path, uv_path: str | None = None
+) -> list[UnitFile]:
     repo_dir = repo_dir.expanduser().resolve()
     state_dir = state_dir.expanduser().resolve()
-    uv_path = uv_path or shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+    uv_path = (
+        uv_path or shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+    )
     env_lines = [
         "Environment=PYTHONUNBUFFERED=1",
         f"Environment=BEMINE_HOME={state_dir}",
+        f"Environment=BEMINE_CONFIG={repo_dir / 'bemine.toml'}",
     ]
     env_block = "\n".join(env_lines)
 
@@ -103,5 +108,7 @@ def install_user_units(
             check=True,
         )
     if enable_linger:
-        subprocess.run(["loginctl", "enable-linger", os.environ.get("USER", "")], check=False)
+        subprocess.run(
+            ["loginctl", "enable-linger", os.environ.get("USER", "")], check=False
+        )
     return written

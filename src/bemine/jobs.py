@@ -17,7 +17,6 @@ from .status import _redact, collect_fleet_status, render_status
 DiscordSender = Callable[[str], Mapping[str, Any]]
 
 DEFAULT_DAILY_DIGEST_SCHEDULE = "0 18 * * *"
-DEFAULT_DAILY_DIGEST_DEVICES = ["local", "mbp", "mbp2", "k2"]
 
 
 @dataclass(frozen=True)
@@ -38,26 +37,33 @@ class JobRunResult:
     notified: bool = False
 
 
-DEFAULT_JOBS = (
-    JobDefinition(
-        job_id="daily_digest",
-        name="Daily project digest",
-        trigger_type="cron",
-        schedule=DEFAULT_DAILY_DIGEST_SCHEDULE,
-        config={
-            "type": "daily_digest",
-            "devices": DEFAULT_DAILY_DIGEST_DEVICES,
-            "status_limit": 12,
-            "rundown_limit": 10,
-            "notify_discord": True,
-        },
-    ),
-)
+def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition, ...]:
+    devices = (settings.status_devices if settings else ["local", "mbp", "mbp2", "k2"])
+    return (
+        JobDefinition(
+            job_id="daily_digest",
+            name="Daily project digest",
+            trigger_type="cron",
+            schedule=DEFAULT_DAILY_DIGEST_SCHEDULE,
+            config={
+                "type": "daily_digest",
+                "devices": devices,
+                "status_limit": 12,
+                "rundown_limit": 10,
+                "notify_discord": True,
+            },
+        ),
+    )
 
 
-def seed_default_jobs(db: BemineDB, *, now: datetime | None = None) -> None:
+def seed_default_jobs(
+    db: BemineDB,
+    *,
+    settings: BemineSettings | None = None,
+    now: datetime | None = None,
+) -> None:
     now = now or _now()
-    for job in DEFAULT_JOBS:
+    for job in default_jobs(settings):
         if db.get_job(job.job_id) is not None:
             continue
         db.upsert_job(
@@ -147,7 +153,7 @@ def run_due_jobs(
     sender: DiscordSender | None = None,
 ) -> list[JobRunResult]:
     kernel = BemineKernel(settings)
-    seed_default_jobs(kernel.db, now=now)
+    seed_default_jobs(kernel.db, settings=settings, now=now)
     return [run_job_row(settings, row, sender=sender, now=now) for row in due_jobs(kernel.db, now=now)]
 
 
@@ -159,7 +165,7 @@ def run_job_by_id(
     now: datetime | None = None,
 ) -> JobRunResult:
     kernel = BemineKernel(settings)
-    seed_default_jobs(kernel.db, now=now)
+    seed_default_jobs(kernel.db, settings=settings, now=now)
     row = kernel.db.get_job(job_id)
     if row is None:
         raise ValueError(f"unknown job: {job_id}")
@@ -229,7 +235,7 @@ def run_job_row(
 def generate_daily_digest(settings: BemineSettings, config: Mapping[str, Any]) -> str:
     kernel = BemineKernel(settings)
     scan = kernel.scan_local()
-    devices = _list_config(config, "devices", DEFAULT_DAILY_DIGEST_DEVICES)
+    devices = _list_config(config, "devices", settings.status_devices)
     status_limit = int(config.get("status_limit") or 12)
     rundown_limit = int(config.get("rundown_limit") or 10)
     statuses, errors = collect_fleet_status(settings, devices=devices)

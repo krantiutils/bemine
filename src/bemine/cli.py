@@ -8,7 +8,9 @@ from pathlib import Path
 from textwrap import dedent
 
 from .capabilities import build_capability_manifest, render_capability_manifest
-from .config import BemineSettings
+from .config import BemineSettings, render_toml_config
+from .config import config_path as bemine_config_path
+from .config import config_string, load_bemine_config
 from .credentials import CredentialInventory, PermissionGate
 from .jobs import (
     BemineDaemon,
@@ -190,6 +192,8 @@ Examples:
 
 
 def _settings_from_args(args: argparse.Namespace) -> BemineSettings:
+    if getattr(args, "config", ""):
+        os.environ["BEMINE_CONFIG"] = str(Path(args.config).expanduser().resolve())
     return BemineSettings.load(
         state_dir=Path(args.state_dir) if args.state_dir else None,
         vault_dir=Path(args.vault) if args.vault else None,
@@ -212,6 +216,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--state-dir",
         default="",
         help="State directory. Defaults to ./.bemine or BEMINE_HOME.",
+    )
+    parser.add_argument(
+        "--config",
+        default="",
+        help="Bemine config file. Defaults to ./bemine.toml or BEMINE_CONFIG.",
     )
     parser.add_argument(
         "--vault",
@@ -427,6 +436,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     context_show.add_argument(
         "--json", action="store_true", help="Emit context file list and text as JSON."
+    )
+
+    config_cmd = sub.add_parser(
+        "config",
+        help="Inspect Bemine's single human config file.",
+        description="Inspect the active bemine.toml file.",
+        epilog=(
+            "Examples:\n"
+            "  uv run bemine config path\n"
+            "  uv run bemine config paths\n"
+            "  uv run bemine config show\n"
+            "  uv run bemine config show --format toml"
+        ),
+        formatter_class=HELP_FORMATTER,
+    )
+    config_sub = config_cmd.add_subparsers(dest="config_command", required=True)
+    config_sub.add_parser("path", help="Print the active config file path.")
+    config_sub.add_parser("paths", help="Print config path and key runtime paths.")
+    config_show = config_sub.add_parser("show", help="Print parsed config.")
+    config_show.add_argument(
+        "--json", action="store_true", help="Emit parsed config as JSON."
+    )
+    config_show.add_argument(
+        "--format",
+        choices=["json", "toml"],
+        default="json",
+        help="Output format. Defaults to json.",
     )
 
     kimi = sub.add_parser(
@@ -1018,6 +1054,30 @@ def main(argv: list[str] | None = None) -> None:
                 print(json.dumps(context.to_dict(), indent=2, sort_keys=True))
             else:
                 print(render_operator_context(context), end="")
+    elif args.command == "config":
+        if args.config_command == "path":
+            print(bemine_config_path())
+        elif args.config_command == "paths":
+            payload = {
+                "config": str(bemine_config_path()),
+                "state_dir": str(settings.state_dir),
+                "db_path": str(settings.db_path),
+                "vault_dir": str(settings.vault_dir),
+                "codex_home": str(settings.codex_home),
+                "claude_home": str(settings.claude_home),
+                "kimi_home": str(settings.kimi_home),
+                "hermes_home": str(settings.hermes_home),
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        elif args.config_command == "show":
+            payload = {
+                "path": str(bemine_config_path()),
+                "config": load_bemine_config(),
+            }
+            if args.format == "toml":
+                print(render_toml_config(payload["config"]), end="")
+            else:
+                print(json.dumps(payload, indent=2, sort_keys=True))
     elif args.command == "kimi":
         handler = KimiHandler(settings.hermes_home)
         if args.kimi_command == "status":
@@ -1278,7 +1338,9 @@ def main(argv: list[str] | None = None) -> None:
 
             discord_settings = DiscordSettings.load()
             guild_id = (
-                args.guild_id.strip() or os.environ.get("DISCORD_GUILD_ID", "").strip()
+                args.guild_id.strip()
+                or os.environ.get("DISCORD_GUILD_ID", "").strip()
+                or config_string("discord", "guild_id", "")
             )
             if not guild_id:
                 raise SystemExit("Set --guild-id or MAYOR_DISCORD_GUILD_ID.")

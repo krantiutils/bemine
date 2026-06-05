@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from .config import config_string
+
 KIMI_CODE_BASE_URL = "https://api.kimi.com/coding"
 KIMI_DEFAULT_MODEL = "kimi-k2.6"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -147,12 +149,16 @@ class KimiHandler:
             )
 
         if self.config.api_mode == "anthropic_messages":
-            url, headers, payload = _anthropic_request(self.config, api_key, prompt, system, max_tokens)
+            url, headers, payload = _anthropic_request(
+                self.config, api_key, prompt, system, max_tokens
+            )
             data = await _maybe_await(self._transport(url, headers, payload, timeout))
             return _parse_anthropic_response(data, self.config)
 
         if self.config.api_mode == "chat_completions":
-            url, headers, payload = _chat_request(self.config, api_key, prompt, system, max_tokens)
+            url, headers, payload = _chat_request(
+                self.config, api_key, prompt, system, max_tokens
+            )
             data = await _maybe_await(self._transport(url, headers, payload, timeout))
             return _parse_chat_response(data, self.config)
 
@@ -166,8 +172,16 @@ def load_kimi_config(hermes_home: Path) -> KimiConfig:
     auth_path = hermes_home / "auth.json"
 
     model_cfg = _read_model_config(config_path)
-    provider = str(model_cfg.get("provider") or "kimi-coding").strip()
-    model = str(model_cfg.get("default") or model_cfg.get("model") or KIMI_DEFAULT_MODEL).strip()
+    provider = (
+        config_string("kimi", "provider", "")
+        or str(model_cfg.get("provider") or "kimi-coding").strip()
+    )
+    model = (
+        config_string("kimi", "model", "")
+        or str(
+            model_cfg.get("default") or model_cfg.get("model") or KIMI_DEFAULT_MODEL
+        ).strip()
+    )
 
     env_values = _read_env_file(env_path)
     auth_entry = _read_credential_pool_entry(auth_path, provider)
@@ -177,10 +191,19 @@ def load_kimi_config(hermes_home: Path) -> KimiConfig:
     configured_base = str(model_cfg.get("base_url") or "").strip()
     auth_base = str(auth_entry.get("base_url") or "").strip() if auth_entry else ""
     env_base = _first_env_value(_base_url_env(provider), env_values)
-    base_url = configured_base or auth_base or _default_base_url(provider, api_key, env_base)
+    base_url = (
+        config_string("kimi", "base_url", "")
+        or configured_base
+        or auth_base
+        or _default_base_url(provider, api_key, env_base)
+    )
 
     configured_api_mode = str(model_cfg.get("api_mode") or "").strip()
-    api_mode = configured_api_mode or detect_api_mode(provider, base_url)
+    api_mode = (
+        config_string("kimi", "api_mode", "")
+        or configured_api_mode
+        or detect_api_mode(provider, base_url)
+    )
     key_source = _key_source(api_key_env, env_values)
 
     return KimiConfig(
@@ -302,7 +325,9 @@ def _chat_request(
     )
 
 
-def _parse_anthropic_response(data: Mapping[str, Any], config: KimiConfig) -> KimiMessageResult:
+def _parse_anthropic_response(
+    data: Mapping[str, Any], config: KimiConfig
+) -> KimiMessageResult:
     content = data.get("content") or []
     parts: list[str] = []
     if isinstance(content, list):
@@ -329,7 +354,9 @@ def _parse_anthropic_response(data: Mapping[str, Any], config: KimiConfig) -> Ki
     )
 
 
-def _parse_chat_response(data: Mapping[str, Any], config: KimiConfig) -> KimiMessageResult:
+def _parse_chat_response(
+    data: Mapping[str, Any], config: KimiConfig
+) -> KimiMessageResult:
     choices = data.get("choices") if isinstance(data.get("choices"), list) else []
     first = choices[0] if choices and isinstance(choices[0], Mapping) else {}
     message = first.get("message") if isinstance(first.get("message"), Mapping) else {}
@@ -358,20 +385,28 @@ async def _post_json(
 ) -> Mapping[str, Any]:
     client_timeout = aiohttp.ClientTimeout(total=timeout)
     async with aiohttp.ClientSession(timeout=client_timeout) as session:
-        async with session.post(url, headers=dict(headers), json=dict(payload)) as response:
+        async with session.post(
+            url, headers=dict(headers), json=dict(payload)
+        ) as response:
             body = await response.text()
             if response.status >= 400:
-                raise KimiAPIError(f"Kimi request failed {response.status}: {_redact(body)}")
+                raise KimiAPIError(
+                    f"Kimi request failed {response.status}: {_redact(body)}"
+                )
             try:
                 data = json.loads(body)
             except json.JSONDecodeError as exc:
-                raise KimiAPIError(f"Kimi response was not JSON: {_redact(body[:300])}") from exc
+                raise KimiAPIError(
+                    f"Kimi response was not JSON: {_redact(body[:300])}"
+                ) from exc
             if not isinstance(data, Mapping):
                 raise KimiAPIError("Kimi response JSON was not an object")
             return data
 
 
-async def _maybe_await(value: Awaitable[Mapping[str, Any]] | Mapping[str, Any]) -> Mapping[str, Any]:
+async def _maybe_await(
+    value: Awaitable[Mapping[str, Any]] | Mapping[str, Any],
+) -> Mapping[str, Any]:
     if hasattr(value, "__await__"):
         return await value  # type: ignore[misc]
     return value
@@ -448,7 +483,10 @@ def _resolve_api_key_env(
     if source.startswith("env:") and source[4:].strip():
         return source[4:].strip()
     for candidate in _api_key_env_candidates(provider):
-        if os.environ.get(candidate, "").strip() or env_values.get(candidate, "").strip():
+        if (
+            os.environ.get(candidate, "").strip()
+            or env_values.get(candidate, "").strip()
+        ):
             return candidate
     return _api_key_env_candidates(provider)[0]
 

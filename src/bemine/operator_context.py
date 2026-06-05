@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import config_list
+
 
 DEFAULT_CONTEXT_LIMIT = 12_000
 SECRET_ASSIGNMENT_RE = re.compile(
@@ -51,7 +53,9 @@ def load_operator_context(
     if limit <= 0:
         raise ValueError("limit must be positive")
     paths = files if files is not None else _configured_context_files(home=home)
-    existing = [path.expanduser().resolve() for path in paths if path.expanduser().exists()]
+    existing = [
+        path.expanduser().resolve() for path in paths if path.expanduser().exists()
+    ]
     blocks: list[str] = []
     for path in existing:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -79,13 +83,20 @@ def render_operator_context(context: OperatorContext) -> str:
 def redact_operator_context(text: str) -> str:
     text = PRIVATE_KEY_RE.sub("<private-key-redacted>", text)
     text = TOKEN_RE.sub("<token-redacted>", text)
-    text = SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}{match.group(2)}<redacted>", text)
+    text = SECRET_ASSIGNMENT_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}<redacted>", text
+    )
     return text
 
 
 def _configured_context_files(*, home: Path | None = None) -> list[Path]:
     raw = os.environ.get("BEMINE_OPERATOR_CONTEXT_FILES", "").strip()
     if raw:
-        return [Path(part).expanduser() for part in raw.split(os.pathsep) if part.strip()]
+        return [
+            Path(part).expanduser() for part in raw.split(os.pathsep) if part.strip()
+        ]
+    configured = config_list("context", "operator_files")
+    if configured:
+        return [Path(part).expanduser() for part in configured]
     base_home = (home or Path.home()).expanduser()
     return [base_home / "deploy.md"]

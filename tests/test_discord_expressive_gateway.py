@@ -15,6 +15,7 @@ from mayor_discord.gateway import (
     _best_effort_typing,
     _dispatch_progress_text,
     _dispatch_response_text,
+    _local_tool_response,
 )
 
 
@@ -114,3 +115,52 @@ def test_dispatch_progress_text_uses_runtime_summary() -> None:
     )
 
     assert _dispatch_progress_text(progress) == "💻 shell: `pwd`"
+
+
+def test_discord_local_tool_router_updates_dispatch_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = tmp_path / "bemine.toml"
+    config.write_text(
+        """
+[dispatch]
+runtime = "kimi"
+
+[kimi]
+model = "kimi-k2.6"
+
+[codex]
+model = ""
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+
+    result = _local_tool_response(
+        "switch to gpt 5.4 mini please",
+        router=lambda _content, _catalog: {
+            "tool": "config.update_dispatch",
+            "arguments": {"runtime": "codex", "model": "gpt 5.4 mini"},
+            "confidence": 0.91,
+        },
+    )
+
+    assert result is not None
+    assert result.tool == "config.update_dispatch"
+    assert "runtime: codex" in result.text
+    assert 'runtime = "codex"' in config.read_text(encoding="utf-8")
+    assert 'model = "gpt-5.4-mini"' in config.read_text(encoding="utf-8")
+
+
+def test_discord_local_tool_router_falls_through_to_project_dispatch() -> None:
+    result = _local_tool_response(
+        "fix the tests in this project",
+        router=lambda _content, _catalog: {
+            "tool": "project.dispatch",
+            "arguments": {},
+            "confidence": 0.93,
+        },
+    )
+
+    assert result is None

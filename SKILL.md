@@ -45,8 +45,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
   as managed tmux panes or an explicit app-server/session adapter.
 - Use `bemine workers` for live control. It can start owned tmux workers and
   adopt existing tmux sessions; raw TTY sessions remain read-only via status.
-- Use `bemine dispatch status` before assuming which runtime/model Discord is
-  using. Runtime/model selection is configuration-level, not per-message syntax.
+- Read `bemine.toml` or run `bemine config show` before assuming paths,
+  devices, Discord routing, runtime, or model choices. Runtime/model selection
+  is configuration-level, not per-message syntax.
 - Status must consider last interaction and whether the latest agent turn asks
   for input.
 - Avoid legacy Hermes/Gas Town semantics unless intentionally migrating data.
@@ -56,7 +57,8 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - CLI: `src/bemine/cli.py`
 - Status and history: `src/bemine/status.py`, `src/bemine/discovery.py`
 - Discord gateway: `src/mayor_discord/gateway.py`
-- Runtime dispatch: `src/mayor_discord/dispatch.py` defaults Discord project work to Kimi and keeps Codex selectable per project.
+- Runtime dispatch: `src/mayor_discord/dispatch.py` uses `bemine.toml` for the
+  default runtime/model and keeps per-project runtime selectable.
 - Kimi handler: `src/bemine/kimi_handler.py`
 - Credential inventory and gates: `src/bemine/credentials.py`,
   `src/bemine/proxy.py`, `src/bemine/totp.py`
@@ -85,6 +87,9 @@ Discord should feel like a natural control surface:
 - show typing while work is running;
 - keep general chat light;
 - route project work into per-project channels;
+- run plain-language operator requests through the local tool router before
+  falling through to project dispatch;
+- show local tool calls such as `tool: config.update_dispatch` in replies;
 - return worker output directly on success;
 - prefix failures clearly with the dispatch issue.
 - use `BEMINE_CODEX_SANDBOX=danger-full-access` by default unless a stricter

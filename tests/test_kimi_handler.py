@@ -155,6 +155,7 @@ def test_cli_kimi_ask_hits_http_endpoint_and_records_usage(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.setenv("BEMINE_CONFIG", str(tmp_path / "missing-bemine.toml"))
     _KimiTestServer.requests = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), _KimiTestServer)
     thread = threading.Thread(target=server.serve_forever, daemon=True)

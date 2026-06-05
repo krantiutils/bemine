@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .config import config_list
+
 
 def ignored_project_reason(cwd: str | Path, *, name: str = "") -> str | None:
     path = Path(str(cwd)).expanduser().resolve()
@@ -21,7 +23,7 @@ def ignored_project_roots() -> list[Path]:
     if raw:
         roots = [part.strip() for part in raw.split(os.pathsep) if part.strip()]
     else:
-        roots = [str(Path.home() / "gt")]
+        roots = config_list("projects", "ignored_roots", [str(Path.home() / "gt")])
     return [Path(root).expanduser().resolve() for root in roots]
 
 

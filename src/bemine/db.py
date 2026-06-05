@@ -3,7 +3,6 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
 
 from .models import ProjectRundown, SessionRecord
 from .util import project_id_from_cwd, project_name_from_cwd

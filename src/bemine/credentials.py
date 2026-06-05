@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import os
 import stat
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import config_string
 from .db import BemineDB
 from .totp import verify_totp
 
@@ -24,7 +24,9 @@ class CredentialProfile:
 
 
 class CredentialInventory:
-    def __init__(self, db: BemineDB, *, home: Path | None = None, device_id: str = "") -> None:
+    def __init__(
+        self, db: BemineDB, *, home: Path | None = None, device_id: str = ""
+    ) -> None:
         self.db = db
         self.home = (home or Path.home()).expanduser().resolve()
         self.device_id = device_id
@@ -197,7 +199,8 @@ class CredentialInventory:
 class PermissionGate:
     def __init__(self, db: BemineDB, *, totp_secret: str | None = None) -> None:
         self.db = db
-        self.totp_secret = totp_secret or os.environ.get("BEMINE_TOTP_SECRET", "")
+        secret_env = config_string("security", "totp_secret_env", "BEMINE_TOTP_SECRET")
+        self.totp_secret = totp_secret or os.environ.get(secret_env, "")
 
     def request(
         self,

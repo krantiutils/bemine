@@ -1,0 +1,49 @@
+# Bemine's human-facing configuration.
+# Secrets stay in env files or credential stores; this file names the knobs and
+# the active runtime/model choices.
+
+[identity]
+device_id = "cdjk"
+
+[paths]
+state_dir = ".bemine"
+vault_dir = "~/Documents/Mayor"
+codex_home = "~/.codex"
+claude_home = "~/.claude"
+kimi_home = "~/devlog/raw/kimi"
+hermes_home = "~/.hermes"
+
+[status]
+devices = ["local", "mbp", "mbp2", "k2"]
+
+[projects]
+ignored_roots = ["~/gt"]
+
+[context]
+operator_files = ["~/deploy.md"]
+harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md"]
+
+[dispatch]
+runtime = "codex"
+
+[kimi]
+provider = "kimi-coding"
+model = "kimi-k2.6"
+base_url = "https://api.kimi.com/coding"
+api_mode = "anthropic_messages"
+dispatch_max_tokens = 1600
+
+[codex]
+model = "gpt-5.4-mini"
+sandbox = "danger-full-access"
+bin = ""
+
+[discord]
+token_env = "MAYOR_DISCORD_BOT_TOKEN"
+home_channel_id = ""
+guild_id = ""
+allowed_users = []
+allow_all_users = false
+
+[security]
+totp_secret_env = "BEMINE_TOTP_SECRET"

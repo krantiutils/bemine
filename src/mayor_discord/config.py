@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from bemine.config import config_bool, config_list, config_string
+
 
 def _parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -33,6 +35,13 @@ def load_env_files() -> dict[str, str]:
 
 def _env(name: str, loaded: dict[str, str], default: str = "") -> str:
     return os.environ.get(name) or loaded.get(name) or default
+
+
+def _env_from_config(name: str, loaded: dict[str, str], default: str = "") -> str:
+    configured_env = config_string("discord", name, "")
+    if configured_env:
+        return _env(configured_env, loaded, default)
+    return default
 
 
 def _truthy(value: str) -> bool:
@@ -73,26 +82,30 @@ class Settings:
         token = (
             _env("MAYOR_DISCORD_BOT_TOKEN", loaded)
             or _env("DISCORD_BOT_TOKEN", loaded)
+            or _env_from_config("token_env", loaded)
         ).strip()
         home_channel_id = (
             _env("MAYOR_DISCORD_HOME_CHANNEL", loaded)
             or _env("DISCORD_HOME_CHANNEL", loaded)
+            or config_string("discord", "home_channel_id", "")
         ).strip()
-        allowed_raw = (
-            _env("MAYOR_DISCORD_ALLOWED_USERS", loaded)
-            or _env("DISCORD_ALLOWED_USERS", loaded)
+        allowed_raw = _env("MAYOR_DISCORD_ALLOWED_USERS", loaded) or _env(
+            "DISCORD_ALLOWED_USERS", loaded
         )
         allowed_users = _split_ids(allowed_raw)
+        if not allowed_users:
+            allowed_users = set(config_list("discord", "allowed_users"))
         if not allowed_users:
             allowed_users = _approved_hermes_discord_users()
 
         allow_all_users = _truthy(
             _env("MAYOR_DISCORD_ALLOW_ALL_USERS", loaded)
             or _env("DISCORD_ALLOW_ALL_USERS", loaded)
-        )
+        ) or config_bool("discord", "allow_all_users", False)
 
         home_raw = _env("MAYOR_HOME", loaded)
         home_raw = _env("BEMINE_HOME", loaded) or home_raw
+        home_raw = home_raw or config_string("paths", "state_dir", "")
         mayor_home = Path(home_raw).expanduser() if home_raw else Path.cwd() / ".bemine"
         mayor_home = mayor_home.resolve()
 
@@ -110,12 +123,12 @@ class Settings:
         if not self.token:
             raise SystemExit(
                 "Discord token not configured. Set MAYOR_DISCORD_BOT_TOKEN "
-                "or DISCORD_BOT_TOKEN."
+                "or DISCORD_BOT_TOKEN, or set discord.token_env in bemine.toml."
             )
 
     def require_home_channel(self) -> None:
         if not self.home_channel_id:
             raise SystemExit(
                 "Discord home channel not configured. Set MAYOR_DISCORD_HOME_CHANNEL "
-                "or DISCORD_HOME_CHANNEL."
+                "or DISCORD_HOME_CHANNEL, or set discord.home_channel_id in bemine.toml."
             )

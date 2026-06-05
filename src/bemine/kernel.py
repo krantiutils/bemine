@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from .config import BemineSettings
 from .db import BemineDB
 from .discovery import discover_claude_sessions, discover_codex_sessions, discover_kimi_sessions
-from .models import ProjectRundown
 from .project_filters import ignored_project_reason
 from .rundown import render_rundown
 from .vault import ObsidianVault
