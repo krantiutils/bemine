@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 
+from bemine.config import BemineSettings
+from bemine.db import BemineDB
+from bemine.workers import WorkerDuplicateGroup, WorkerRecord, WorkerTransferResult
 from mayor_discord.dispatch import (
     DispatchProgress,
     DispatchResult,
@@ -224,6 +228,174 @@ vault_dir = "{vault}"
     assert result.tool == "checklist.add"
     assert "coffee beans" in result.text
     assert "- [ ] coffee beans" in checklist.read_text(encoding="utf-8")
+
+
+def test_discord_local_tool_router_transfers_worker_context(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    source = WorkerRecord(
+        name="bm-codex",
+        runtime="codex",
+        transport="tmux",
+        device_id="testbox",
+        project_id="bm",
+        cwd="/home/cdjk/bm",
+        command="codex",
+        status="running",
+        exists=True,
+    )
+    target = WorkerRecord(
+        name="mbp2-claude",
+        runtime="claude",
+        transport="ssh-tmux",
+        device_id="mbp2",
+        project_id="bm",
+        cwd="/home/cdjk/bm",
+        command="adopted-existing-tmux-session",
+        status="adopted",
+        exists=True,
+    )
+
+    class FakeWorkerController:
+        def __init__(self, _settings: BemineSettings) -> None:
+            pass
+
+        def transfer(self, **kwargs: object) -> WorkerTransferResult:
+            captured.update(kwargs)
+            return WorkerTransferResult(
+                source=source,
+                target=target,
+                prompt="handoff",
+                duplicate_heads=[],
+            )
+
+    monkeypatch.setattr("mayor_discord.gateway.WorkerController", FakeWorkerController)
+
+    result = _local_tool_response(
+        "move bm from codex to claude on mbp2",
+        router=lambda _content, _catalog: {
+            "tool": "workers.transfer",
+            "arguments": {
+                "source": "bm-codex",
+                "target": "mbp2-claude",
+                "runtime": "claude",
+                "target_device": "mbp2",
+            },
+            "confidence": 0.96,
+        },
+    )
+
+    assert result is not None
+    assert result.tool == "workers.transfer"
+    assert captured["source_name"] == "bm-codex"
+    assert captured["target_name"] == "mbp2-claude"
+    assert captured["target_runtime"] == "claude"
+    assert captured["target_device"] == "mbp2"
+    assert "Worker transfer queued:" in result.text
+    assert "`mbp2-claude` [claude]" in result.text
+
+
+def test_discord_local_tool_router_shows_worker_duplicates(monkeypatch) -> None:
+    heads = [
+        WorkerRecord(
+            name="codex-head",
+            runtime="codex",
+            transport="tmux",
+            device_id="testbox",
+            project_id="bm",
+            cwd="/home/cdjk/bm",
+            command="codex",
+            status="running",
+            exists=True,
+        ),
+        WorkerRecord(
+            name="claude-head",
+            runtime="claude",
+            transport="ssh-tmux",
+            device_id="mbp2",
+            project_id="bm",
+            cwd="/home/cdjk/bm",
+            command="claude",
+            status="adopted",
+            exists=True,
+        ),
+    ]
+
+    class FakeWorkerController:
+        def __init__(self, _settings: BemineSettings) -> None:
+            pass
+
+        def duplicate_heads(self) -> list[WorkerDuplicateGroup]:
+            return [WorkerDuplicateGroup(project_id="bm", heads=heads)]
+
+    monkeypatch.setattr("mayor_discord.gateway.WorkerController", FakeWorkerController)
+
+    result = _local_tool_response(
+        "show me duplicate worker heads",
+        router=lambda _content, _catalog: {
+            "tool": "workers.duplicates",
+            "arguments": {},
+            "confidence": 0.92,
+        },
+    )
+
+    assert result is not None
+    assert result.tool == "workers.duplicates"
+    assert "Duplicate active worker heads:" in result.text
+    assert "codex-head" in result.text
+    assert "claude-head" in result.text
+
+
+def test_discord_local_tool_router_shows_audit_events(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = tmp_path / "bemine.toml"
+    state = tmp_path / "state"
+    vault = tmp_path / "vault"
+    config.write_text(
+        f"""
+[paths]
+state_dir = "{state}"
+vault_dir = "{vault}"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    settings = BemineSettings.load()
+    db = BemineDB(settings.db_path)
+    db.record_audit_event(
+        category="worker",
+        event_type="worker_transfer",
+        actor="worker-controller",
+        device_id="testbox",
+        project_id="bm",
+        payload_json=json.dumps(
+            {
+                "source": {"name": "source", "runtime": "codex"},
+                "target": {
+                    "name": "target",
+                    "runtime": "claude",
+                    "transport": "ssh-tmux",
+                },
+                "duplicate_heads": [{}],
+            },
+            sort_keys=True,
+        ),
+    )
+
+    result = _local_tool_response(
+        "show worker transfer audit",
+        router=lambda _content, _catalog: {
+            "tool": "audit.list",
+            "arguments": {"category": "worker", "event_type": "worker_transfer"},
+            "confidence": 0.93,
+        },
+    )
+
+    assert result is not None
+    assert result.tool == "audit.list"
+    assert "worker/worker_transfer" in result.text
+    assert "source[codex] -> target[claude/ssh-tmux] duplicates=1" in result.text
 
 
 def test_discord_checklist_tool_rejects_empty_item() -> None:

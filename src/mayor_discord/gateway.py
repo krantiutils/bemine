@@ -27,6 +27,13 @@ from bemine.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
 from bemine.status import _redact, collect_fleet_status, render_status
+from bemine.workers import (
+    WorkerController,
+    WorkerError,
+    render_duplicate_heads,
+    render_transfer,
+    render_workers,
+)
 
 from .config import Settings
 from .dispatch import (
@@ -41,6 +48,8 @@ from .dispatch import (
     resolve_dispatch_runtime,
 )
 from .store import Store
+
+from bemine.cli import audit_events_to_dicts, render_audit_events
 
 
 LOG = logging.getLogger("mayor.discord.gateway")
@@ -307,6 +316,30 @@ def _local_tools() -> tuple[LocalToolSpec, ...]:
             handler=lambda _args: _pending_permissions_text(),
         ),
         LocalToolSpec(
+            name="workers.list",
+            description="Show managed live workers and whether their tmux sessions are reachable.",
+            arguments="{}",
+            handler=_tool_workers_list,
+        ),
+        LocalToolSpec(
+            name="workers.duplicates",
+            description="Show projects with more than one active managed worker head.",
+            arguments="{}",
+            handler=_tool_workers_duplicates,
+        ),
+        LocalToolSpec(
+            name="workers.transfer",
+            description="Move project context from one managed worker to another, including SSH-backed remote tmux targets.",
+            arguments='{"source": "source worker", "target": "target worker", "runtime": "claude|codex|kimi|shell", "target_device": "optional device such as mbp2", "cwd": "optional project root", "stop_source": false}',
+            handler=_tool_workers_transfer,
+        ),
+        LocalToolSpec(
+            name="audit.list",
+            description="Show recent Bemine audit events such as worker transfers, dispatch calls, jobs, and credential gates.",
+            arguments='{"category": "optional category", "event_type": "optional event type", "project_id": "optional project id", "limit": 1-20}',
+            handler=_tool_audit_list,
+        ),
+        LocalToolSpec(
             name="checklist.add",
             description="Append an item to a named Obsidian checklist such as Shopping, Buy, Errands, or Routine.",
             arguments='{"list": "Shopping", "item": "thing to add"}',
@@ -350,6 +383,57 @@ def _tool_status_show(args: Mapping[str, Any]) -> str:
     settings = BemineSettings.load()
     statuses, errors = collect_fleet_status(settings)
     return render_status(statuses, errors, limit=limit)
+
+
+def _tool_workers_list(_args: Mapping[str, Any]) -> str:
+    return render_workers(WorkerController(BemineSettings.load()).list())
+
+
+def _tool_workers_duplicates(_args: Mapping[str, Any]) -> str:
+    return render_duplicate_heads(WorkerController(BemineSettings.load()).duplicate_heads())
+
+
+def _tool_workers_transfer(args: Mapping[str, Any]) -> str:
+    source = str(args.get("source") or args.get("source_name") or "").strip()
+    target = str(args.get("target") or args.get("target_name") or "").strip()
+    runtime = str(args.get("runtime") or args.get("target_runtime") or "").strip()
+    if not source:
+        raise ValueError("source worker is required")
+    if not target:
+        raise ValueError("target worker is required")
+    if not runtime:
+        raise ValueError("target runtime is required")
+    cwd = str(args.get("cwd") or "").strip()
+    command = str(args.get("command") or "").strip()
+    target_device = str(args.get("target_device") or args.get("device") or "").strip()
+    stop_source = _bool(args.get("stop_source"), default=False)
+    try:
+        result = WorkerController(BemineSettings.load()).transfer(
+            source_name=source,
+            target_name=target,
+            target_runtime=runtime,
+            cwd=Path(cwd) if cwd else None,
+            command=command,
+            target_device=target_device,
+            stop_source=stop_source,
+        )
+    except WorkerError as exc:
+        raise ValueError(str(exc)) from exc
+    return render_transfer(result)
+
+
+def _tool_audit_list(args: Mapping[str, Any]) -> str:
+    limit = max(1, min(20, int(_float(args.get("limit"), default=8))))
+    kernel = BemineKernel(BemineSettings.load())
+    rows = kernel.db.list_audit_events(
+        category=str(args.get("category") or "").strip(),
+        event_type=str(args.get("event_type") or args.get("event") or "").strip(),
+        project_id=str(args.get("project_id") or "").strip(),
+        limit=limit,
+    )
+    if _bool(args.get("json"), default=False):
+        return "```json\n" + json.dumps(audit_events_to_dicts(rows), indent=2) + "\n```"
+    return render_audit_events(rows)
 
 
 def _tool_checklist_add(args: Mapping[str, Any]) -> str:
@@ -399,6 +483,14 @@ def _float(value: object, *, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _bool(value: object, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _pending_permissions_text() -> str:

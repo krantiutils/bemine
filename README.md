@@ -26,6 +26,8 @@ Functional now:
 - `bemine status` gives recent Codex, Claude, and Kimi sessions across known SSH devices.
 - `bemine rundown` gives indexed project summaries from SQLite/Obsidian.
 - Discord `status`, `rundown`, credential approval commands, and per-project Kimi dispatch work.
+- Discord local tools can list workers, transfer managed worker context, report
+  duplicate heads, and query the audit log.
 - Per-project Discord channels route messages to Kimi by default, with Codex still selectable per project.
 - Attachments are saved and listed in the prompt. Codex project channels also pass image attachments with `--image`.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
