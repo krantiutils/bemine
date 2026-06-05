@@ -47,6 +47,22 @@ class WorkerRecord:
         }
 
 
+@dataclass(frozen=True)
+class WorkerTransferResult:
+    source: WorkerRecord
+    target: WorkerRecord
+    prompt: str
+    duplicate_heads: list[WorkerRecord]
+
+    def to_dict(self) -> dict:
+        return {
+            "source": self.source.to_dict(),
+            "target": self.target.to_dict(),
+            "prompt": self.prompt,
+            "duplicate_heads": [record.to_dict() for record in self.duplicate_heads],
+        }
+
+
 class WorkerError(RuntimeError):
     pass
 
@@ -153,6 +169,82 @@ class WorkerController:
         self._audit("worker_stopped", stopped, {})
         return stopped
 
+    def transfer(
+        self,
+        *,
+        source_name: str,
+        target_name: str,
+        target_runtime: str,
+        cwd: Path | None = None,
+        command: str = "",
+        target_device: str = "",
+        stop_source: bool = False,
+    ) -> WorkerTransferResult:
+        source = self._require_record(source_name)
+        target_name = _validate_name(target_name)
+        target_cwd = (cwd.expanduser().resolve() if cwd else Path(source.cwd))
+        target_runtime = _normalize_runtime(target_runtime)
+        target_device = target_device.strip() or self.settings.device_id
+        source_capture = self.tmux.capture(source.name)
+        if self.tmux.exists(target_name):
+            target = self.adopt(
+                name=target_name,
+                runtime=target_runtime,
+                cwd=target_cwd,
+                command=command.strip() or "adopted-existing-tmux-session",
+            )
+        else:
+            target = self.start(
+                name=target_name,
+                runtime=target_runtime,
+                cwd=target_cwd,
+                command=command,
+            )
+        duplicate_heads = self._active_project_heads(
+            source.project_id,
+            exclude_names={source.name, target.name},
+        )
+        prompt = _transfer_prompt(
+            source=source,
+            target=target,
+            target_device=target_device,
+            source_capture=source_capture,
+            duplicate_heads=duplicate_heads,
+        )
+        self.tmux.send(target.name, prompt)
+        if stop_source:
+            source = self.stop(source.name)
+        result = WorkerTransferResult(
+            source=source,
+            target=target,
+            prompt=prompt,
+            duplicate_heads=duplicate_heads,
+        )
+        self.db.record_audit_event(
+            category="worker",
+            event_type="worker_transfer",
+            actor="worker-controller",
+            device_id=self.settings.device_id,
+            project_id=source.project_id,
+            payload_json=json.dumps(
+                {
+                    "source": source.to_dict(),
+                    "target": target.to_dict(),
+                    "target_device": target_device,
+                    "target_runtime": target_runtime,
+                    "stop_source": stop_source,
+                    "duplicate_heads": [
+                        record.to_dict() for record in duplicate_heads
+                    ],
+                    "conflict_policy": "preserve_all_heads_with_explicit_handoff",
+                    "prompt_len": len(prompt),
+                    "source_capture_len": len(source_capture),
+                },
+                sort_keys=True,
+            ),
+        )
+        return result
+
     def forget(self, name: str) -> bool:
         name = _validate_name(name)
         row = self.db.get_managed_session(name)
@@ -230,6 +322,24 @@ class WorkerController:
             exists=True,
         )
 
+    def _active_project_heads(
+        self,
+        project_id: str,
+        *,
+        exclude_names: set[str] | None = None,
+    ) -> list[WorkerRecord]:
+        exclude_names = exclude_names or set()
+        heads: list[WorkerRecord] = []
+        for record in self.list():
+            if record.project_id != project_id:
+                continue
+            if record.name in exclude_names:
+                continue
+            if record.status not in {"running", "adopted"}:
+                continue
+            heads.append(record)
+        return heads
+
     def _audit(self, event_type: str, record: WorkerRecord, payload: dict) -> None:
         self.db.record_audit_event(
             category="worker",
@@ -253,6 +363,22 @@ def render_workers(records: list[WorkerRecord]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_transfer(result: WorkerTransferResult) -> str:
+    lines = [
+        "Worker transfer queued:",
+        f"- source: `{result.source.name}` [{result.source.runtime}] `{result.source.cwd}`",
+        f"- target: `{result.target.name}` [{result.target.runtime}] `{result.target.cwd}`",
+        f"- duplicate active heads: {len(result.duplicate_heads)}",
+    ]
+    if result.duplicate_heads:
+        for record in result.duplicate_heads:
+            lines.append(
+                f"  - `{record.name}` [{record.runtime}] {record.status} `{record.cwd}`"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _validate_name(name: str) -> str:
     cleaned = name.strip()
     if not cleaned:
@@ -271,3 +397,47 @@ def _normalize_runtime(runtime: str) -> str:
 
 def _command_in_cwd(cwd: Path, command: str) -> str:
     return f"cd {shlex.quote(str(cwd))} && exec {command}"
+
+
+def _transfer_prompt(
+    *,
+    source: WorkerRecord,
+    target: WorkerRecord,
+    target_device: str,
+    source_capture: str,
+    duplicate_heads: list[WorkerRecord],
+) -> str:
+    duplicate_lines = [
+        f"- {record.name} [{record.runtime}] {record.status} device={record.device_id} cwd={record.cwd}"
+        for record in duplicate_heads
+    ] or ["- none"]
+    return "\n".join(
+        [
+            "Bemine worker transfer handoff.",
+            "",
+            "You are receiving project context from another managed worker.",
+            f"Source worker: {source.name}",
+            f"Source runtime: {source.runtime}",
+            f"Source device: {source.device_id}",
+            f"Target worker: {target.name}",
+            f"Target runtime: {target.runtime}",
+            f"Target device: {target_device}",
+            f"Project id: {source.project_id}",
+            f"Project cwd: {source.cwd}",
+            "",
+            "Duplicate active project heads:",
+            *duplicate_lines,
+            "",
+            "Conflict policy:",
+            "- Do not assume your view is canonical.",
+            "- Preserve source context and inspect repo state before overwriting work.",
+            "- If duplicate heads conflict, summarize the conflict and ask for direction.",
+            "",
+            "Captured source pane:",
+            "```text",
+            source_capture.strip() or "(empty)",
+            "```",
+            "",
+            "Start by acknowledging the transfer, summarizing current state, and listing the next safe action.",
+        ]
+    )

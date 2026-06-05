@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -10,7 +11,10 @@ from pathlib import Path
 
 import pytest
 
+from bemine.config import BemineSettings
+from bemine.db import BemineDB
 from bemine.tmux_adapter import TmuxAdapter
+from bemine.workers import WorkerController
 
 
 def _run(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -112,6 +116,144 @@ def test_workers_can_adopt_existing_tmux_session(tmp_path: Path) -> None:
         tmux.kill(name)
 
 
+def test_workers_transfer_switches_runtime_reports_duplicates_and_audits(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="testbox",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    tmux.start("source", "codex")
+    controller.adopt(name="source", runtime="codex", cwd=project)
+    tmux.captures["source"] = "source pane says: continue the migration\n"
+
+    tmux.start("duplicate", "kimi")
+    controller.adopt(name="duplicate", runtime="kimi", cwd=project)
+
+    tmux.start("target", "claude")
+    result = controller.transfer(
+        source_name="source",
+        target_name="target",
+        target_runtime="claude",
+        target_device="mbp2",
+    )
+
+    assert result.source.runtime == "codex"
+    assert result.target.runtime == "claude"
+    assert result.target.status == "adopted"
+    assert [record.name for record in result.duplicate_heads] == ["duplicate"]
+    assert result.prompt in tmux.sent["target"][-1]
+    assert "Source runtime: codex" in result.prompt
+    assert "Target runtime: claude" in result.prompt
+    assert "Target device: mbp2" in result.prompt
+    assert "source pane says: continue the migration" in result.prompt
+    assert "duplicate [kimi]" in result.prompt
+    assert "preserve source context" in result.prompt.lower()
+
+    with sqlite3.connect(settings.db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT category, event_type, actor, device_id, payload_json
+            FROM audit_events
+            WHERE event_type = 'worker_transfer'
+            """
+        ).fetchone()
+    assert row[:4] == ("worker", "worker_transfer", "worker-controller", "testbox")
+    payload = json.loads(row[4])
+    assert payload["source"]["name"] == "source"
+    assert payload["target"]["runtime"] == "claude"
+    assert payload["target_device"] == "mbp2"
+    assert payload["conflict_policy"] == "preserve_all_heads_with_explicit_handoff"
+    assert [record["name"] for record in payload["duplicate_heads"]] == ["duplicate"]
+    assert payload["source_capture_len"] == len(tmux.captures["source"])
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
+def test_workers_transfer_injects_handoff_into_existing_tmux_target(
+    tmp_path: Path,
+) -> None:
+    source = f"bemine-source-{uuid.uuid4().hex[:10]}"
+    target = f"bemine-target-{uuid.uuid4().hex[:10]}"
+    duplicate = f"bemine-dup-{uuid.uuid4().hex[:10]}"
+    project = tmp_path / "repo"
+    project.mkdir()
+    tmux = TmuxAdapter()
+    try:
+        _run(
+            tmp_path,
+            "workers",
+            "start",
+            source,
+            "--runtime",
+            "codex",
+            "--cwd",
+            str(project),
+            "--command",
+            "bash",
+            "--json",
+        )
+        _run(tmp_path, "workers", "send", source, "printf 'SOURCE_HANDOFF_READY\\n'")
+        assert "SOURCE_HANDOFF_READY" in _capture_until(
+            tmp_path, source, "SOURCE_HANDOFF_READY"
+        )
+
+        _run(
+            tmp_path,
+            "workers",
+            "start",
+            duplicate,
+            "--runtime",
+            "kimi",
+            "--cwd",
+            str(project),
+            "--command",
+            "cat",
+            "--json",
+        )
+        tmux.start(target, "cat")
+
+        transferred = json.loads(
+            _run(
+                tmp_path,
+                "workers",
+                "transfer",
+                source,
+                target,
+                "--runtime",
+                "claude",
+                "--cwd",
+                str(project),
+                "--target-device",
+                "mbp2",
+                "--json",
+            ).stdout
+        )
+        assert transferred["source"]["name"] == source
+        assert transferred["target"]["name"] == target
+        assert transferred["target"]["runtime"] == "claude"
+        assert [record["name"] for record in transferred["duplicate_heads"]] == [
+            duplicate
+        ]
+
+        captured = _capture_until(tmp_path, target, "SOURCE_HANDOFF_READY")
+        assert "Bemine worker transfer handoff." in captured
+        assert "Source runtime: codex" in captured
+        assert "Target runtime: claude" in captured
+        assert "Target device: mbp2" in captured
+        assert "SOURCE_HANDOFF_READY" in captured
+        assert duplicate in captured
+    finally:
+        for name in (source, target, duplicate):
+            tmux.kill(name)
+
+
 def _capture_until(tmp_path: Path, name: str, needle: str) -> str:
     deadline = time.time() + 5
     captured = ""
@@ -121,3 +263,35 @@ def _capture_until(tmp_path: Path, name: str, needle: str) -> str:
             return captured
         time.sleep(0.1)
     return captured
+
+
+class FakeTmux:
+    def __init__(self) -> None:
+        self.sessions: set[str] = set()
+        self.captures: dict[str, str] = {}
+        self.sent: dict[str, list[str]] = {}
+
+    def start(self, name: str, command: str = "bash") -> None:
+        if name in self.sessions:
+            raise AssertionError(f"session already exists: {name}")
+        self.sessions.add(name)
+        self.captures.setdefault(name, "")
+        self.sent.setdefault(name, [])
+
+    def exists(self, name: str) -> bool:
+        return name in self.sessions
+
+    def send(self, name: str, text: str, *, enter: bool = True) -> None:
+        if name not in self.sessions:
+            raise AssertionError(f"session does not exist: {name}")
+        suffix = "\n" if enter else ""
+        self.sent.setdefault(name, []).append(text + suffix)
+        self.captures[name] = self.captures.get(name, "") + text + suffix
+
+    def capture(self, name: str) -> str:
+        if name not in self.sessions:
+            raise AssertionError(f"session does not exist: {name}")
+        return self.captures.get(name, "")
+
+    def kill(self, name: str) -> None:
+        self.sessions.discard(name)

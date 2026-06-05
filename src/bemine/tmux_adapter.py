@@ -40,7 +40,7 @@ class TmuxAdapter:
         self._run(args)
 
     def capture(self, name: str) -> str:
-        return self._run(["capture-pane", "-p", "-t", name]).stdout
+        return self._run(["capture-pane", "-p", "-S", "-", "-t", name]).stdout
 
     def kill(self, name: str) -> None:
         subprocess.run(
@@ -61,4 +61,3 @@ class TmuxAdapter:
         if proc.returncode != 0:
             raise TmuxError(proc.stderr.strip() or f"tmux failed: {' '.join(args)}")
         return proc
-

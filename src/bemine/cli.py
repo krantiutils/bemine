@@ -34,7 +34,7 @@ from .rituals import (
 from .status import collect_fleet_status, render_status
 from .systemd import install_user_units, render_user_units
 from .tmux_adapter import TmuxAdapter
-from .workers import WorkerController, WorkerError, render_workers
+from .workers import WorkerController, WorkerError, render_transfer, render_workers
 
 
 HELP_FORMATTER = argparse.RawDescriptionHelpFormatter
@@ -185,6 +185,7 @@ Examples:
   uv run bemine workers start bm-codex --runtime codex --cwd /home/cdjk/bm
   uv run bemine workers adopt old-tmux --runtime claude --cwd /home/cdjk/github/project
   uv run bemine workers send bm-codex "Run bemine prime and report blockers"
+  uv run bemine workers transfer bm-codex bm-claude --runtime claude
   uv run bemine workers capture bm-codex
   uv run bemine workers stop bm-codex
   uv run bemine workers forget bm-codex
@@ -639,6 +640,46 @@ def build_parser() -> argparse.ArgumentParser:
         "capture", help="Capture a registered worker's tmux pane."
     )
     worker_capture.add_argument("name", help="Worker name.")
+    worker_transfer = workers_sub.add_parser(
+        "transfer",
+        help="Move project context from one managed worker to another.",
+        description=(
+            "Capture the source worker pane, start or adopt the target tmux session, "
+            "inject a structured handoff prompt, and audit duplicate project heads."
+        ),
+        formatter_class=HELP_FORMATTER,
+    )
+    worker_transfer.add_argument("source", help="Registered source worker name.")
+    worker_transfer.add_argument("target", help="Target worker/tmux session name.")
+    worker_transfer.add_argument(
+        "--runtime",
+        required=True,
+        help="Runtime label for the target: codex, claude, kimi, shell, or custom.",
+    )
+    worker_transfer.add_argument(
+        "--cwd",
+        default="",
+        help="Target project root. Defaults to the source worker cwd.",
+    )
+    worker_transfer.add_argument(
+        "--command",
+        dest="worker_command",
+        default="",
+        help="Command to use if the target session must be started.",
+    )
+    worker_transfer.add_argument(
+        "--target-device",
+        default="",
+        help="Device label for the receiving worker, used in handoff metadata.",
+    )
+    worker_transfer.add_argument(
+        "--stop-source",
+        action="store_true",
+        help="Stop the source worker after the handoff is injected.",
+    )
+    worker_transfer.add_argument(
+        "--json", action="store_true", help="Emit transfer result as JSON."
+    )
     worker_stop = workers_sub.add_parser(
         "stop", help="Stop a registered worker's tmux session."
     )
@@ -944,6 +985,20 @@ def main(argv: list[str] | None = None) -> None:
                     print(render_workers([record]), end="")
             elif args.workers_command == "capture":
                 print(controller.capture(args.name), end="")
+            elif args.workers_command == "transfer":
+                result = controller.transfer(
+                    source_name=args.source,
+                    target_name=args.target,
+                    target_runtime=args.runtime,
+                    cwd=Path(args.cwd) if args.cwd else None,
+                    command=args.worker_command,
+                    target_device=args.target_device,
+                    stop_source=args.stop_source,
+                )
+                if args.json:
+                    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+                else:
+                    print(render_transfer(result), end="")
             elif args.workers_command == "stop":
                 record = controller.stop(args.name)
                 if args.json:

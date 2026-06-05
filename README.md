@@ -13,7 +13,7 @@ The current implementation is a working vertical slice, not the full mayor yet:
 - render project rundowns from the shared kernel
 - expose the same rundown through Discord text commands
 - drive tmux sessions from a typed adapter
-- start, adopt, list, send to, capture, and stop Bemine-owned tmux workers
+- start, adopt, list, send to, capture, transfer, and stop Bemine-owned tmux workers
 - run a systemd-backed daemon with cron-style jobs
 - run scheduled reminders through the same daemon and Discord sender
 - check local Proton Mail Bridge readiness
@@ -45,7 +45,7 @@ Not functional yet:
 - Proton Mail IMAP ingestion and schedule extraction from email.
 - Calendar sync beyond Bemine cron/reminder jobs.
 - Credential proxy operations that actually perform AWS/GitHub/HF actions; current proxy is an approval ledger and broker contract.
-- Cross-device project transfer.
+- Remote SSH project transfer between devices; local managed-worker transfer is wired.
 
 ## Commands
 
@@ -78,6 +78,7 @@ uv run bemine handoff "implemented Discord dispatch fix" --next "test from Disco
 uv run bemine workers start bm-codex --runtime codex --cwd /home/cdjk/bm
 uv run bemine workers adopt existing-tmux --runtime claude --cwd /path/to/project
 uv run bemine workers send bm-codex "Run bemine prime and summarize blockers"
+uv run bemine workers transfer bm-codex bm-claude --runtime claude
 uv run bemine workers capture bm-codex
 uv run bemine workers stop bm-codex
 uv run bemine workers forget bm-codex
@@ -227,10 +228,17 @@ uv run bemine workers start bm-codex --runtime codex --cwd /home/cdjk/bm
 uv run bemine workers adopt old-session --runtime claude --cwd /path/to/project
 uv run bemine workers list
 uv run bemine workers send bm-codex "Run bemine prime and report status"
+uv run bemine workers transfer bm-codex bm-claude --runtime claude
 uv run bemine workers capture bm-codex
 uv run bemine workers stop bm-codex
 uv run bemine workers forget bm-codex
 ```
+
+`workers transfer` captures the source pane scrollback, starts or adopts the
+target tmux session, sends a structured handoff prompt, records a
+`worker_transfer` audit event, and warns about other live project heads for the
+same project id. By default it preserves the source session; use
+`--stop-source` only after the receiving worker has acknowledged the handoff.
 
 Raw terminal sessions that are not in tmux remain read-only through
 `bemine status`. Bemine should not inject into arbitrary TTYs.
@@ -416,7 +424,7 @@ The tests are integration-oriented:
 - operator context redaction and prompt injection
 - Bemine soul/skill harness context prompt injection
 - prime startup packet and handoff vault/audit persistence
-- managed worker start/adopt/send/capture/stop flow through tmux
+- managed worker start/adopt/send/capture/transfer/stop flow through tmux
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:
