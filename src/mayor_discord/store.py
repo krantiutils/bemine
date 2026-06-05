@@ -188,6 +188,64 @@ class Store:
             ).fetchall()
         return [_row_dict(row) for row in reversed(rows)]
 
+    def recent_channel_messages(
+        self,
+        *,
+        channel_id: str,
+        before_message_id: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT received_at FROM inbound_messages WHERE message_id = ?",
+                (before_message_id,),
+            ).fetchone()
+            before_at = float(current["received_at"]) if current else time.time()
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM (
+                    SELECT
+                        message_id AS message_id,
+                        channel_id AS channel_id,
+                        author_name AS author_name,
+                        content AS content,
+                        created_at AS created_at,
+                        received_at AS sort_at,
+                        'user' AS role
+                    FROM inbound_messages
+                    WHERE channel_id = ?
+                      AND message_id != ?
+                      AND received_at <= ?
+                    UNION ALL
+                    SELECT
+                        COALESCE(discord_message_id, 'outbound:' || id) AS message_id,
+                        channel_id AS channel_id,
+                        'balen' AS author_name,
+                        content AS content,
+                        datetime(sent_at, 'unixepoch', 'localtime') AS created_at,
+                        sent_at AS sort_at,
+                        'assistant' AS role
+                    FROM outbound_messages
+                    WHERE channel_id = ?
+                      AND sent_at <= ?
+                )
+                ORDER BY sort_at DESC
+                LIMIT ?
+                """,
+                (
+                    channel_id,
+                    before_message_id,
+                    before_at,
+                    channel_id,
+                    before_at,
+                    limit,
+                ),
+            ).fetchall()
+        return [_row_dict(row) for row in reversed(rows)]
+
     def stats(self) -> dict[str, Any]:
         with self._connect() as conn:
             inbound = conn.execute("SELECT COUNT(*) FROM inbound_messages").fetchone()[0]

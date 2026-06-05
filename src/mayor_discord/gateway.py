@@ -78,6 +78,31 @@ class LocalToolSpec:
     handler: Callable[[Mapping[str, Any]], str]
 
 
+class DiscordResponder:
+    def __init__(self, store: Store, source_message: discord.Message) -> None:
+        self.store = store
+        self.source_message = source_message
+        self.used_reply = False
+
+    async def send(self, content: str) -> discord.Message:
+        if not self.used_reply:
+            sent = await self.source_message.reply(content, mention_author=False)
+            self.used_reply = True
+        else:
+            sent = await self.source_message.channel.send(content)
+        self.store.record_outbound(
+            discord_message_id=str(getattr(sent, "id", "")) or None,
+            channel_id=str(self.source_message.channel.id),
+            content=content,
+            files=[],
+        )
+        return sent
+
+    async def send_chunks(self, text: str, *, limit: int = 1900) -> None:
+        for chunk in _discord_chunk(text, limit=limit):
+            await self.send(chunk)
+
+
 def _discord_context_message_limit() -> int:
     return max(0, min(50, config_int("discord", "context_messages", 12)))
 
@@ -91,6 +116,9 @@ def _format_conversation_context(
         if not content:
             content = "(attachment or empty message)"
         author = _redact(str(row.get("author_name", "unknown")))
+        role = str(row.get("role") or "user")
+        if role == "assistant":
+            author = f"{author} (bot)"
         created_at = str(row.get("created_at", ""))
         lines.append(f"- {author} [{created_at}]: {_redact(content)}")
     text = "\n".join(lines)
@@ -219,6 +247,36 @@ def _router_prompt(content: str, conversation_context: str) -> str:
         "Current Discord message:\n"
         f"{content}"
     )
+
+
+def _needs_reference_clarification(
+    content: str,
+    *,
+    conversation_context: str,
+    route_reason: str,
+) -> bool:
+    normalized = " ".join(content.lower().strip().split())
+    if route_reason != "mayor-fallback":
+        return False
+    if not normalized:
+        return False
+    vague_messages = {
+        "what is this",
+        "what is this?",
+        "what's this",
+        "whats this",
+        "what is that",
+        "what is that?",
+        "what's that",
+        "whats that",
+        "why",
+        "why?",
+        "explain this",
+        "explain that",
+    }
+    if normalized not in vague_messages:
+        return False
+    return "(bot)" not in conversation_context
 
 
 def _route_local_tool_with_kimi(content: str, catalog: str) -> Mapping[str, Any] | None:
@@ -584,9 +642,10 @@ class MayorDiscordGateway:
         normalized = message.content.strip()
         normalized_lower = normalized.lower()
         conversation_context = self._conversation_context(message)
+        responder = DiscordResponder(self.store, message)
 
         if normalized_lower in {"!mayor ping", "mayor ping"}:
-            await message.reply("Mayor gateway online.", mention_author=False)
+            await responder.send("Mayor gateway online.")
             return
         if normalized_lower in {
             "status",
@@ -601,9 +660,7 @@ class MayorDiscordGateway:
                 settings,
             )
             text = render_status(statuses, errors, limit=8)
-            await message.reply(
-                _discord_chunk(text, limit=1900)[0], mention_author=False
-            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
             return
         if normalized_lower in {
             "!mayor rundown",
@@ -612,10 +669,7 @@ class MayorDiscordGateway:
             "bemine rundown",
         }:
             rundown = await asyncio.to_thread(_build_rundown)
-            await message.reply(
-                _discord_chunk(rundown, limit=1900)[0],
-                mention_author=False,
-            )
+            await responder.send(_discord_chunk(rundown, limit=1900)[0])
             return
         if normalized_lower in {
             "!mayor credentials",
@@ -624,11 +678,10 @@ class MayorDiscordGateway:
             "bemine credentials",
         }:
             lines = await asyncio.to_thread(_credential_lines)
-            await message.reply(
+            await responder.send(
                 _discord_chunk("Credential profiles:\n" + "\n".join(lines), limit=1900)[
                     0
-                ],
-                mention_author=False,
+                ]
             )
             return
         if normalized_lower in {
@@ -638,9 +691,7 @@ class MayorDiscordGateway:
             "bemine capabilities",
         }:
             text = await asyncio.to_thread(_capability_text)
-            await message.reply(
-                _discord_chunk(text, limit=1900)[0], mention_author=False
-            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
             return
         if normalized_lower in {
             "!mayor kimi",
@@ -656,9 +707,8 @@ class MayorDiscordGateway:
             config = await asyncio.to_thread(
                 lambda: KimiHandler(BemineSettings.load().hermes_home).status()
             )
-            await message.reply(
-                _discord_chunk(render_kimi_status(config), limit=1900)[0],
-                mention_author=False,
+            await responder.send(
+                _discord_chunk(render_kimi_status(config), limit=1900)[0]
             )
             return
         if normalized_lower in {
@@ -668,9 +718,7 @@ class MayorDiscordGateway:
             "bemine permissions",
         }:
             text = await asyncio.to_thread(_pending_permissions_text)
-            await message.reply(
-                _discord_chunk(text, limit=1900)[0], mention_author=False
-            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
             return
         approval = _parse_approval_command(normalized)
         if approval:
@@ -683,9 +731,9 @@ class MayorDiscordGateway:
                     totp_code=totp_code,
                 )
             except Exception as exc:
-                await message.reply(f"Approval failed: {exc}", mention_author=False)
+                await responder.send(f"Approval failed: {exc}")
                 return
-            await message.reply(f"Approved `{request_id}`.", mention_author=False)
+            await responder.send(f"Approved `{request_id}`.")
             return
         denial = _parse_deny_command(normalized)
         if denial:
@@ -696,9 +744,9 @@ class MayorDiscordGateway:
                     actor=f"discord:{message.author.id}",
                 )
             except Exception as exc:
-                await message.reply(f"Deny failed: {exc}", mention_author=False)
+                await responder.send(f"Deny failed: {exc}")
                 return
-            await message.reply(f"Denied `{denial}`.", mention_author=False)
+            await responder.send(f"Denied `{denial}`.")
             return
 
         if normalized:
@@ -710,23 +758,30 @@ class MayorDiscordGateway:
                 )
             except Exception as exc:
                 await _acknowledge_message(message, emoji=WARNING_REACTION)
-                await message.reply(
-                    f"`tool: local`\nLocal tool failed: {exc}",
-                    mention_author=False,
-                )
+                await responder.send(f"`tool: local`\nLocal tool failed: {exc}")
                 return
             if local_result:
                 await _acknowledge_message(message, emoji=SUCCESS_REACTION)
-                for chunk in _discord_chunk(
+                await responder.send_chunks(
                     f"`tool: {local_result.tool}`\n{local_result.text}",
                     limit=1900,
-                ):
-                    await message.reply(chunk, mention_author=False)
+                )
                 return
 
         settings = BemineSettings.load()
         route = _project_route_for_message(message, settings=settings)
         if route and (normalized or saved_attachments):
+            if _needs_reference_clarification(
+                normalized,
+                conversation_context=conversation_context,
+                route_reason=route.reason,
+            ):
+                await responder.send(
+                    "I need the specific message, file, screenshot, or topic you mean by `this`. "
+                    "Reply to the bot message or name the project/topic, and I will "
+                    "inspect that directly."
+                )
+                return
             await _acknowledge_message(message, emoji=WORKING_REACTION)
             request = DispatchRequest(
                 channel_id=str(message.channel.id),
@@ -743,7 +798,7 @@ class MayorDiscordGateway:
 
             def publish_progress(progress: DispatchProgress) -> None:
                 future = asyncio.run_coroutine_threadsafe(
-                    _send_dispatch_progress(message, progress),
+                    _send_dispatch_progress(responder, progress),
                     loop,
                 )
                 try:
@@ -764,14 +819,11 @@ class MayorDiscordGateway:
             for chunk in _discord_chunk(
                 _dispatch_response_text(result, route), limit=1900
             ):
-                await message.reply(chunk, mention_author=False)
+                await responder.send(chunk)
             return
 
         await self.bot.process_commands(message)
-        await message.reply(
-            self._default_reply(saved_attachments),
-            mention_author=False,
-        )
+        await responder.send(self._default_reply(saved_attachments))
 
     def _is_allowed(self, author: discord.abc.User) -> bool:
         if self.settings.allow_all_users:
@@ -788,7 +840,7 @@ class MayorDiscordGateway:
         return "Received by Mayor."
 
     def _conversation_context(self, message: discord.Message) -> str:
-        rows = self.store.recent_inbound_messages(
+        rows = self.store.recent_channel_messages(
             channel_id=str(message.channel.id),
             before_message_id=str(message.id),
             limit=_discord_context_message_limit(),
@@ -935,14 +987,14 @@ def _dispatch_response_text(result: DispatchResult, route: ProjectRoute) -> str:
 
 
 async def _send_dispatch_progress(
-    message: discord.Message,
+    responder: DiscordResponder,
     progress: DispatchProgress,
 ) -> None:
     text = _dispatch_progress_text(progress)
     if not text:
         return
     try:
-        await message.reply(text, mention_author=False)
+        await responder.send(text)
     except discord.DiscordException as exc:
         LOG.debug("could not reply with dispatch progress: %s", exc)
 

@@ -24,6 +24,7 @@ from mayor_discord.gateway import (
     _dispatch_response_text,
     _format_conversation_context,
     _local_tool_response,
+    _needs_reference_clarification,
 )
 from mayor_discord.store import Store
 
@@ -463,6 +464,68 @@ def test_store_recent_inbound_messages_are_channel_scoped_and_ordered(
 
     assert [row["message_id"] for row in rows] == ["m1", "m3"]
     assert "other channel" not in _format_conversation_context(rows)
+
+
+def test_store_recent_channel_messages_include_bot_replies_in_order(
+    tmp_path: Path,
+) -> None:
+    store = Store(tmp_path / "bemine.db")
+    store.record_inbound_message(
+        message_id="m1",
+        channel_id="chan-a",
+        guild_id=None,
+        author_id="user",
+        author_name="voidash",
+        content="show tts status",
+        is_dm=True,
+        created_at="2026-06-05T09:00:00+05:45",
+    )
+    store.record_outbound(
+        discord_message_id="b1",
+        channel_id="chan-a",
+        content="TTS status reply",
+        files=[],
+    )
+    store.record_inbound_message(
+        message_id="m2",
+        channel_id="chan-a",
+        guild_id=None,
+        author_id="user",
+        author_name="voidash",
+        content="what is this?",
+        is_dm=True,
+        created_at="2026-06-05T09:01:00+05:45",
+    )
+
+    rows = store.recent_channel_messages(
+        channel_id="chan-a",
+        before_message_id="m2",
+        limit=4,
+    )
+    context = _format_conversation_context(rows)
+
+    assert [row["message_id"] for row in rows] == ["m1", "b1"]
+    assert rows[-1]["role"] == "assistant"
+    assert "balen (bot)" in context
+    assert "TTS status reply" in context
+
+
+def test_vague_reference_needs_bot_context_before_mayor_fallback() -> None:
+    assert _needs_reference_clarification(
+        "what is this?",
+        conversation_context="- voidash [now]: previous user message",
+        route_reason="mayor-fallback",
+    )
+    assert not _needs_reference_clarification(
+        "what is this?",
+        conversation_context="- balen (bot) [now]: previous bot answer",
+        route_reason="mayor-fallback",
+    )
+    assert not _needs_reference_clarification(
+        "what is this?",
+        conversation_context="",
+        route_reason="project-channel",
+    )
 
 
 def test_conversation_context_redacts_tokens_and_keeps_recent_tail() -> None:
