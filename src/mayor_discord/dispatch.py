@@ -396,14 +396,17 @@ class ProjectDispatcher:
             dispatcher = self.kimi_dispatcher or resolve_kimi_dispatcher(self.settings)
             return dispatcher.dispatch(project, request, progress_callback)
         if runtime == "codex":
-            dispatcher = self.codex_dispatcher or CodexDispatcher(self.settings)
+            dispatcher = self.codex_dispatcher or resolve_codex_dispatcher(self.settings)
+            return dispatcher.dispatch(project, request, progress_callback)
+        if runtime == "claude":
+            dispatcher = resolve_claude_dispatcher(self.settings)
             return dispatcher.dispatch(project, request, progress_callback)
         return DispatchResult(
             ok=False,
             project=project,
             output=(
                 f"Unsupported dispatch runtime `{runtime}` for `#{project.channel_name}`. "
-                "Use `kimi` or `codex`."
+                "Use `kimi`, `codex`, or `claude`."
             ),
             elapsed_seconds=0.0,
             returncode=None,
@@ -756,6 +759,61 @@ class KimiNativeDispatcher:
         if extra:
             payload.update(extra)
         self._audit(event_type, project, request, payload)
+
+
+class UnsupportedConfiguredDispatcher:
+    def __init__(
+        self,
+        settings: BemineSettings,
+        *,
+        runtime: str,
+        backend: str,
+        reason: str,
+    ) -> None:
+        self.settings = settings
+        self.runtime = runtime
+        self.backend = backend
+        self.reason = reason
+        self.db = BemineDB(settings.db_path)
+
+    def dispatch(
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None = None,
+    ) -> DispatchResult:
+        del progress_callback
+        result = DispatchResult(
+            ok=False,
+            project=project,
+            output=(
+                f"`{self.runtime}` backend `{self.backend}` is selected in config, "
+                f"but it is not available yet: {self.reason}"
+            ),
+            elapsed_seconds=0.0,
+            returncode=None,
+        )
+        self.db.record_audit_event(
+            category="discord",
+            event_type="dispatch_backend_unavailable",
+            actor=f"discord:{request.author_name}",
+            device_id=self.settings.device_id,
+            project_id=project.project_id or project.channel_name,
+            payload_json=json.dumps(
+                {
+                    "runtime": self.runtime,
+                    "backend": self.backend,
+                    "reason": self.reason,
+                    "channel_id": request.channel_id,
+                    "channel_name": request.channel_name,
+                    "message_id": request.message_id,
+                    "project_channel": project.channel_name,
+                    "project_cwd": str(project.cwd),
+                },
+                sort_keys=True,
+            ),
+        )
+        return result
 
 
 class CodexDispatcher:
@@ -1208,6 +1266,38 @@ def resolve_codex_model() -> str:
     )
 
 
+def resolve_codex_backend() -> str:
+    configured = os.environ.get("BEMINE_CODEX_BACKEND", "").strip().lower()
+    configured = configured or config_string("codex", "backend", "exec").lower()
+    if configured in {"cli", "codex-cli"}:
+        return "exec"
+    if configured in {"server", "appserver", "app_server"}:
+        return "app-server"
+    return configured or "exec"
+
+
+def resolve_codex_dispatcher(settings: BemineSettings) -> DispatchBackend:
+    backend = resolve_codex_backend()
+    if backend == "exec":
+        return CodexDispatcher(settings)
+    if backend == "app-server":
+        return UnsupportedConfiguredDispatcher(
+            settings,
+            runtime="codex",
+            backend=backend,
+            reason=(
+                "Codex app-server needs a persistent JSON-RPC thread adapter. "
+                "`codex exec` is the implemented Codex backend today."
+            ),
+        )
+    return UnsupportedConfiguredDispatcher(
+        settings,
+        runtime="codex",
+        backend=backend,
+        reason="unknown Codex backend; supported today: exec",
+    )
+
+
 def resolve_kimi_bin() -> str:
     configured = os.environ.get("BEMINE_KIMI_BIN", "").strip()
     configured = configured or config_string("kimi", "bin", "")
@@ -1228,12 +1318,77 @@ def resolve_kimi_bin() -> str:
     return "kimi"
 
 
+def resolve_kimi_backend() -> str:
+    configured = os.environ.get("BEMINE_KIMI_DISPATCH", "").strip().lower()
+    configured = configured or os.environ.get("BEMINE_KIMI_BACKEND", "").strip().lower()
+    configured = configured or config_string("kimi", "backend", "").lower()
+    configured = configured or config_string("kimi", "dispatch", "native").lower()
+    if configured in {"kimi-cli"}:
+        return "cli"
+    return configured or "native"
+
+
 def resolve_kimi_dispatcher(settings: BemineSettings) -> DispatchBackend:
-    backend = os.environ.get("BEMINE_KIMI_DISPATCH", "").strip().lower()
-    backend = backend or config_string("kimi", "dispatch", "native").lower()
+    backend = resolve_kimi_backend()
     if backend in {"cli", "kimi-cli"}:
         return KimiDispatcher(settings)
-    return KimiNativeDispatcher(settings)
+    if backend == "native":
+        return KimiNativeDispatcher(settings)
+    return UnsupportedConfiguredDispatcher(
+        settings,
+        runtime="kimi",
+        backend=backend,
+        reason="unknown Kimi backend; supported today: native, cli",
+    )
+
+
+def resolve_claude_backend() -> str:
+    configured = os.environ.get("BEMINE_CLAUDE_BACKEND", "").strip().lower()
+    configured = configured or config_string("claude", "backend", "meridian").lower()
+    if configured in {"claude-code", "claude_cli", "claude-cli"}:
+        return "claude-cli"
+    return configured or "meridian"
+
+
+def resolve_claude_model() -> str:
+    return os.environ.get("BEMINE_CLAUDE_MODEL", "").strip() or config_string(
+        "claude", "model", "claude-sonnet-4-6"
+    )
+
+
+def resolve_meridian_base_url() -> str:
+    configured = os.environ.get("BEMINE_MERIDIAN_BASE_URL", "").strip()
+    configured = configured or config_string("claude", "base_url", "")
+    configured = configured or config_string("meridian", "base_url", "")
+    return configured.rstrip("/") or "http://127.0.0.1:3456"
+
+
+def resolve_meridian_api_key_env() -> str:
+    configured = os.environ.get("BEMINE_MERIDIAN_API_KEY_ENV", "").strip()
+    configured = configured or config_string("claude", "api_key_env", "")
+    configured = configured or config_string("meridian", "api_key_env", "")
+    return configured or "MERIDIAN_API_KEY"
+
+
+def resolve_claude_dispatcher(settings: BemineSettings) -> DispatchBackend:
+    backend = resolve_claude_backend()
+    if backend == "meridian":
+        return UnsupportedConfiguredDispatcher(
+            settings,
+            runtime="claude",
+            backend=backend,
+            reason=(
+                "Meridian is an Anthropic/OpenAI-compatible HTTP proxy. "
+                "Bemine still needs a Claude Anthropic-messages adapter that points "
+                f"at `{resolve_meridian_base_url()}` and records tool calls like Kimi native dispatch."
+            ),
+        )
+    return UnsupportedConfiguredDispatcher(
+        settings,
+        runtime="claude",
+        backend=backend,
+        reason="unknown Claude backend; supported target today: meridian",
+    )
 
 
 def native_session_id(channel_id: str, project_name: str) -> str:
@@ -1304,8 +1459,7 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
     }
     if runtime == "kimi":
         config = KimiHandler(settings.hermes_home).status()
-        backend = os.environ.get("BEMINE_KIMI_DISPATCH", "").strip().lower()
-        backend = backend or config_string("kimi", "dispatch", "native").lower()
+        backend = resolve_kimi_backend()
         payload.update(
             {
                 "provider": config.provider,
@@ -1325,6 +1479,7 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
         )
     elif runtime == "codex":
         model = resolve_codex_model()
+        backend = resolve_codex_backend()
         payload.update(
             {
                 "provider": "codex",
@@ -1334,9 +1489,33 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
                 else "bemine.toml"
                 if model
                 else "$CODEX_HOME/config.toml",
+                "backend": backend,
                 "codex_bin": resolve_codex_bin(),
                 "sandbox": resolve_codex_sandbox(),
-                "tool_calls": "available through codex exec --json progress events",
+                "tool_calls": "available through codex exec --json progress events"
+                if backend == "exec"
+                else "requires Codex app-server adapter",
+            }
+        )
+    elif runtime == "claude":
+        backend = resolve_claude_backend()
+        api_key_env = resolve_meridian_api_key_env() if backend == "meridian" else ""
+        payload.update(
+            {
+                "provider": "claude",
+                "model": resolve_claude_model(),
+                "model_source": "BEMINE_CLAUDE_MODEL"
+                if os.environ.get("BEMINE_CLAUDE_MODEL", "").strip()
+                else "bemine.toml",
+                "backend": backend,
+                "base_url": resolve_meridian_base_url() if backend == "meridian" else "",
+                "api_key_env": api_key_env,
+                "api_key_present": bool(os.environ.get(api_key_env, "").strip())
+                if api_key_env
+                else None,
+                "tool_calls": "requires Meridian Anthropic-messages adapter"
+                if backend == "meridian"
+                else "unsupported Claude backend",
             }
         )
     else:

@@ -29,6 +29,7 @@ runtime = "kimi"
 [kimi]
 provider = "kimi-coding"
 model = "kimi-k2.6"
+backend = "native"
 dispatch = "native"
 bin = "/home/cdjk/.local/bin/kimi"
 base_url = "https://api.kimi.com/coding"
@@ -36,9 +37,16 @@ api_mode = "anthropic_messages"
 dispatch_max_tokens = 1600
 
 [codex]
+backend = "exec"
 model = "gpt-5.4-mini"
 sandbox = "danger-full-access"
 bin = ""
+
+[claude]
+backend = "meridian"
+model = "claude-sonnet-4-6"
+base_url = "http://127.0.0.1:3456"
+api_key_env = "MERIDIAN_API_KEY"
 
 [discord]
 token_env = "MAYOR_DISCORD_BOT_TOKEN"

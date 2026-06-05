@@ -28,7 +28,7 @@ Functional now:
 - Discord `status`, `rundown`, credential approval commands, and per-project native Kimi dispatch work.
 - Discord local tools can list workers, transfer managed worker context, report
   duplicate heads, and query the audit log.
-- Per-project Discord channels route messages to Kimi's Bemine-owned tool loop by default, with Codex still selectable per project.
+- Per-project Discord channels route messages to Kimi's Bemine-owned tool loop by default, with Codex and Claude selectable per project.
 - Attachments are saved and listed in the prompt. Codex project channels also pass image attachments with `--image`.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
@@ -42,7 +42,7 @@ Functional now:
 
 Not functional yet:
 
-- Claude dispatch from Discord project channels.
+- Claude/Meridian dispatch from Discord project channels. Config selection is present; the Anthropic-compatible tool-loop adapter is not implemented yet.
 - Attaching to raw non-tmux Codex/Claude/Kimi TTY sessions.
 - Proton Mail IMAP ingestion and schedule extraction from email.
 - Calendar sync beyond Bemine cron/reminder jobs.
@@ -343,16 +343,27 @@ or `#bemine`, or fall back to the mayor project when no project is clear.
 
 Dispatched messages include the selected project root, recent channel context,
 harness context, operator runbooks, credential rules, and saved attachment
-paths. Runtime/model/backend selection comes from `bemine.toml`.
+paths. Runtime/model/backend selection comes from `bemine.toml`: `[dispatch].runtime`
+chooses `kimi`, `codex`, or `claude`; each runtime section chooses its backend.
 
 Codex dispatch runs `codex exec --json --cd <project>` and mirrors JSON progress
-events such as shell command starts/completions into Discord. Kimi dispatch
+events such as shell command starts/completions into Discord. `[codex].backend =
+"app-server"` is reserved for the Codex app-server JSON-RPC adapter.
+
+Kimi dispatch
 defaults to Bemine's native model/tool loop: Bemine calls the Kimi Anthropic
 messages API directly, stores durable per-channel session history in SQLite,
 executes Bemine-owned tools, records usage/tool/audit events, and mirrors tool
 start/completion progress into Discord. Set `[kimi].dispatch = "cli"` only when
 you explicitly want the older local `kimi --print --yolo --work-dir <project>`
 fallback.
+
+Claude dispatch is configured as `[claude].backend = "meridian"` against the
+Meridian proxy API, usually `http://127.0.0.1:3456`. This is the
+`rynfar/meridian` proxy that bridges Claude Code SDK/auth to Anthropic/OpenAI
+compatible endpoints, not the `markmdev/meridian` Claude Code plugin. Bemine
+still needs its Claude Anthropic-messages adapter before this backend can handle
+Discord project tasks.
 
 Discord DMs also run through a local Bemine tool router before project dispatch.
 Plain language requests can call local tools such as `config.update_dispatch`,

@@ -27,6 +27,7 @@ from mayor_discord.dispatch import (
     resolve_codex_bin,
     resolve_codex_sandbox,
     resolve_kimi_bin,
+    resolve_meridian_base_url,
     write_project_channel_config,
 )
 
@@ -522,6 +523,89 @@ def test_dispatch_status_makes_runtime_and_model_explicit(
     )
     assert "- runtime: codex" in text
     assert "- model: gpt-test-codex" in text
+    assert "- backend: exec" in text
+
+
+def test_dispatch_status_reports_codex_app_server_backend(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "bemine.toml"
+    config.write_text(
+        """
+[dispatch]
+runtime = "codex"
+
+[codex]
+backend = "app-server"
+model = "gpt-5.4-mini"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+
+    payload = dispatch_status_payload(settings)
+    text = render_dispatch_status(payload)
+
+    assert payload["runtime"] == "codex"
+    assert payload["backend"] == "app-server"
+    assert payload["tool_calls"] == "requires Codex app-server adapter"
+    assert "- backend: app-server" in text
+
+
+def test_dispatch_status_reports_claude_meridian_backend(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "bemine.toml"
+    config.write_text(
+        """
+[dispatch]
+runtime = "claude"
+
+[claude]
+backend = "meridian"
+model = "claude-opus-4-6"
+base_url = "http://127.0.0.1:3456"
+api_key_env = "MERIDIAN_API_KEY"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    monkeypatch.setenv("MERIDIAN_API_KEY", "secret")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+
+    payload = dispatch_status_payload(settings)
+    text = render_dispatch_status(payload)
+
+    assert payload["runtime"] == "claude"
+    assert payload["provider"] == "claude"
+    assert payload["model"] == "claude-opus-4-6"
+    assert payload["backend"] == "meridian"
+    assert payload["base_url"] == "http://127.0.0.1:3456"
+    assert payload["api_key_present"] is True
+    assert payload["tool_calls"] == "requires Meridian Anthropic-messages adapter"
+    assert resolve_meridian_base_url() == "http://127.0.0.1:3456"
+    assert "- runtime: claude" in text
+    assert "- backend: meridian" in text
+    assert "- base_url: http://127.0.0.1:3456" in text
 
 
 def test_codex_progress_from_jsonl_command_events() -> None:
