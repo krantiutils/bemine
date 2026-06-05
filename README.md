@@ -25,10 +25,10 @@ Functional now:
 
 - `bemine status` gives recent Codex, Claude, and Kimi sessions across known SSH devices.
 - `bemine rundown` gives indexed project summaries from SQLite/Obsidian.
-- Discord `status`, `rundown`, credential approval commands, and per-project Kimi dispatch work.
+- Discord `status`, `rundown`, credential approval commands, and per-project native Kimi dispatch work.
 - Discord local tools can list workers, transfer managed worker context, report
   duplicate heads, and query the audit log.
-- Per-project Discord channels route messages to Kimi by default, with Codex still selectable per project.
+- Per-project Discord channels route messages to Kimi's Bemine-owned tool loop by default, with Codex still selectable per project.
 - Attachments are saved and listed in the prompt. Codex project channels also pass image attachments with `--image`.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
@@ -43,7 +43,6 @@ Functional now:
 Not functional yet:
 
 - Claude dispatch from Discord project channels.
-- Kimi API dispatch cannot execute shell tools directly; use Codex dispatch or managed workers for local edits/commands.
 - Attaching to raw non-tmux Codex/Claude/Kimi TTY sessions.
 - Proton Mail IMAP ingestion and schedule extraction from email.
 - Calendar sync beyond Bemine cron/reminder jobs.
@@ -344,13 +343,16 @@ or `#bemine`, or fall back to the mayor project when no project is clear.
 
 Dispatched messages include the selected project root, recent channel context,
 harness context, operator runbooks, credential rules, and saved attachment
-paths. Runtime/model selection comes from `bemine.toml`.
+paths. Runtime/model/backend selection comes from `bemine.toml`.
 
 Codex dispatch runs `codex exec --json --cd <project>` and mirrors JSON progress
-events such as shell command starts/completions into Discord. Kimi dispatch runs
-the local `kimi --print --yolo --work-dir <project>` CLI with a generated runtime
-config derived from `bemine.toml`, so Kimi gets local CLI tools instead of a
-text-only API path.
+events such as shell command starts/completions into Discord. Kimi dispatch
+defaults to Bemine's native model/tool loop: Bemine calls the Kimi Anthropic
+messages API directly, stores durable per-channel session history in SQLite,
+executes Bemine-owned tools, records usage/tool/audit events, and mirrors tool
+start/completion progress into Discord. Set `[kimi].dispatch = "cli"` only when
+you explicitly want the older local `kimi --print --yolo --work-dir <project>`
+fallback.
 
 Discord DMs also run through a local Bemine tool router before project dispatch.
 Plain language requests can call local tools such as `config.update_dispatch`,

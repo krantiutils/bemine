@@ -164,6 +164,36 @@ class KimiHandler:
 
         raise KimiConfigError(f"unsupported Kimi api_mode: {self.config.api_mode}")
 
+    async def messages_async(
+        self,
+        messages: list[Mapping[str, Any]],
+        *,
+        tools: list[Mapping[str, Any]] | None = None,
+        system: str = "",
+        max_tokens: int = 512,
+        timeout: float = 60.0,
+    ) -> Mapping[str, Any]:
+        if max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
+        if self.config.api_mode != "anthropic_messages":
+            raise KimiConfigError(
+                f"native tool loop requires anthropic_messages api_mode, got {self.config.api_mode}"
+            )
+        api_key = resolve_kimi_api_key(self.hermes_home, self.config)
+        if not api_key:
+            raise KimiConfigError(
+                f"{self.config.api_key_env} is missing from the environment and Hermes .env"
+            )
+        url, headers, payload = _anthropic_messages_request(
+            self.config,
+            api_key,
+            messages,
+            tools=tools or [],
+            system=system,
+            max_tokens=max_tokens,
+        )
+        return await _maybe_await(self._transport(url, headers, payload, timeout))
+
 
 def load_kimi_config(hermes_home: Path) -> KimiConfig:
     hermes_home = hermes_home.expanduser().resolve()
@@ -296,6 +326,36 @@ def _anthropic_request(
         headers["User-Agent"] = KIMI_CODING_USER_AGENT
         headers["anthropic-beta"] = ",".join(_COMMON_ANTHROPIC_BETAS)
 
+    return _anthropic_messages_url(config.base_url), headers, payload
+
+
+def _anthropic_messages_request(
+    config: KimiConfig,
+    api_key: str,
+    messages: list[Mapping[str, Any]],
+    *,
+    tools: list[Mapping[str, Any]],
+    system: str,
+    max_tokens: int,
+) -> tuple[str, dict[str, str], dict[str, Any]]:
+    payload: dict[str, Any] = {
+        "model": config.model,
+        "max_tokens": max_tokens,
+        "messages": [dict(message) for message in messages],
+    }
+    if system.strip():
+        payload["system"] = system.strip()
+    if tools:
+        payload["tools"] = [dict(tool) for tool in tools]
+
+    headers = {
+        "content-type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": ANTHROPIC_VERSION,
+    }
+    if _is_kimi_coding_endpoint(config.base_url):
+        headers["User-Agent"] = KIMI_CODING_USER_AGENT
+        headers["anthropic-beta"] = ",".join(_COMMON_ANTHROPIC_BETAS)
     return _anthropic_messages_url(config.base_url), headers, payload
 
 

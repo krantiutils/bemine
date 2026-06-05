@@ -12,6 +12,7 @@ from mayor_discord.dispatch import (
     DispatchRequest,
     DispatchResult,
     KimiDispatcher,
+    KimiNativeDispatcher,
     ProjectDispatcher,
     ProjectChannel,
     codex_progress_from_event,
@@ -280,6 +281,146 @@ base_url = "https://api.kimi.com/coding"
     assert payload["ok"] is True
     assert payload["runtime"] == "kimi"
     assert payload["model"] == "kimi-k2.6"
+
+
+def test_kimi_native_dispatch_runs_bemine_tools_and_records_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "bemine.toml"
+    config_path.write_text(
+        """
+[kimi]
+provider = "kimi-coding"
+model = "kimi-k2.6"
+base_url = "https://api.kimi.com/coding"
+api_mode = "anthropic_messages"
+dispatch_max_tokens = 800
+session_message_window = 12
+tool_max_turns = 4
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config_path))
+    monkeypatch.setenv("KIMI_API_KEY", "sk-kimi-abcdefghijklmnopqrstuvwxyz")
+    state_dir = tmp_path / "state"
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    settings = BemineSettings.load(
+        state_dir=state_dir,
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    requests: list[dict[str, object]] = []
+
+    def fake_transport(url, headers, payload, timeout):
+        requests.append(
+            {
+                "url": url,
+                "headers": dict(headers),
+                "payload": dict(payload),
+                "timeout": timeout,
+            }
+        )
+        if len(requests) == 1:
+            return {
+                "model": "kimi-k2.6",
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [
+                    {"type": "text", "text": "Checking the project."},
+                    {
+                        "type": "tool_use",
+                        "id": "tool_1",
+                        "name": "shell.run",
+                        "input": {"command": "printf native-ok", "timeout": 5},
+                    },
+                ],
+            }
+        return {
+            "model": "kimi-k2.6",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 12, "output_tokens": 7},
+            "content": [{"type": "text", "text": "Done: native-ok"}],
+        }
+
+    progress = []
+    dispatcher = KimiNativeDispatcher(
+        settings,
+        transport=fake_transport,
+        timeout_seconds=30,
+    )
+
+    result = dispatcher.dispatch(
+        ProjectChannel(
+            channel_name="bemine",
+            cwd=project_root,
+            project_id="proj_bm",
+            project_name="bm",
+            runtime="kimi",
+        ),
+        DispatchRequest(
+            channel_id="channel-1",
+            channel_name="bemine",
+            message_id="message-1",
+            author_name="voidash",
+            content="run a tiny smoke",
+            attachments=[],
+            conversation_context="- voidash: previous context",
+        ),
+        progress_callback=progress.append,
+    )
+
+    assert result.ok is True
+    assert result.output == "Done: native-ok"
+    assert len(requests) == 2
+    first_payload = requests[0]["payload"]
+    assert isinstance(first_payload, dict)
+    assert first_payload["model"] == "kimi-k2.6"
+    assert "tools" in first_payload
+    assert first_payload["messages"][-1]["role"] == "user"
+    assert "previous context" in first_payload["messages"][-1]["content"]
+    second_payload = requests[1]["payload"]
+    assert isinstance(second_payload, dict)
+    assert second_payload["messages"][-1]["content"][0]["type"] == "tool_result"
+    assert "native-ok" in second_payload["messages"][-1]["content"][0]["content"]
+    assert [item.event_type for item in progress] == [
+        "tool.started",
+        "tool.completed",
+    ]
+
+    db = BemineDB(settings.db_path)
+    with db.connect() as conn:
+        session = conn.execute("SELECT * FROM bemine_sessions").fetchone()
+        messages = conn.execute(
+            "SELECT role, content_json FROM bemine_session_messages ORDER BY id"
+        ).fetchall()
+        tool_call = conn.execute("SELECT * FROM tool_calls").fetchone()
+        usage_count = conn.execute("SELECT COUNT(*) FROM usage_samples").fetchone()[0]
+        events = [
+            dict(row) for row in conn.execute("SELECT * FROM audit_events ORDER BY id")
+        ]
+
+    assert session["session_id"] == "discord:channel-1:bemine:kimi"
+    assert session["message_count"] == 4
+    assert [row["role"] for row in messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert tool_call["tool_name"] == "shell.run"
+    assert tool_call["status"] == "success"
+    assert "native-ok" in tool_call["result_json"]
+    assert usage_count == 2
+    assert [row["event_type"] for row in events] == [
+        "kimi_native_dispatch_started",
+        "kimi_tool_call_finished",
+        "kimi_native_dispatch_finished",
+    ]
 
 
 class _FakeDispatcher:

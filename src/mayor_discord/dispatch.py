@@ -21,9 +21,11 @@ from bemine.db import BemineDB
 from bemine.harness_context import load_harness_context
 from bemine.kimi_handler import (
     KimiHandler,
+    JsonTransport,
     load_kimi_config,
     resolve_kimi_api_key,
 )
+from bemine.native_runtime import KimiNativeRuntime
 from bemine.operator_context import load_operator_context
 from bemine.project_filters import ignored_project_reason
 from bemine.status import _redact
@@ -391,7 +393,7 @@ class ProjectDispatcher:
     ) -> DispatchResult:
         runtime = resolve_dispatch_runtime(project.runtime)
         if runtime == "kimi":
-            dispatcher = self.kimi_dispatcher or KimiDispatcher(self.settings)
+            dispatcher = self.kimi_dispatcher or resolve_kimi_dispatcher(self.settings)
             return dispatcher.dispatch(project, request, progress_callback)
         if runtime == "codex":
             dispatcher = self.codex_dispatcher or CodexDispatcher(self.settings)
@@ -578,6 +580,162 @@ class KimiDispatcher:
             event_type=event_type,
             actor=f"discord:{request.author_name}",
             device_id=self.settings.device_id,
+            payload_json=json.dumps(payload, sort_keys=True),
+        )
+
+    def _audit_result(
+        self,
+        event_type: str,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        result: DispatchResult,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "ok": result.ok,
+            "returncode": result.returncode,
+            "timed_out": result.timed_out,
+            "elapsed_seconds": round(result.elapsed_seconds, 3),
+        }
+        if extra:
+            payload.update(extra)
+        self._audit(event_type, project, request, payload)
+
+
+class KimiNativeDispatcher:
+    def __init__(
+        self,
+        settings: BemineSettings,
+        *,
+        transport: JsonTransport | None = None,
+        timeout_seconds: float = 120.0,
+    ) -> None:
+        self.settings = settings
+        self.runtime = KimiNativeRuntime(
+            settings,
+            transport=transport,
+            timeout_seconds=timeout_seconds,
+        )
+        self.db = BemineDB(settings.db_path)
+
+    def dispatch(
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None = None,
+    ) -> DispatchResult:
+        started = time.monotonic()
+        session_id = native_session_id(request.channel_id, project.channel_name)
+        self._audit(
+            "kimi_native_dispatch_started",
+            project,
+            request,
+            {
+                "session_id": session_id,
+                "model": self.runtime.handler.status().model,
+                "backend": "native",
+            },
+        )
+        prompt = build_kimi_native_prompt(project, request)
+        system = build_kimi_native_system_prompt(project, request)
+
+        def emit_progress(
+            runtime: str,
+            event_type: str,
+            summary: str,
+            raw_event: Mapping[str, Any],
+        ) -> None:
+            if progress_callback:
+                progress_callback(
+                    DispatchProgress(
+                        runtime=runtime,
+                        event_type=event_type,
+                        summary=summary,
+                        raw_event=raw_event,
+                    )
+                )
+
+        try:
+            native_result = self.runtime.run(
+                session_id=session_id,
+                channel_id=request.channel_id,
+                project_id=project.project_id or project.channel_name,
+                cwd=project.cwd,
+                prompt=prompt,
+                system=system,
+                progress_callback=emit_progress,
+            )
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=f"Kimi native dispatch issue: {_redact(str(exc))}",
+                elapsed_seconds=elapsed,
+                returncode=None,
+            )
+            self._audit_result(
+                "kimi_native_dispatch_finished",
+                project,
+                request,
+                result,
+                {
+                    "session_id": session_id,
+                    "backend": "native",
+                    "error_type": type(exc).__name__,
+                    "error": _redact(str(exc)),
+                },
+            )
+            return result
+
+        result = DispatchResult(
+            ok=native_result.ok,
+            project=project,
+            output=_redact(native_result.text),
+            elapsed_seconds=native_result.elapsed_seconds,
+            returncode=0 if native_result.ok else 1,
+        )
+        self._audit_result(
+            "kimi_native_dispatch_finished",
+            project,
+            request,
+            result,
+            {
+                "session_id": session_id,
+                "backend": "native",
+                "model": native_result.model,
+                "input_tokens": native_result.input_tokens,
+                "output_tokens": native_result.output_tokens,
+                "total_tokens": native_result.total_tokens,
+            },
+        )
+        return result
+
+    def _audit(
+        self,
+        event_type: str,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload = {
+            "channel_id": request.channel_id,
+            "channel_name": request.channel_name,
+            "message_id": request.message_id,
+            "project_channel": project.channel_name,
+            "project_cwd": str(project.cwd),
+            "runtime": "kimi",
+            "configured_runtime": project.runtime,
+        }
+        if extra:
+            payload.update(extra)
+        self.db.record_audit_event(
+            category="discord",
+            event_type=event_type,
+            actor=f"discord:{request.author_name}",
+            device_id=self.settings.device_id,
+            project_id=project.project_id or project.channel_name,
+            session_id=str(payload.get("session_id") or ""),
             payload_json=json.dumps(payload, sort_keys=True),
         )
 
@@ -1070,6 +1228,20 @@ def resolve_kimi_bin() -> str:
     return "kimi"
 
 
+def resolve_kimi_dispatcher(settings: BemineSettings) -> DispatchBackend:
+    backend = os.environ.get("BEMINE_KIMI_DISPATCH", "").strip().lower()
+    backend = backend or config_string("kimi", "dispatch", "native").lower()
+    if backend in {"cli", "kimi-cli"}:
+        return KimiDispatcher(settings)
+    return KimiNativeDispatcher(settings)
+
+
+def native_session_id(channel_id: str, project_name: str) -> str:
+    channel = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", channel_id.strip()) or "unknown"
+    project = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", project_name.strip()) or "project"
+    return f"discord:{channel}:{project}:kimi"
+
+
 def render_kimi_cli_config(settings: BemineSettings, config: Any) -> Path:
     target = settings.state_dir / "runtime" / "kimi-config.toml"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -1132,6 +1304,8 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
     }
     if runtime == "kimi":
         config = KimiHandler(settings.hermes_home).status()
+        backend = os.environ.get("BEMINE_KIMI_DISPATCH", "").strip().lower()
+        backend = backend or config_string("kimi", "dispatch", "native").lower()
         payload.update(
             {
                 "provider": config.provider,
@@ -1142,8 +1316,11 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
                 "model_source": str(config_path())
                 if config_string("kimi", "model", "")
                 else config.config_path,
+                "backend": backend,
                 "kimi_bin": resolve_kimi_bin(),
-                "tool_calls": "available through kimi --print --yolo CLI tools",
+                "tool_calls": "available through Bemine native tools"
+                if backend != "cli"
+                else "available through kimi --print --yolo CLI tools",
             }
         )
     elif runtime == "codex":
@@ -1176,6 +1353,8 @@ def render_dispatch_status(payload: Mapping[str, Any]) -> str:
         f"- model_source: {payload.get('model_source', 'unknown')}",
         f"- tool_calls: {payload.get('tool_calls', 'unknown')}",
     ]
+    if payload.get("backend"):
+        lines.append(f"- backend: {payload.get('backend')}")
     if payload.get("sandbox"):
         lines.append(f"- sandbox: {payload.get('sandbox')}")
     if payload.get("api_key_present") is not None:
@@ -1241,6 +1420,69 @@ def build_kimi_prompt(project: ProjectChannel, request: DispatchRequest) -> str:
             "- You may inspect and edit files using Kimi CLI tools as needed.",
             "- Use shell/file tools directly when the task requires local action.",
         ],
+    )
+
+
+def build_kimi_native_prompt(project: ProjectChannel, request: DispatchRequest) -> str:
+    attachment_lines = [f"- {path}" for path in request.attachments] or ["- none"]
+    return "\n".join(
+        [
+            f"Route reason: {request.route_reason or 'unspecified'}",
+            f"Source channel: #{request.channel_name}",
+            f"Project channel: #{project.channel_name}",
+            f"Project id: {project.project_id or '(unknown)'}",
+            f"Project name: {project.project_name or project.channel_name}",
+            f"Project root: {project.cwd}",
+            f"Discord message id: {request.message_id}",
+            f"User: {request.author_name}",
+            "",
+            "Recent channel context:",
+            request.conversation_context.strip() or "- none",
+            "",
+            "User message:",
+            request.content.strip() or "(no text; inspect attachments if useful)",
+            "",
+            "Saved attachments:",
+            *attachment_lines,
+        ]
+    )
+
+
+def build_kimi_native_system_prompt(
+    project: ProjectChannel,
+    request: DispatchRequest,
+) -> str:
+    del project, request
+    harness_context = load_harness_context().text or "No harness context files found."
+    operator_context = (
+        load_operator_context().text or "No operator context files found."
+    )
+    return "\n".join(
+        [
+            "You are Bemine's native Kimi worker for a Discord-routed task.",
+            "You run inside Bemine's own harness and use only the tools Bemine provides.",
+            "",
+            "Bemine harness context:",
+            harness_context,
+            "",
+            "Shared operator context:",
+            operator_context,
+            "",
+            "Credential and infrastructure rules:",
+            "- Use status/capability tools before assuming credential access.",
+            "- Hugging Face identity/token access is baseline shared when present; never print the token.",
+            "- AWS, Google, Porkbun, and other cost-incurring or infrastructure credentials require explicit permission.",
+            "- Deployment runbooks live in operator context, especially `~/deploy.md`.",
+            "",
+            "Runtime-specific rules:",
+            "- Use Bemine tool calls when local state, files, commands, status, or audit history are needed.",
+            "- Do not claim a command ran unless a tool result shows it ran.",
+            "- Work inside the project root unless the user clearly asks for coordination only.",
+            "- Keep final responses concise and suitable for Discord Markdown.",
+            "- If you changed files, mention the files and verification command.",
+            "- If blocked or needing approval/credentials, say exactly what is needed.",
+            "- Never print or expose secrets.",
+        ]
     )
 
 

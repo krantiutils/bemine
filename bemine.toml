@@ -29,6 +29,7 @@ runtime = "kimi"
 [kimi]
 provider = "kimi-coding"
 model = "kimi-k2.6"
+dispatch = "native"
 bin = "/home/cdjk/.local/bin/kimi"
 base_url = "https://api.kimi.com/coding"
 api_mode = "anthropic_messages"

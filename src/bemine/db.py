@@ -144,6 +144,44 @@ CREATE TABLE IF NOT EXISTS managed_sessions (
     last_seen_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS bemine_sessions (
+    session_id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    runtime TEXT NOT NULL,
+    model TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    cwd TEXT NOT NULL,
+    status TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    estimated_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bemine_session_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES bemine_sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    arguments_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    finished_at REAL,
+    FOREIGN KEY(session_id) REFERENCES bemine_sessions(session_id)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
     session_id UNINDEXED,
     project_id UNINDEXED,
@@ -828,3 +866,134 @@ class BemineDB:
         with self.connect() as conn:
             cursor = conn.execute("DELETE FROM managed_sessions WHERE name = ?", (name,))
         return bool(cursor.rowcount)
+
+    def upsert_bemine_session(
+        self,
+        *,
+        session_id: str,
+        channel_id: str,
+        project_id: str,
+        runtime: str,
+        model: str,
+        device_id: str,
+        cwd: str,
+        status: str = "active",
+        summary: str = "",
+        estimated_tokens: int = 0,
+    ) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bemine_sessions(
+                    session_id, channel_id, project_id, runtime, model, device_id,
+                    cwd, status, summary, message_count, estimated_tokens,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    channel_id=excluded.channel_id,
+                    project_id=excluded.project_id,
+                    runtime=excluded.runtime,
+                    model=excluded.model,
+                    device_id=excluded.device_id,
+                    cwd=excluded.cwd,
+                    status=excluded.status,
+                    summary=excluded.summary,
+                    estimated_tokens=excluded.estimated_tokens,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    session_id,
+                    channel_id,
+                    project_id,
+                    runtime,
+                    model,
+                    device_id,
+                    cwd,
+                    status,
+                    summary,
+                    estimated_tokens,
+                    now,
+                    now,
+                ),
+            )
+
+    def append_bemine_session_message(
+        self,
+        *,
+        session_id: str,
+        role: str,
+        content_json: str,
+    ) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO bemine_session_messages(session_id, role, content_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (session_id, role, content_json, now),
+            )
+            conn.execute(
+                """
+                UPDATE bemine_sessions
+                SET message_count = message_count + 1, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (now, session_id),
+            )
+
+    def list_bemine_session_messages(
+        self,
+        *,
+        session_id: str,
+        limit: int = 40,
+    ) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM bemine_session_messages
+                WHERE session_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (session_id, max(1, min(limit, 200))),
+            ).fetchall()[::-1]
+
+    def record_tool_call_started(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments_json: str,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO tool_calls(
+                    session_id, tool_call_id, tool_name, arguments_json,
+                    status, result_json, started_at
+                ) VALUES (?, ?, ?, ?, 'running', '{}', ?)
+                """,
+                (session_id, tool_call_id, tool_name, arguments_json, time.time()),
+            )
+
+    def record_tool_call_finished(
+        self,
+        *,
+        session_id: str,
+        tool_call_id: str,
+        status: str,
+        result_json: str,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE tool_calls
+                SET status = ?, result_json = ?, finished_at = ?
+                WHERE session_id = ? AND tool_call_id = ?
+                """,
+                (status, result_json, time.time(), session_id, tool_call_id),
+            )
