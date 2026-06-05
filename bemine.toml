@@ -21,7 +21,7 @@ ignored_roots = ["~/gt"]
 
 [context]
 operator_files = ["~/deploy.md"]
-harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md"]
+harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
 
 [dispatch]
 runtime = "codex"
@@ -44,6 +44,7 @@ home_channel_id = ""
 guild_id = ""
 allowed_users = []
 allow_all_users = false
+context_messages = 12
 
 [security]
 totp_secret_env = "BEMINE_TOTP_SECRET"

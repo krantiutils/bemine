@@ -154,7 +154,7 @@ The config file holds the choices humans care about most:
 - known devices for status polling (`[status]`)
 - context files injected into workers (`[context]`)
 - ignored legacy project roots (`[projects]`)
-- Discord non-secret routing settings (`[discord]`)
+- Discord non-secret routing and context settings (`[discord]`)
 - secret env-var names (`[security]`)
 
 Secrets stay outside `bemine.toml`. Discord tokens, TOTP secrets, and provider
@@ -317,27 +317,24 @@ Messages in project channels dispatch directly to that project. Messages in
 general channels can route by mentioned channel, explicit text such as `tts:`
 or `#bemine`, or fall back to the mayor project when no project is clear.
 
-Dispatched messages include the selected project root, harness context, operator
-runbooks, credential rules, and saved attachment paths. By default they go to
-Kimi through the Hermes-backed Kimi API handler and usage is recorded in SQLite.
-For projects configured with `runtime: codex`, Bemine runs `codex exec --cd
-<project>`; image attachments are passed to Codex with `--image`. The gateway
-reacts when it receives work, shows Discord typing while the runtime runs, and
-replies with the final runtime message directly. Dispatch failures are prefixed
-with the runtime and project channel for triage.
+Dispatched messages include the selected project root, recent channel context,
+harness context, operator runbooks, credential rules, and saved attachment
+paths. Runtime/model selection comes from `bemine.toml`.
 
-Codex dispatch runs with `--json`, so Bemine can mirror tool progress such as
-shell command starts/completions into Discord and record Codex token usage. Kimi
-is currently configured through the direct Kimi API path, so it reports the
-chosen model and usage but does not expose local tool-call events yet. The target
-architecture is a long-running configured session/worker for the selected
-runtime rather than per-message runtime switching.
+Codex dispatch runs `codex exec --json --cd <project>` and mirrors JSON progress
+events such as shell command starts/completions into Discord. Kimi dispatch runs
+the local `kimi --print --yolo --work-dir <project>` CLI with a generated runtime
+config derived from `bemine.toml`, so Kimi gets local CLI tools instead of a
+text-only API path.
 
 Discord DMs also run through a local Bemine tool router before project dispatch.
 Plain language requests can call local tools such as `config.update_dispatch`,
 `config.show`, `dispatch.status`, `status.show`, `rundown.show`,
-`capabilities.show`, and `permissions.pending`. Tool calls are shown in the
-Discord reply as `tool: <name>`, then the gateway returns the result directly.
+`capabilities.show`, `permissions.pending`, and `checklist.add`. The router sees
+the last `[discord].context_messages` messages from the same channel, ordered
+oldest to newest, so short follow-ups such as "in a codeblock" can refer to the
+message above. Tool calls are shown in the Discord reply as `tool: <name>`, then
+the gateway returns the result directly.
 
 Codex dispatch defaults to `--sandbox danger-full-access` to avoid service-level
 bubblewrap failures such as `bwrap: loopback: Failed RTM_NEWADDR: Operation not

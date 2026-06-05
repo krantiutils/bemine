@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 
+def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {key: row[key] for key in row.keys()}
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS inbound_messages (
     message_id TEXT PRIMARY KEY,
@@ -53,6 +57,7 @@ class Store:
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
+        conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
@@ -152,6 +157,37 @@ class Store:
                 ),
             )
 
+    def recent_inbound_messages(
+        self,
+        *,
+        channel_id: str,
+        before_message_id: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        with self._connect() as conn:
+            current = conn.execute(
+                "SELECT received_at FROM inbound_messages WHERE message_id = ?",
+                (before_message_id,),
+            ).fetchone()
+            before_received_at = (
+                float(current["received_at"]) if current is not None else time.time()
+            )
+            rows = conn.execute(
+                """
+                SELECT message_id, author_name, content, created_at, received_at
+                FROM inbound_messages
+                WHERE channel_id = ?
+                  AND message_id != ?
+                  AND received_at <= ?
+                ORDER BY received_at DESC
+                LIMIT ?
+                """,
+                (channel_id, before_message_id, before_received_at, limit),
+            ).fetchall()
+        return [_row_dict(row) for row in reversed(rows)]
+
     def stats(self) -> dict[str, Any]:
         with self._connect() as conn:
             inbound = conn.execute("SELECT COUNT(*) FROM inbound_messages").fetchone()[0]
@@ -162,4 +198,3 @@ class Store:
             "inbound_attachments": attachments,
             "outbound_messages": outbound,
         }
-

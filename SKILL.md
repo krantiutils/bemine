@@ -59,7 +59,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - Discord gateway: `src/mayor_discord/gateway.py`
 - Runtime dispatch: `src/mayor_discord/dispatch.py` uses `bemine.toml` for the
   default runtime/model and keeps per-project runtime selectable.
-- Kimi handler: `src/bemine/kimi_handler.py`
+- Kimi API handler: `src/bemine/kimi_handler.py` is for direct API checks;
+  Discord project dispatch uses local Kimi CLI tool mode from
+  `src/mayor_discord/dispatch.py`.
 - Credential inventory and gates: `src/bemine/credentials.py`,
   `src/bemine/proxy.py`, `src/bemine/totp.py`
 - Jobs and daemon: `src/bemine/jobs.py`, `src/bemine/daemon.py`
@@ -90,6 +92,10 @@ Discord should feel like a natural control surface:
 - run plain-language operator requests through the local tool router before
   falling through to project dispatch;
 - show local tool calls such as `tool: config.update_dispatch` in replies;
+- include the last `[discord].context_messages` messages from the same channel
+  in tool routing and dispatch prompts;
+- support checklist writes such as shopping/buy list additions through
+  `checklist.add`;
 - return worker output directly on success;
 - prefix failures clearly with the dispatch issue.
 - use `BEMINE_CODEX_SANDBOX=danger-full-access` by default unless a stricter

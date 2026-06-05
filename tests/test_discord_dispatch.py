@@ -6,7 +6,6 @@ from pathlib import Path
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
-from bemine.kimi_handler import KimiMessageResult
 from mayor_discord.dispatch import (
     PROJECT_CATEGORY_NAME,
     CodexDispatcher,
@@ -171,39 +170,21 @@ def test_project_channels_from_db_make_per_project_names_unique(
     assert {channel.runtime for channel in channels} == {""}
 
 
-class _FakeKimiHandler:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    def ask(
-        self,
-        prompt: str,
-        *,
-        system: str = "",
-        max_tokens: int = 512,
-        timeout: float = 60.0,
-    ) -> KimiMessageResult:
-        self.calls.append(
-            {
-                "prompt": prompt,
-                "system": system,
-                "max_tokens": max_tokens,
-                "timeout": timeout,
-            }
-        )
-        return KimiMessageResult(
-            text="kimi finished without sk-kimi-abcdefghijklmnopqrstuvwxyz",
-            model="kimi-k2.6",
-            provider="kimi-coding",
-            api_mode="anthropic_messages",
-            finish_reason="end_turn",
-            input_tokens=11,
-            output_tokens=13,
-            total_tokens=24,
-        )
-
-
-def test_kimi_dispatch_records_usage_and_audit(tmp_path: Path) -> None:
+def test_kimi_dispatch_uses_cli_with_generated_config_and_audit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "bemine.toml"
+    config_path.write_text(
+        """
+[kimi]
+provider = "kimi-coding"
+model = "kimi-k2.6"
+base_url = "https://api.kimi.com/coding"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config_path))
+    monkeypatch.setenv("KIMI_API_KEY", "sk-kimi-abcdefghijklmnopqrstuvwxyz")
     state_dir = tmp_path / "state"
     project_root = tmp_path / "repo"
     note_path = tmp_path / "inbox" / "notes.txt"
@@ -219,9 +200,23 @@ def test_kimi_dispatch_records_usage_and_audit(tmp_path: Path) -> None:
         hermes_home=tmp_path / ".hermes",
         device_id="testbox",
     )
-    handler = _FakeKimiHandler()
+    seen: dict[str, object] = {}
+
+    def fake_runner(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="kimi finished without sk-kimi-abcdefghijklmnopqrstuvwxyz",
+            stderr="",
+        )
+
     dispatcher = KimiDispatcher(
-        settings, handler=handler, timeout_seconds=30, max_tokens=256
+        settings,
+        runner=fake_runner,
+        timeout_seconds=30,
+        kimi_bin="kimi",
     )
 
     result = dispatcher.dispatch(
@@ -239,26 +234,43 @@ def test_kimi_dispatch_records_usage_and_audit(tmp_path: Path) -> None:
             author_name="voidash",
             content="please inspect this",
             attachments=[note_path],
+            conversation_context="- voidash: previous context",
         ),
     )
 
     assert result.ok is True
     assert "sk-kimi-abcdefghijklmnopqrstuvwxyz" not in result.output
     assert "<token>" in result.output
-    assert handler.calls[0]["max_tokens"] == 256
-    assert handler.calls[0]["timeout"] == 30.0
-    assert "You are Bemine's Kimi worker" in str(handler.calls[0]["prompt"])
-    assert str(note_path) in str(handler.calls[0]["prompt"])
-    assert "API dispatch" in str(handler.calls[0]["prompt"])
-    assert "Bemine harness context:" in str(handler.calls[0]["prompt"])
-    assert "Credential and infrastructure rules:" in str(handler.calls[0]["prompt"])
+    command = seen["command"]
+    assert command[:2] == ["kimi", "--work-dir"]
+    assert str(project_root) in command
+    assert "--config-file" in command
+    assert "--yolo" in command
+    assert "--print" in command
+    assert "--prompt" in command
+    prompt = command[command.index("--prompt") + 1]
+    assert "You are Bemine's Kimi worker" in prompt
+    assert "Recent channel context:" in prompt
+    assert "previous context" in prompt
+    assert str(note_path) in prompt
+    assert "You may inspect and edit files using Kimi CLI tools" in prompt
+    kwargs = seen["kwargs"]
+    assert kwargs["timeout"] == 30
+    assert kwargs["check"] is False
+    assert kwargs["env"]["KIMI_API_KEY"] == "sk-kimi-abcdefghijklmnopqrstuvwxyz"
+    cli_config = state_dir / "runtime" / "kimi-config.toml"
+    assert cli_config.exists()
+    rendered = cli_config.read_text(encoding="utf-8")
+    assert 'default_model = "bemine"' in rendered
+    assert 'model = "kimi-k2.6"' in rendered
+    assert "sk-kimi-abcdefghijklmnopqrstuvwxyz" not in rendered
+    assert 'api_key = ""' in rendered
 
     db = BemineDB(settings.db_path)
     with db.connect() as conn:
         events = [
             dict(row) for row in conn.execute("SELECT * FROM audit_events ORDER BY id")
         ]
-        usage = dict(conn.execute("SELECT * FROM usage_samples").fetchone())
     assert [row["event_type"] for row in events] == [
         "kimi_dispatch_started",
         "kimi_dispatch_finished",
@@ -267,11 +279,6 @@ def test_kimi_dispatch_records_usage_and_audit(tmp_path: Path) -> None:
     assert payload["ok"] is True
     assert payload["runtime"] == "kimi"
     assert payload["model"] == "kimi-k2.6"
-    assert usage["provider"] == "kimi"
-    assert usage["runtime"] == "kimi"
-    assert usage["input_tokens"] == 11
-    assert usage["output_tokens"] == 13
-    assert usage["total_tokens"] == 24
 
 
 class _FakeDispatcher:

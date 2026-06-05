@@ -17,6 +17,7 @@ from discord.ext import commands
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
 from bemine.config import (
     BemineSettings,
+    config_int,
     config_path,
     load_bemine_config,
     render_toml_config,
@@ -25,7 +26,7 @@ from bemine.config import (
 from bemine.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
-from bemine.status import collect_fleet_status, render_status
+from bemine.status import _redact, collect_fleet_status, render_status
 
 from .config import Settings
 from .dispatch import (
@@ -66,6 +67,27 @@ class LocalToolSpec:
     description: str
     arguments: str
     handler: Callable[[Mapping[str, Any]], str]
+
+
+def _discord_context_message_limit() -> int:
+    return max(0, min(50, config_int("discord", "context_messages", 12)))
+
+
+def _format_conversation_context(
+    rows: list[Mapping[str, Any]], *, limit: int = 6000
+) -> str:
+    lines: list[str] = []
+    for row in rows:
+        content = " ".join(str(row.get("content") or "").split())
+        if not content:
+            content = "(attachment or empty message)"
+        author = _redact(str(row.get("author_name", "unknown")))
+        created_at = str(row.get("created_at", ""))
+        lines.append(f"- {author} [{created_at}]: {_redact(content)}")
+    text = "\n".join(lines)
+    if len(text) <= limit:
+        return text
+    return text[-limit:].lstrip()
 
 
 def _safe_filename(name: str) -> str:
@@ -134,9 +156,14 @@ def _config_text(*, toml: bool = False) -> str:
 def _local_tool_response(
     content: str,
     *,
+    conversation_context: str = "",
     router: Callable[[str, str], Mapping[str, Any] | None] | None = None,
 ) -> LocalToolResult | None:
-    decision = _route_local_tool(content, router=router)
+    decision = _route_local_tool(
+        content,
+        conversation_context=conversation_context,
+        router=router,
+    )
     if decision is None:
         return None
     tool = _local_tool_by_name().get(str(decision.get("tool") or ""))
@@ -150,6 +177,7 @@ def _local_tool_response(
 def _route_local_tool(
     content: str,
     *,
+    conversation_context: str = "",
     router: Callable[[str, str], Mapping[str, Any] | None] | None = None,
 ) -> Mapping[str, Any] | None:
     normalized = " ".join(content.strip().split())
@@ -158,7 +186,7 @@ def _route_local_tool(
     catalog = _tool_catalog_text()
     router = router or _route_local_tool_with_kimi
     try:
-        decision = router(normalized, catalog)
+        decision = router(_router_prompt(normalized, conversation_context), catalog)
     except Exception as exc:
         LOG.debug("local tool router failed: %s", exc)
         return None
@@ -171,6 +199,17 @@ def _route_local_tool(
         return None
     confidence = _float(decision.get("confidence"), default=1.0)
     return decision if confidence >= 0.55 else None
+
+
+def _router_prompt(content: str, conversation_context: str) -> str:
+    if not conversation_context.strip():
+        return content
+    return (
+        "Recent channel context, oldest to newest:\n"
+        f"{conversation_context.strip()}\n\n"
+        "Current Discord message:\n"
+        f"{content}"
+    )
 
 
 def _route_local_tool_with_kimi(content: str, catalog: str) -> Mapping[str, Any] | None:
@@ -267,11 +306,19 @@ def _local_tools() -> tuple[LocalToolSpec, ...]:
             arguments="{}",
             handler=lambda _args: _pending_permissions_text(),
         ),
+        LocalToolSpec(
+            name="checklist.add",
+            description="Append an item to a named Obsidian checklist such as Shopping, Buy, Errands, or Routine.",
+            arguments='{"list": "Shopping", "item": "thing to add"}',
+            handler=_tool_checklist_add,
+        ),
     )
 
 
 def _tool_config_show(args: Mapping[str, Any]) -> str:
-    return _config_text(toml=str(args.get("format") or "").lower() == "toml")
+    toml = str(args.get("format") or "").lower() == "toml"
+    text = _config_text(toml=toml)
+    return f"```toml\n{text.rstrip()}\n```" if toml else text
 
 
 def _tool_config_update_dispatch(args: Mapping[str, Any]) -> str:
@@ -303,6 +350,33 @@ def _tool_status_show(args: Mapping[str, Any]) -> str:
     settings = BemineSettings.load()
     statuses, errors = collect_fleet_status(settings)
     return render_status(statuses, errors, limit=limit)
+
+
+def _tool_checklist_add(args: Mapping[str, Any]) -> str:
+    item = str(args.get("item") or args.get("text") or "").strip()
+    if not item:
+        raise ValueError("checklist item is required")
+    title = str(args.get("list") or args.get("checklist") or "Shopping").strip()
+    if title.lower() in {"buy", "to buy", "shopping list"}:
+        title = "Shopping"
+    title = _checklist_title(title)
+    settings = BemineSettings.load()
+    path = settings.vault_dir / "Checklists" / f"{title}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(
+            f"# {title}\n\nBemine-managed checklist.\n\n",
+            encoding="utf-8",
+        )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"- [ ] {item}\n")
+    return f"Added to **{title}**:\n- [ ] {item}\n\n`{path}`"
+
+
+def _checklist_title(value: str) -> str:
+    cleaned = " ".join(value.split()).strip() or "Shopping"
+    safe = "".join(ch if ch.isalnum() or ch in {" ", "-", "_"} else "" for ch in cleaned)
+    return safe.strip().title().replace(" ", "-") or "Shopping"
 
 
 def _runtime_for_model(model: str) -> str:
@@ -417,6 +491,7 @@ class MayorDiscordGateway:
         saved_attachments = await self._record_message(message)
         normalized = message.content.strip()
         normalized_lower = normalized.lower()
+        conversation_context = self._conversation_context(message)
 
         if normalized_lower in {"!mayor ping", "mayor ping"}:
             await message.reply("Mayor gateway online.", mention_author=False)
@@ -539,6 +614,7 @@ class MayorDiscordGateway:
                 local_result = await asyncio.to_thread(
                     _local_tool_response,
                     normalized,
+                    conversation_context=conversation_context,
                 )
             except Exception as exc:
                 await _acknowledge_message(message, emoji=WARNING_REACTION)
@@ -569,6 +645,7 @@ class MayorDiscordGateway:
                 content=normalized,
                 attachments=saved_attachments,
                 route_reason=route.reason,
+                conversation_context=conversation_context,
             )
             loop = asyncio.get_running_loop()
 
@@ -617,6 +694,14 @@ class MayorDiscordGateway:
                 "I could not infer a route for this attachment-only message."
             )
         return "Received by Mayor."
+
+    def _conversation_context(self, message: discord.Message) -> str:
+        rows = self.store.recent_inbound_messages(
+            channel_id=str(message.channel.id),
+            before_message_id=str(message.id),
+            limit=_discord_context_message_limit(),
+        )
+        return _format_conversation_context(rows)
 
     async def _record_message(self, message: discord.Message) -> list[Path]:
         message_id = str(message.id)

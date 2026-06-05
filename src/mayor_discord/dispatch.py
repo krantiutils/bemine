@@ -16,14 +16,13 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from bemine.config import BemineSettings, config_int, config_path, config_string
+from bemine.config import BemineSettings, config_path, config_string
 from bemine.db import BemineDB
 from bemine.harness_context import load_harness_context
 from bemine.kimi_handler import (
-    KimiAPIError,
-    KimiConfigError,
     KimiHandler,
-    usage_payload,
+    load_kimi_config,
+    resolve_kimi_api_key,
 )
 from bemine.operator_context import load_operator_context
 from bemine.project_filters import ignored_project_reason
@@ -55,6 +54,7 @@ class DispatchRequest:
     content: str
     attachments: list[Path]
     route_reason: str = ""
+    conversation_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -413,14 +413,15 @@ class KimiDispatcher:
         self,
         settings: BemineSettings,
         *,
-        handler: KimiHandler | None = None,
+        runner: Runner | None = None,
         timeout_seconds: int = 900,
-        max_tokens: int | None = None,
+        kimi_bin: str | None = None,
     ) -> None:
         self.settings = settings
-        self.handler = handler or KimiHandler(settings.hermes_home)
+        self.runner = runner or subprocess.run
         self.timeout_seconds = timeout_seconds
-        self.max_tokens = max_tokens or resolve_kimi_dispatch_max_tokens()
+        self.kimi_bin = kimi_bin or resolve_kimi_bin()
+        self.config = load_kimi_config(settings.hermes_home)
         self.db = BemineDB(settings.db_path)
 
     def dispatch(
@@ -435,22 +436,69 @@ class KimiDispatcher:
             "kimi_dispatch_started",
             project,
             request,
-            {"timeout_seconds": self.timeout_seconds, "max_tokens": self.max_tokens},
+            {
+                "timeout_seconds": self.timeout_seconds,
+                "kimi_bin": self.kimi_bin,
+                "model": self.config.model,
+            },
         )
         prompt = build_kimi_prompt(project, request)
+        cli_config = render_kimi_cli_config(self.settings, self.config)
+        env = os.environ.copy()
+        api_key = resolve_kimi_api_key(self.settings.hermes_home, self.config)
+        if api_key:
+            env[self.config.api_key_env] = api_key
+            env["KIMI_API_KEY"] = api_key
+        env["KIMI_BASE_URL"] = _kimi_cli_base_url(self.config.base_url)
+        command = [
+            self.kimi_bin,
+            "--work-dir",
+            str(project.cwd),
+            "--config-file",
+            str(cli_config),
+            "--model",
+            "bemine",
+            "--yolo",
+            "--print",
+            "--output-format",
+            "text",
+            "--final-message-only",
+            "--prompt",
+            prompt,
+        ]
         try:
-            response = self.handler.ask(
-                prompt,
-                system=_kimi_system_prompt(),
-                max_tokens=self.max_tokens,
-                timeout=float(self.timeout_seconds),
+            proc = self.runner(
+                command,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.timeout_seconds,
+                check=False,
+                env=env,
             )
-        except (KimiConfigError, KimiAPIError, ValueError) as exc:
+        except subprocess.TimeoutExpired:
             elapsed = time.monotonic() - started
             result = DispatchResult(
                 ok=False,
                 project=project,
-                output=f"Kimi dispatch failed: {_redact(str(exc))}",
+                output=(
+                    f"Kimi dispatch timed out after {self.timeout_seconds}s for "
+                    f"`#{project.channel_name}`."
+                ),
+                elapsed_seconds=elapsed,
+                timed_out=True,
+            )
+            self._audit_result("kimi_dispatch_finished", project, request, result)
+            return result
+        except FileNotFoundError as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=(
+                    "Kimi dispatch could not start because the `kimi` binary was not found. "
+                    "Set `BEMINE_KIMI_BIN` or `kimi.bin` in `bemine.toml`."
+                ),
                 elapsed_seconds=elapsed,
                 returncode=None,
             )
@@ -459,7 +507,7 @@ class KimiDispatcher:
                 project,
                 request,
                 result,
-                extra={"error_type": type(exc).__name__, "error": _redact(str(exc))},
+                extra={"error": str(exc), "kimi_bin": self.kimi_bin},
             )
             return result
         except Exception as exc:
@@ -480,25 +528,18 @@ class KimiDispatcher:
             )
             return result
 
-        self.db.record_usage_sample(
-            provider="kimi",
-            account=response.provider,
-            runtime="kimi",
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
-            total_tokens=response.total_tokens,
-            raw_json=json.dumps(usage_payload(response), sort_keys=True),
-        )
         output = _redact(
-            response.text.strip() or "Kimi finished without a final message."
+            proc.stdout.strip()
+            or proc.stderr.strip()
+            or "Kimi finished without a final message."
         )
         elapsed = time.monotonic() - started
         result = DispatchResult(
-            ok=True,
+            ok=proc.returncode == 0,
             project=project,
             output=output,
             elapsed_seconds=elapsed,
-            returncode=0,
+            returncode=proc.returncode,
         )
         self._audit_result(
             "kimi_dispatch_finished",
@@ -506,12 +547,10 @@ class KimiDispatcher:
             request,
             result,
             extra={
-                "model": response.model,
-                "provider": response.provider,
-                "finish_reason": response.finish_reason,
-                "input_tokens": response.input_tokens,
-                "output_tokens": response.output_tokens,
-                "total_tokens": response.total_tokens,
+                "model": self.config.model,
+                "provider": self.config.provider,
+                "cli_config": str(cli_config),
+                "stderr": _redact(proc.stderr.strip()[:1000]),
             },
         )
         return result
@@ -1011,6 +1050,56 @@ def resolve_codex_model() -> str:
     )
 
 
+def resolve_kimi_bin() -> str:
+    configured = os.environ.get("BEMINE_KIMI_BIN", "").strip()
+    configured = configured or config_string("kimi", "bin", "")
+    if configured:
+        return configured
+    found = shutil.which("kimi")
+    return found or "kimi"
+
+
+def render_kimi_cli_config(settings: BemineSettings, config: Any) -> Path:
+    target = settings.state_dir / "runtime" / "kimi-config.toml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    base_url = _kimi_cli_base_url(str(config.base_url))
+    model = str(config.model or "kimi-k2.6")
+    target.write_text(
+        "\n".join(
+            [
+                'default_model = "bemine"',
+                "default_thinking = false",
+                "default_yolo = true",
+                "",
+                "[models.bemine]",
+                'provider = "bemine-kimi"',
+                f'model = "{_toml_escape(model)}"',
+                "max_context_size = 200000",
+                'capabilities = ["image_in", "thinking"]',
+                "",
+                "[providers.bemine-kimi]",
+                'type = "kimi"',
+                f'base_url = "{_toml_escape(base_url)}"',
+                'api_key = ""',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return target
+
+
+def _kimi_cli_base_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/coding"):
+        return f"{normalized}/v1"
+    return normalized
+
+
+def _toml_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def resolve_dispatch_runtime(runtime: str | None = None) -> str:
     configured = (runtime or "").strip().lower()
     if not configured:
@@ -1018,19 +1107,6 @@ def resolve_dispatch_runtime(runtime: str | None = None) -> str:
     if not configured:
         configured = config_string("dispatch", "runtime", "").lower()
     return configured or "kimi"
-
-
-def resolve_kimi_dispatch_max_tokens() -> int:
-    raw = os.environ.get("BEMINE_KIMI_DISPATCH_MAX_TOKENS", "").strip()
-    if not raw:
-        return config_int("kimi", "dispatch_max_tokens", 1600)
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise ValueError("BEMINE_KIMI_DISPATCH_MAX_TOKENS must be an integer") from exc
-    if value <= 0:
-        raise ValueError("BEMINE_KIMI_DISPATCH_MAX_TOKENS must be positive")
-    return value
 
 
 def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
@@ -1055,7 +1131,8 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
                 "model_source": str(config_path())
                 if config_string("kimi", "model", "")
                 else config.config_path,
-                "tool_calls": "not available on Bemine's current Kimi API dispatch path",
+                "kimi_bin": resolve_kimi_bin(),
+                "tool_calls": "available through kimi --print --yolo CLI tools",
             }
         )
     elif runtime == "codex":
@@ -1150,8 +1227,8 @@ def build_kimi_prompt(project: ProjectChannel, request: DispatchRequest) -> str:
         request,
         runtime_name="Kimi",
         runtime_notes=[
-            "- This Discord Kimi path is API dispatch, so do not claim you executed shell commands.",
-            "- If the task needs file edits, tmux interaction, or another local tool, state the exact action Bemine should run next.",
+            "- You may inspect and edit files using Kimi CLI tools as needed.",
+            "- Use shell/file tools directly when the task requires local action.",
         ],
     )
 
@@ -1179,6 +1256,9 @@ def _build_dispatch_prompt(
             f"Project root: {project.cwd}",
             f"Discord message id: {request.message_id}",
             f"User: {request.author_name}",
+            "",
+            "Recent channel context:",
+            request.conversation_context.strip() or "- none",
             "",
             "User message:",
             request.content.strip() or "(no text; inspect attachments if useful)",
@@ -1209,14 +1289,6 @@ def _build_dispatch_prompt(
             "- If blocked or needing approval/credentials, say exactly what is needed.",
             "- Never print or expose secrets.",
         ]
-    )
-
-
-def _kimi_system_prompt() -> str:
-    return (
-        "You are Bemine's Kimi dispatch worker. Be concise, preserve project context, "
-        "and never expose secrets. If execution or credential access is required, ask "
-        "for the precise Bemine action instead of pretending it already happened."
     )
 
 
