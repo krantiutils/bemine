@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Protocol
 
 from .config import BemineSettings
 from .db import BemineDB
@@ -19,6 +21,19 @@ DEFAULT_RUNTIME_COMMANDS = {
     "claude": "claude --dangerously-skip-permissions",
     "kimi": "kimi",
 }
+REMOTE_TMUX_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+
+class TmuxLike(Protocol):
+    def start(self, name: str, command: str = "bash") -> object: ...
+
+    def exists(self, name: str) -> bool: ...
+
+    def send(self, name: str, text: str, *, enter: bool = True) -> None: ...
+
+    def capture(self, name: str) -> str: ...
+
+    def kill(self, name: str) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -67,17 +82,86 @@ class WorkerError(RuntimeError):
     pass
 
 
+class SshTmuxAdapter:
+    def __init__(self, host: str, *, timeout: int = 8) -> None:
+        host = host.strip()
+        if not host:
+            raise WorkerError("remote host is required")
+        self.host = host
+        self.timeout = timeout
+
+    def start(self, name: str, command: str = "bash") -> object:
+        self._run(["tmux", "new-session", "-d", "-s", _validate_name(name), command])
+        return object()
+
+    def exists(self, name: str) -> bool:
+        proc = self._run(
+            ["tmux", "has-session", "-t", _validate_name(name)],
+            check=False,
+        )
+        return proc.returncode == 0
+
+    def send(self, name: str, text: str, *, enter: bool = True) -> None:
+        name = _validate_name(name)
+        self._run(["tmux", "load-buffer", "-"], input=text)
+        self._run(["tmux", "paste-buffer", "-t", name])
+        if enter:
+            self._run(["tmux", "send-keys", "-t", name, "Enter"])
+
+    def capture(self, name: str) -> str:
+        return self._run(
+            ["tmux", "capture-pane", "-p", "-S", "-", "-t", _validate_name(name)]
+        ).stdout
+
+    def kill(self, name: str) -> None:
+        self._run(
+            ["tmux", "kill-session", "-t", _validate_name(name)],
+            check=False,
+        )
+
+    def _run(
+        self,
+        args: list[str],
+        *,
+        input: str | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        proc = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={min(self.timeout, 5)}",
+                self.host,
+                f"PATH={REMOTE_TMUX_PATH} {shlex.join(args)}",
+            ],
+            input=input,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=self.timeout,
+            check=False,
+        )
+        if check and proc.returncode != 0:
+            detail = proc.stderr.strip() or f"ssh exited {proc.returncode}"
+            raise WorkerError(f"{self.host}: {detail}")
+        return proc
+
+
 class WorkerController:
     def __init__(
         self,
         settings: BemineSettings,
         *,
         db: BemineDB | None = None,
-        tmux: TmuxAdapter | None = None,
+        tmux: TmuxLike | None = None,
+        remote_tmux_factory: Callable[[str], TmuxLike] | None = None,
     ) -> None:
         self.settings = settings
         self.db = db or BemineDB(settings.db_path)
         self.tmux = tmux or TmuxAdapter()
+        self.remote_tmux_factory = remote_tmux_factory or SshTmuxAdapter
 
     def start(
         self,
@@ -127,8 +211,13 @@ class WorkerController:
     def list(self) -> list[WorkerRecord]:
         records = []
         for row in self.db.list_managed_sessions():
-            exists = self.tmux.exists(str(row["name"])) if row["transport"] == "tmux" else False
-            status = "running" if exists and row["status"] in {"running", "adopted"} else row["status"]
+            record = self._row_to_record(row, exists=False)
+            exists = self._record_exists(record)
+            status = (
+                "running"
+                if exists and row["status"] in {"running", "adopted"}
+                else row["status"]
+            )
             if not exists and row["status"] in {"running", "adopted"}:
                 status = "missing"
                 self.db.set_managed_session_status(str(row["name"]), status=status)
@@ -149,21 +238,21 @@ class WorkerController:
 
     def send(self, name: str, text: str, *, enter: bool = True) -> WorkerRecord:
         record = self._require_record(name)
-        self.tmux.send(record.name, text, enter=enter)
+        self._tmux_for_record(record).send(record.name, text, enter=enter)
         self.db.set_managed_session_status(record.name, status="running")
         self._audit("worker_sent", record, {"enter": enter, "text_len": len(text)})
         return record
 
     def capture(self, name: str) -> str:
         record = self._require_record(name)
-        captured = self.tmux.capture(record.name)
+        captured = self._tmux_for_record(record).capture(record.name)
         self.db.set_managed_session_status(record.name, status="running")
         self._audit("worker_captured", record, {"chars": len(captured)})
         return captured
 
     def stop(self, name: str) -> WorkerRecord:
         record = self._require_record(name)
-        self.tmux.kill(record.name)
+        self._tmux_for_record(record).kill(record.name)
         self.db.set_managed_session_status(record.name, status="stopped")
         stopped = WorkerRecord(**{**record.to_dict(), "status": "stopped", "exists": False})
         self._audit("worker_stopped", stopped, {})
@@ -185,20 +274,36 @@ class WorkerController:
         target_cwd = (cwd.expanduser().resolve() if cwd else Path(source.cwd))
         target_runtime = _normalize_runtime(target_runtime)
         target_device = target_device.strip() or self.settings.device_id
-        source_capture = self.tmux.capture(source.name)
-        if self.tmux.exists(target_name):
-            target = self.adopt(
+        target_tmux = self._tmux_for_device(target_device)
+        target_transport = self._transport_for_device(target_device)
+        source_capture = self._tmux_for_record(source).capture(source.name)
+        if target_tmux.exists(target_name):
+            target = self._record(
                 name=target_name,
                 runtime=target_runtime,
                 cwd=target_cwd,
                 command=command.strip() or "adopted-existing-tmux-session",
+                status="adopted",
+                transport=target_transport,
+                device_id=target_device,
             )
         else:
-            target = self.start(
+            command = command.strip() or DEFAULT_RUNTIME_COMMANDS.get(
+                target_runtime,
+                target_runtime,
+            )
+            target_tmux.start(
+                name=target_name,
+                command=_command_in_cwd(target_cwd, command),
+            )
+            target = self._record(
                 name=target_name,
                 runtime=target_runtime,
                 cwd=target_cwd,
                 command=command,
+                status="running",
+                transport=target_transport,
+                device_id=target_device,
             )
         duplicate_heads = self._active_project_heads(
             source.project_id,
@@ -211,7 +316,7 @@ class WorkerController:
             source_capture=source_capture,
             duplicate_heads=duplicate_heads,
         )
-        self.tmux.send(target.name, prompt)
+        target_tmux.send(target.name, prompt)
         if stop_source:
             source = self.stop(source.name)
         result = WorkerTransferResult(
@@ -250,17 +355,8 @@ class WorkerController:
         row = self.db.get_managed_session(name)
         if row is None:
             return False
-        record = WorkerRecord(
-            name=str(row["name"]),
-            runtime=str(row["runtime"]),
-            transport=str(row["transport"]),
-            device_id=str(row["device_id"]),
-            project_id=str(row["project_id"]),
-            cwd=str(row["cwd"]),
-            command=str(row["command"]),
-            status=str(row["status"]),
-            exists=self.tmux.exists(name) if row["transport"] == "tmux" else False,
-        )
+        record = self._row_to_record(row, exists=False)
+        record = WorkerRecord(**{**record.to_dict(), "exists": self._record_exists(record)})
         deleted = self.db.delete_managed_session(name)
         if deleted:
             self._audit("worker_forgotten", record, {})
@@ -274,13 +370,16 @@ class WorkerController:
         cwd: Path,
         command: str,
         status: str,
+        transport: str = "tmux",
+        device_id: str = "",
     ) -> WorkerRecord:
         project_id = project_id_from_cwd(str(cwd))
+        device_id = device_id or self.settings.device_id
         self.db.upsert_managed_session(
             name=name,
             runtime=runtime,
-            transport="tmux",
-            device_id=self.settings.device_id,
+            transport=transport,
+            device_id=device_id,
             project_id=project_id,
             cwd=str(cwd),
             command=command,
@@ -289,15 +388,16 @@ class WorkerController:
         record = WorkerRecord(
             name=name,
             runtime=runtime,
-            transport="tmux",
-            device_id=self.settings.device_id,
+            transport=transport,
+            device_id=device_id,
             project_id=project_id,
             cwd=str(cwd),
             command=command,
             status=status,
             exists=True,
         )
-        self._audit("worker_started" if status == "running" else "worker_adopted", record, {})
+        event_type = "worker_started" if status == "running" else "worker_adopted"
+        self._audit(event_type, record, {})
         return record
 
     def _require_record(self, name: str) -> WorkerRecord:
@@ -305,11 +405,13 @@ class WorkerController:
         row = self.db.get_managed_session(name)
         if row is None:
             raise WorkerError(f"worker is not registered: {name}")
-        if row["transport"] != "tmux":
-            raise WorkerError(f"unsupported worker transport: {row['transport']}")
-        if not self.tmux.exists(name):
+        record = self._row_to_record(row, exists=True)
+        if not self._record_exists(record):
             self.db.set_managed_session_status(name, status="missing")
-            raise WorkerError(f"tmux session is missing: {name}")
+            raise WorkerError(f"{row['transport']} session is missing: {name}")
+        return record
+
+    def _row_to_record(self, row: object, *, exists: bool) -> WorkerRecord:
         return WorkerRecord(
             name=str(row["name"]),
             runtime=str(row["runtime"]),
@@ -319,8 +421,32 @@ class WorkerController:
             cwd=str(row["cwd"]),
             command=str(row["command"]),
             status=str(row["status"]),
-            exists=True,
+            exists=exists,
         )
+
+    def _record_exists(self, record: WorkerRecord) -> bool:
+        try:
+            return self._tmux_for_record(record).exists(record.name)
+        except Exception:
+            return False
+
+    def _tmux_for_record(self, record: WorkerRecord) -> TmuxLike:
+        if record.transport == "tmux":
+            return self.tmux
+        if record.transport == "ssh-tmux":
+            return self.remote_tmux_factory(record.device_id)
+        raise WorkerError(f"unsupported worker transport: {record.transport}")
+
+    def _tmux_for_device(self, device_id: str) -> TmuxLike:
+        if self._is_local_device(device_id):
+            return self.tmux
+        return self.remote_tmux_factory(device_id)
+
+    def _transport_for_device(self, device_id: str) -> str:
+        return "tmux" if self._is_local_device(device_id) else "ssh-tmux"
+
+    def _is_local_device(self, device_id: str) -> bool:
+        return device_id in {"", "local", self.settings.device_id}
 
     def _active_project_heads(
         self,
@@ -384,7 +510,10 @@ def _validate_name(name: str) -> str:
     if not cleaned:
         raise WorkerError("worker name is required")
     if not WORKER_NAME_RE.match(cleaned):
-        raise WorkerError("worker name may contain only letters, numbers, dot, colon, underscore, and dash")
+        raise WorkerError(
+            "worker name may contain only letters, numbers, dot, colon, "
+            "underscore, and dash"
+        )
     return cleaned
 
 

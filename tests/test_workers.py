@@ -14,7 +14,7 @@ import pytest
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.tmux_adapter import TmuxAdapter
-from bemine.workers import WorkerController
+from bemine.workers import SshTmuxAdapter, WorkerController
 
 
 def _run(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -142,7 +142,7 @@ def test_workers_transfer_switches_runtime_reports_duplicates_and_audits(
         source_name="source",
         target_name="target",
         target_runtime="claude",
-        target_device="mbp2",
+        target_device="testbox",
     )
 
     assert result.source.runtime == "codex"
@@ -152,7 +152,7 @@ def test_workers_transfer_switches_runtime_reports_duplicates_and_audits(
     assert result.prompt in tmux.sent["target"][-1]
     assert "Source runtime: codex" in result.prompt
     assert "Target runtime: claude" in result.prompt
-    assert "Target device: mbp2" in result.prompt
+    assert "Target device: testbox" in result.prompt
     assert "source pane says: continue the migration" in result.prompt
     assert "duplicate [kimi]" in result.prompt
     assert "preserve source context" in result.prompt.lower()
@@ -169,7 +169,7 @@ def test_workers_transfer_switches_runtime_reports_duplicates_and_audits(
     payload = json.loads(row[4])
     assert payload["source"]["name"] == "source"
     assert payload["target"]["runtime"] == "claude"
-    assert payload["target_device"] == "mbp2"
+    assert payload["target_device"] == "testbox"
     assert payload["conflict_policy"] == "preserve_all_heads_with_explicit_handoff"
     assert [record["name"] for record in payload["duplicate_heads"]] == ["duplicate"]
     assert payload["source_capture_len"] == len(tmux.captures["source"])
@@ -231,7 +231,7 @@ def test_workers_transfer_injects_handoff_into_existing_tmux_target(
                 "--cwd",
                 str(project),
                 "--target-device",
-                "mbp2",
+                "testbox",
                 "--json",
             ).stdout
         )
@@ -246,12 +246,96 @@ def test_workers_transfer_injects_handoff_into_existing_tmux_target(
         assert "Bemine worker transfer handoff." in captured
         assert "Source runtime: codex" in captured
         assert "Target runtime: claude" in captured
-        assert "Target device: mbp2" in captured
+        assert "Target device: testbox" in captured
         assert "SOURCE_HANDOFF_READY" in captured
         assert duplicate in captured
     finally:
         for name in (source, target, duplicate):
             tmux.kill(name)
+
+
+def test_workers_transfer_to_remote_device_uses_ssh_tmux_and_audits(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="testbox",
+    )
+    db = BemineDB(settings.db_path)
+    local_tmux = FakeTmux()
+    remote_tmux = FakeTmux()
+    remotes = {"mbp2": remote_tmux}
+    controller = WorkerController(
+        settings,
+        db=db,
+        tmux=local_tmux,  # type: ignore[arg-type]
+        remote_tmux_factory=lambda host: remotes[host],  # type: ignore[arg-type]
+    )
+
+    local_tmux.start("source", "codex")
+    controller.adopt(name="source", runtime="codex", cwd=project)
+    local_tmux.captures["source"] = "remote transfer source context\n"
+    local_tmux.start("duplicate", "kimi")
+    controller.adopt(name="duplicate", runtime="kimi", cwd=project)
+    remote_tmux.start("target", "cat")
+
+    result = controller.transfer(
+        source_name="source",
+        target_name="target",
+        target_runtime="claude",
+        target_device="mbp2",
+        cwd=project,
+    )
+
+    assert result.target.transport == "ssh-tmux"
+    assert result.target.device_id == "mbp2"
+    assert result.target.status == "adopted"
+    assert "target" not in local_tmux.sent
+    assert "Bemine worker transfer handoff." in remote_tmux.sent["target"][-1]
+    assert "Source device: testbox" in remote_tmux.sent["target"][-1]
+    assert "Target device: mbp2" in remote_tmux.sent["target"][-1]
+    assert "remote transfer source context" in remote_tmux.sent["target"][-1]
+    assert [record.name for record in result.duplicate_heads] == ["duplicate"]
+
+    listed = {record.name: record for record in controller.list()}
+    assert listed["target"].transport == "ssh-tmux"
+    assert listed["target"].device_id == "mbp2"
+    assert listed["target"].exists is True
+
+    with sqlite3.connect(settings.db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT payload_json
+            FROM audit_events
+            WHERE event_type = 'worker_transfer'
+            """
+        ).fetchone()
+    payload = json.loads(row[0])
+    assert payload["target"]["transport"] == "ssh-tmux"
+    assert payload["target"]["device_id"] == "mbp2"
+    assert payload["duplicate_heads"][0]["name"] == "duplicate"
+
+
+def test_ssh_tmux_send_pipes_handoff_through_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    adapter = SshTmuxAdapter("mbp2")
+
+    adapter.send("target", "line one\nline two")
+
+    assert calls[0][1]["input"] == "line one\nline two"
+    assert calls[0][0][0][-1].endswith("tmux load-buffer -")
+    assert calls[1][0][0][-1].endswith("tmux paste-buffer -t target")
+    assert calls[2][0][0][-1].endswith("tmux send-keys -t target Enter")
+    assert "line one" not in " ".join(str(call[0][0]) for call in calls)
 
 
 def _capture_until(tmp_path: Path, name: str, needle: str) -> str:

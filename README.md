@@ -45,7 +45,8 @@ Not functional yet:
 - Proton Mail IMAP ingestion and schedule extraction from email.
 - Calendar sync beyond Bemine cron/reminder jobs.
 - Credential proxy operations that actually perform AWS/GitHub/HF actions; current proxy is an approval ledger and broker contract.
-- Remote SSH project transfer between devices; local managed-worker transfer is wired.
+- Pulling full project files/worktrees between devices; managed-worker context
+  transfer over local tmux and SSH-backed remote tmux is wired.
 
 ## Commands
 
@@ -79,6 +80,7 @@ uv run bemine workers start bm-codex --runtime codex --cwd /home/cdjk/bm
 uv run bemine workers adopt existing-tmux --runtime claude --cwd /path/to/project
 uv run bemine workers send bm-codex "Run bemine prime and summarize blockers"
 uv run bemine workers transfer bm-codex bm-claude --runtime claude
+uv run bemine workers transfer bm-codex mbp2-claude --runtime claude --target-device mbp2
 uv run bemine workers capture bm-codex
 uv run bemine workers stop bm-codex
 uv run bemine workers forget bm-codex
@@ -229,6 +231,7 @@ uv run bemine workers adopt old-session --runtime claude --cwd /path/to/project
 uv run bemine workers list
 uv run bemine workers send bm-codex "Run bemine prime and report status"
 uv run bemine workers transfer bm-codex bm-claude --runtime claude
+uv run bemine workers transfer bm-codex mbp2-claude --runtime claude --target-device mbp2
 uv run bemine workers capture bm-codex
 uv run bemine workers stop bm-codex
 uv run bemine workers forget bm-codex
@@ -239,6 +242,9 @@ target tmux session, sends a structured handoff prompt, records a
 `worker_transfer` audit event, and warns about other live project heads for the
 same project id. By default it preserves the source session; use
 `--stop-source` only after the receiving worker has acknowledged the handoff.
+When `--target-device` is non-local, Bemine controls the target session through
+SSH and records it as `ssh-tmux`; this assumes passwordless SSH and a reachable
+tmux session on that device.
 
 Raw terminal sessions that are not in tmux remain read-only through
 `bemine status`. Bemine should not inject into arbitrary TTYs.

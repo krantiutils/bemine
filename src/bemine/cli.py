@@ -645,7 +645,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Move project context from one managed worker to another.",
         description=(
             "Capture the source worker pane, start or adopt the target tmux session, "
-            "inject a structured handoff prompt, and audit duplicate project heads."
+            "inject a structured handoff prompt, and audit duplicate project heads. "
+            "When --target-device is not local, Bemine uses SSH to control tmux on "
+            "that device."
         ),
         formatter_class=HELP_FORMATTER,
     )
@@ -670,7 +672,10 @@ def build_parser() -> argparse.ArgumentParser:
     worker_transfer.add_argument(
         "--target-device",
         default="",
-        help="Device label for the receiving worker, used in handoff metadata.",
+        help=(
+            "Receiving device. Defaults to local; non-local values use SSH-backed "
+            "tmux control."
+        ),
     )
     worker_transfer.add_argument(
         "--stop-source",
