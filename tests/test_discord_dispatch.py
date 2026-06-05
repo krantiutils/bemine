@@ -23,6 +23,7 @@ from mayor_discord.dispatch import (
     resolve_project_channel,
     resolve_codex_bin,
     resolve_codex_sandbox,
+    resolve_kimi_bin,
     write_project_channel_config,
 )
 
@@ -708,6 +709,35 @@ def test_resolve_codex_bin_uses_explicit_env(monkeypatch) -> None:
     monkeypatch.setenv("BEMINE_CODEX_BIN", "/opt/codex")
 
     assert resolve_codex_bin() == "/opt/codex"
+
+
+def test_resolve_kimi_bin_uses_config_file(tmp_path: Path, monkeypatch) -> None:
+    config = tmp_path / "bemine.toml"
+    config.write_text(
+        """
+[kimi]
+bin = "/opt/kimi/bin/kimi"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    monkeypatch.delenv("BEMINE_KIMI_BIN", raising=False)
+
+    assert resolve_kimi_bin() == "/opt/kimi/bin/kimi"
+
+
+def test_resolve_kimi_bin_falls_back_to_user_local_bin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    kimi = tmp_path / ".local" / "bin" / "kimi"
+    kimi.parent.mkdir(parents=True)
+    kimi.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.delenv("BEMINE_KIMI_BIN", raising=False)
+    monkeypatch.setattr("mayor_discord.dispatch.config_string", lambda *_args: "")
+    monkeypatch.setattr("mayor_discord.dispatch.shutil.which", lambda _name: None)
+    monkeypatch.setattr("mayor_discord.dispatch.Path.home", lambda: tmp_path)
+
+    assert resolve_kimi_bin() == str(kimi)
 
 
 def test_resolve_codex_sandbox_defaults_to_systemd_safe_mode(monkeypatch) -> None:

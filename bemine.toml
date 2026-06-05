@@ -24,11 +24,12 @@ operator_files = ["~/deploy.md"]
 harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
 
 [dispatch]
-runtime = "codex"
+runtime = "kimi"
 
 [kimi]
 provider = "kimi-coding"
 model = "kimi-k2.6"
+bin = "/home/cdjk/.local/bin/kimi"
 base_url = "https://api.kimi.com/coding"
 api_mode = "anthropic_messages"
 dispatch_max_tokens = 1600

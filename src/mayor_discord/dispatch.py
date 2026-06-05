@@ -1056,7 +1056,18 @@ def resolve_kimi_bin() -> str:
     if configured:
         return configured
     found = shutil.which("kimi")
-    return found or "kimi"
+    if found:
+        return found
+    home = Path.home()
+    for candidate in (
+        home / ".local" / "bin" / "kimi",
+        home / ".npm-global" / "bin" / "kimi",
+        Path("/usr/local/bin/kimi"),
+        Path("/opt/homebrew/bin/kimi"),
+    ):
+        if candidate.exists():
+            return str(candidate)
+    return "kimi"
 
 
 def render_kimi_cli_config(settings: BemineSettings, config: Any) -> Path:
