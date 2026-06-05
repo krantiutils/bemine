@@ -43,7 +43,7 @@ class ProjectChannel:
     cwd: Path
     project_id: str = ""
     project_name: str = ""
-    runtime: str = "kimi"
+    runtime: str = ""
 
 
 @dataclass(frozen=True)
@@ -161,7 +161,6 @@ def write_project_channel_config(
             cwd=channel.cwd,
             project_id=channel.project_id,
             project_name=channel.project_name,
-            runtime=channel.runtime,
         )
         payload[alias.channel_name] = _project_channel_payload(alias)
     path.write_text(
@@ -245,7 +244,7 @@ def ensure_default_project_config(
         return path
     defaults = load_project_channels(state_dir, repo_dir=repo_dir, home=home)
     payload = {
-        channel.channel_name: {"cwd": str(channel.cwd), "runtime": channel.runtime}
+        channel.channel_name: {"cwd": str(channel.cwd)}
         for channel in defaults.values()
     }
     path.write_text(
@@ -1265,18 +1264,15 @@ def _project_channel_from_config(name: str, value: Any) -> ProjectChannel:
         return ProjectChannel(
             channel_name=name,
             cwd=Path(value).expanduser().resolve(),
-            runtime=resolve_dispatch_runtime(),
         )
     if not isinstance(value, dict):
         raise ValueError(f"project channel {name!r} must be a string or object")
     cwd = Path(str(value["cwd"])).expanduser().resolve()
-    runtime = resolve_dispatch_runtime(str(value.get("runtime") or ""))
     return ProjectChannel(
         channel_name=str(value.get("channel_name") or name),
         cwd=cwd,
         project_id=str(value.get("project_id") or ""),
         project_name=str(value.get("project_name") or value.get("name") or name),
-        runtime=runtime,
     )
 
 
@@ -1378,7 +1374,6 @@ def _project_channels_from_rows(rows: list[Mapping[str, Any]]) -> list[ProjectCh
                 cwd=cwd,
                 project_id=project_id,
                 project_name=project_name,
-                runtime=resolve_dispatch_runtime(),
             )
         )
     return channels
@@ -1446,7 +1441,6 @@ def _project_channel_payload(channel: ProjectChannel) -> dict[str, str]:
     payload = {
         "channel_name": channel.channel_name,
         "cwd": str(channel.cwd),
-        "runtime": channel.runtime,
     }
     if channel.project_id:
         payload["project_id"] = channel.project_id

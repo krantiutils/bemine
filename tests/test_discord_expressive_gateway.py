@@ -13,6 +13,7 @@ from mayor_discord.gateway import (
     ACK_REACTION,
     _acknowledge_message,
     _best_effort_typing,
+    _discord_chunk,
     _dispatch_progress_text,
     _dispatch_response_text,
     _local_tool_response,
@@ -94,7 +95,7 @@ def test_dispatch_response_omits_success_header() -> None:
 
 
 def test_dispatch_response_keeps_failure_context() -> None:
-    project = ProjectChannel(channel_name="bemine", cwd=Path("/tmp"))
+    project = ProjectChannel(channel_name="bemine", cwd=Path("/tmp"), runtime="kimi")
     route = ProjectRoute(project=project, reason="default")
     result = DispatchResult(
         ok=False, project=project, output="failed", elapsed_seconds=1.0
@@ -115,6 +116,17 @@ def test_dispatch_progress_text_uses_runtime_summary() -> None:
     )
 
     assert _dispatch_progress_text(progress) == "💻 shell: `pwd`"
+
+
+def test_discord_chunk_closes_and_reopens_markdown_fences() -> None:
+    text = "before\n```python\n" + "\n".join(f"print({index})" for index in range(20)) + "\n```\nafter"
+
+    chunks = _discord_chunk(text, limit=90)
+
+    assert len(chunks) > 1
+    assert all(chunk.count("```") % 2 == 0 for chunk in chunks)
+    assert chunks[0].endswith("```")
+    assert chunks[1].startswith("```")
 
 
 def test_discord_local_tool_router_updates_dispatch_config(

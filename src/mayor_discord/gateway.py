@@ -719,17 +719,35 @@ def _discord_chunk(text: str, *, limit: int = 1900) -> list[str]:
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
+    open_fence = ""
     for line in text.splitlines():
         line_len = len(line) + 1
-        if current and current_len + line_len > limit:
+        close_len = len(open_fence) + 1 if open_fence else 0
+        if current and current_len + line_len + close_len > limit:
+            if open_fence:
+                current.append(open_fence)
             chunks.append("\n".join(current))
-            current = []
-            current_len = 0
+            current = [open_fence] if open_fence else []
+            current_len = len(open_fence) + 1 if open_fence else 0
         current.append(line)
         current_len += line_len
+        fence = _markdown_fence_marker(line)
+        if fence:
+            open_fence = "" if open_fence else fence
     if current:
+        if open_fence:
+            current.append(open_fence)
         chunks.append("\n".join(current))
     return chunks or [text[:limit]]
+
+
+def _markdown_fence_marker(line: str) -> str:
+    stripped = line.strip()
+    if stripped.startswith("```"):
+        return "```"
+    if stripped.startswith("~~~"):
+        return "~~~"
+    return ""
 
 
 def _dispatch_response_text(result: DispatchResult, route: ProjectRoute) -> str:

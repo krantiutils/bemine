@@ -46,7 +46,7 @@ def test_project_channel_config_resolves_only_inside_project_category(
     assert path == state_dir / "discord-projects.json"
     loaded = load_project_channels(state_dir, repo_dir=tmp_path)
     assert loaded["tts"] == channel
-    assert loaded["tts"].runtime == "kimi"
+    assert loaded["tts"].runtime == ""
     assert (
         resolve_project_channel(
             channel_name="tts",
@@ -168,7 +168,7 @@ def test_project_channels_from_db_make_per_project_names_unique(
     assert "web-clients-beta" in names
     assert "neptts-bench" in names
     assert "aux" in names
-    assert {channel.runtime for channel in channels} == {"kimi"}
+    assert {channel.runtime for channel in channels} == {""}
 
 
 class _FakeKimiHandler:
@@ -292,7 +292,12 @@ class _FakeDispatcher:
         )
 
 
-def test_project_dispatcher_routes_by_project_runtime(tmp_path: Path) -> None:
+def test_project_dispatcher_routes_by_config_runtime_and_explicit_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = tmp_path / "bemine.toml"
+    config.write_text('[dispatch]\nruntime = "kimi"\n', encoding="utf-8")
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
     settings = BemineSettings.load(
         state_dir=tmp_path / "state",
         vault_dir=tmp_path / "vault",
@@ -316,7 +321,7 @@ def test_project_dispatcher_routes_by_project_runtime(tmp_path: Path) -> None:
         attachments=[],
     )
 
-    kimi_result = dispatcher.dispatch(
+    config_result = dispatcher.dispatch(
         ProjectChannel(channel_name="bemine", cwd=tmp_path), request
     )
     codex_result = dispatcher.dispatch(
@@ -324,7 +329,7 @@ def test_project_dispatcher_routes_by_project_runtime(tmp_path: Path) -> None:
         request,
     )
 
-    assert kimi_result.output == "kimi-ok"
+    assert config_result.output == "kimi-ok"
     assert codex_result.output == "codex-ok"
     assert len(kimi.calls) == 1
     assert len(codex.calls) == 1
