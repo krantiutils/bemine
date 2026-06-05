@@ -65,7 +65,7 @@ class BemineToolRegistry:
 def default_tools() -> list[BemineTool]:
     return [
         BemineTool(
-            name="status.show",
+            name="status_show",
             description="Show recent Codex, Claude, and Kimi sessions by last interaction.",
             input_schema={
                 "type": "object",
@@ -74,7 +74,7 @@ def default_tools() -> list[BemineTool]:
             handler=_status_show,
         ),
         BemineTool(
-            name="audit.list",
+            name="audit_list",
             description="List recent Bemine audit events, optionally filtered by category or event type.",
             input_schema={
                 "type": "object",
@@ -88,7 +88,7 @@ def default_tools() -> list[BemineTool]:
             handler=_audit_list,
         ),
         BemineTool(
-            name="shell.run",
+            name="shell_run",
             description="Run a shell command in the project root or an allowed project subdirectory.",
             input_schema={
                 "type": "object",
@@ -103,7 +103,7 @@ def default_tools() -> list[BemineTool]:
             policy="project-write",
         ),
         BemineTool(
-            name="file.read",
+            name="file_read",
             description="Read a UTF-8 text file inside the project root.",
             input_schema={
                 "type": "object",
@@ -116,7 +116,7 @@ def default_tools() -> list[BemineTool]:
             handler=_file_read,
         ),
         BemineTool(
-            name="file.search",
+            name="file_search",
             description="Search text inside the project root with ripgrep.",
             input_schema={
                 "type": "object",
@@ -174,7 +174,7 @@ def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, A
 def _shell_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
     policy = config_string("policy", "shell", "project-write")
     if policy == "disabled":
-        raise ToolExecutionError("shell.run is disabled by policy")
+        raise ToolExecutionError("shell_run is disabled by policy")
     command = str(args.get("command") or "").strip()
     if not command:
         raise ToolExecutionError("command is required")

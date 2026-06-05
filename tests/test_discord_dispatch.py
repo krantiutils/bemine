@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
+from bemine.tool_registry import BemineToolRegistry
 from mayor_discord.dispatch import (
     PROJECT_CATEGORY_NAME,
     CodexDispatcher,
@@ -335,7 +337,7 @@ tool_max_turns = 4
                     {
                         "type": "tool_use",
                         "id": "tool_1",
-                        "name": "shell.run",
+                        "name": "shell_run",
                         "input": {"command": "printf native-ok", "timeout": 5},
                     },
                 ],
@@ -412,7 +414,7 @@ tool_max_turns = 4
         "user",
         "assistant",
     ]
-    assert tool_call["tool_name"] == "shell.run"
+    assert tool_call["tool_name"] == "shell_run"
     assert tool_call["status"] == "success"
     assert "native-ok" in tool_call["result_json"]
     assert usage_count == 2
@@ -421,6 +423,15 @@ tool_max_turns = 4
         "kimi_tool_call_finished",
         "kimi_native_dispatch_finished",
     ]
+
+
+def test_native_kimi_tool_names_are_api_safe() -> None:
+    valid_name = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+    names = [tool["name"] for tool in BemineToolRegistry().schemas()]
+
+    assert names == ["status_show", "audit_list", "shell_run", "file_read", "file_search"]
+    assert all(valid_name.match(name) for name in names)
 
 
 class _FakeDispatcher:
