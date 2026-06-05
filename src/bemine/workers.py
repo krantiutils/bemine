@@ -78,6 +78,18 @@ class WorkerTransferResult:
         }
 
 
+@dataclass(frozen=True)
+class WorkerDuplicateGroup:
+    project_id: str
+    heads: list[WorkerRecord]
+
+    def to_dict(self) -> dict:
+        return {
+            "project_id": self.project_id,
+            "heads": [record.to_dict() for record in self.heads],
+        }
+
+
 class WorkerError(RuntimeError):
     pass
 
@@ -235,6 +247,20 @@ class WorkerController:
                 )
             )
         return records
+
+    def duplicate_heads(self) -> list[WorkerDuplicateGroup]:
+        grouped: dict[str, list[WorkerRecord]] = {}
+        for record in self.list():
+            if record.status not in {"running", "adopted"}:
+                continue
+            grouped.setdefault(record.project_id, []).append(record)
+        duplicates = [
+            WorkerDuplicateGroup(project_id=project_id, heads=heads)
+            for project_id, heads in grouped.items()
+            if len(heads) > 1
+        ]
+        duplicates.sort(key=lambda group: (-len(group.heads), group.project_id))
+        return duplicates
 
     def send(self, name: str, text: str, *, enter: bool = True) -> WorkerRecord:
         record = self._require_record(name)
@@ -503,6 +529,20 @@ def render_transfer(result: WorkerTransferResult) -> str:
             )
     lines.append("")
     return "\n".join(lines)
+
+
+def render_duplicate_heads(groups: list[WorkerDuplicateGroup]) -> str:
+    if not groups:
+        return "No duplicate active worker heads found.\n"
+    lines = ["Duplicate active worker heads:"]
+    for group in groups:
+        lines.append(f"- project `{group.project_id}` heads={len(group.heads)}")
+        for record in group.heads:
+            lines.append(
+                f"  - `{record.name}` [{record.runtime}/{record.transport}] "
+                f"{record.status} device={record.device_id} cwd=`{record.cwd}`"
+            )
+    return "\n".join(lines) + "\n"
 
 
 def _validate_name(name: str) -> str:

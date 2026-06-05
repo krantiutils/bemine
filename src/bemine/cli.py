@@ -35,7 +35,13 @@ from .rituals import (
 from .status import collect_fleet_status, render_status
 from .systemd import install_user_units, render_user_units
 from .tmux_adapter import TmuxAdapter
-from .workers import WorkerController, WorkerError, render_transfer, render_workers
+from .workers import (
+    WorkerController,
+    WorkerError,
+    render_duplicate_heads,
+    render_transfer,
+    render_workers,
+)
 
 
 HELP_FORMATTER = argparse.RawDescriptionHelpFormatter
@@ -201,6 +207,7 @@ Examples:
   uv run bemine workers adopt old-tmux --runtime claude --cwd /home/cdjk/github/project
   uv run bemine workers send bm-codex "Run bemine prime and report blockers"
   uv run bemine workers transfer bm-codex bm-claude --runtime claude
+  uv run bemine workers duplicates
   uv run bemine workers capture bm-codex
   uv run bemine workers stop bm-codex
   uv run bemine workers forget bm-codex
@@ -673,6 +680,15 @@ def build_parser() -> argparse.ArgumentParser:
     worker_list.add_argument(
         "--json", action="store_true", help="Emit worker records as JSON."
     )
+    worker_duplicates = workers_sub.add_parser(
+        "duplicates",
+        help="Show projects with more than one active worker head.",
+        description="Show projects with more than one active managed worker head.",
+        formatter_class=HELP_FORMATTER,
+    )
+    worker_duplicates.add_argument(
+        "--json", action="store_true", help="Emit duplicate groups as JSON."
+    )
     worker_send = workers_sub.add_parser(
         "send", help="Send text to a registered worker."
     )
@@ -1082,6 +1098,18 @@ def main(argv: list[str] | None = None) -> None:
                     )
                 else:
                     print(render_workers(records), end="")
+            elif args.workers_command == "duplicates":
+                groups = controller.duplicate_heads()
+                if args.json:
+                    print(
+                        json.dumps(
+                            [group.to_dict() for group in groups],
+                            indent=2,
+                            sort_keys=True,
+                        )
+                    )
+                else:
+                    print(render_duplicate_heads(groups), end="")
             elif args.workers_command == "send":
                 record = controller.send(args.name, args.text, enter=not args.no_enter)
                 if args.json:

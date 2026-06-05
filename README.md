@@ -84,6 +84,7 @@ uv run bemine workers adopt existing-tmux --runtime claude --cwd /path/to/projec
 uv run bemine workers send bm-codex "Run bemine prime and summarize blockers"
 uv run bemine workers transfer bm-codex bm-claude --runtime claude
 uv run bemine workers transfer bm-codex mbp2-claude --runtime claude --target-device mbp2
+uv run bemine workers duplicates
 uv run bemine workers capture bm-codex
 uv run bemine workers stop bm-codex
 uv run bemine workers forget bm-codex
@@ -235,6 +236,7 @@ uv run bemine workers list
 uv run bemine workers send bm-codex "Run bemine prime and report status"
 uv run bemine workers transfer bm-codex bm-claude --runtime claude
 uv run bemine workers transfer bm-codex mbp2-claude --runtime claude --target-device mbp2
+uv run bemine workers duplicates
 uv run bemine workers capture bm-codex
 uv run bemine workers stop bm-codex
 uv run bemine workers forget bm-codex
@@ -248,6 +250,10 @@ same project id. By default it preserves the source session; use
 When `--target-device` is non-local, Bemine controls the target session through
 SSH and records it as `ssh-tmux`; this assumes passwordless SSH and a reachable
 tmux session on that device.
+
+`workers duplicates` reports projects that currently have more than one active
+managed worker head, including remote `ssh-tmux` heads. Use it before deciding
+which head is canonical.
 
 Raw terminal sessions that are not in tmux remain read-only through
 `bemine status`. Bemine should not inject into arbitrary TTYs.
@@ -435,6 +441,7 @@ The tests are integration-oriented:
 - Bemine soul/skill harness context prompt injection
 - prime startup packet and handoff vault/audit persistence
 - managed worker start/adopt/send/capture/transfer/stop flow through tmux
+- managed worker duplicate-head reporting
 - real tmux start/send/capture/kill flow when tmux is installed
 
 Run:

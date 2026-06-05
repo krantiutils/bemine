@@ -319,6 +319,84 @@ def test_workers_transfer_to_remote_device_uses_ssh_tmux_and_audits(
     assert payload["duplicate_heads"][0]["name"] == "duplicate"
 
 
+def test_workers_duplicate_heads_reports_active_local_and_remote_heads(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="testbox",
+    )
+    db = BemineDB(settings.db_path)
+    local_tmux = FakeTmux()
+    remote_tmux = FakeTmux()
+    controller = WorkerController(
+        settings,
+        db=db,
+        tmux=local_tmux,  # type: ignore[arg-type]
+        remote_tmux_factory=lambda _host: remote_tmux,  # type: ignore[arg-type]
+    )
+
+    local_tmux.start("codex-head", "codex")
+    controller.adopt(name="codex-head", runtime="codex", cwd=project)
+    local_tmux.start("stopped-head", "kimi")
+    controller.adopt(name="stopped-head", runtime="kimi", cwd=project)
+    controller.stop("stopped-head")
+    remote_tmux.start("claude-head", "claude")
+    controller.transfer(
+        source_name="codex-head",
+        target_name="claude-head",
+        target_runtime="claude",
+        target_device="mbp2",
+        cwd=project,
+    )
+
+    groups = controller.duplicate_heads()
+
+    assert len(groups) == 1
+    assert groups[0].project_id
+    assert {record.name for record in groups[0].heads} == {
+        "codex-head",
+        "claude-head",
+    }
+    assert {record.transport for record in groups[0].heads} == {"tmux", "ssh-tmux"}
+    assert "stopped-head" not in {record.name for record in groups[0].heads}
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")
+def test_workers_duplicates_cli_reports_real_tmux_heads(tmp_path: Path) -> None:
+    first = f"bemine-dup-a-{uuid.uuid4().hex[:10]}"
+    second = f"bemine-dup-b-{uuid.uuid4().hex[:10]}"
+    project = tmp_path / "repo"
+    project.mkdir()
+    tmux = TmuxAdapter()
+    try:
+        for name in (first, second):
+            _run(
+                tmp_path,
+                "workers",
+                "start",
+                name,
+                "--runtime",
+                "shell",
+                "--cwd",
+                str(project),
+                "--command",
+                "cat",
+                "--json",
+            )
+
+        groups = json.loads(_run(tmp_path, "workers", "duplicates", "--json").stdout)
+
+        assert len(groups) == 1
+        assert {record["name"] for record in groups[0]["heads"]} == {first, second}
+    finally:
+        for name in (first, second):
+            tmux.kill(name)
+
+
 def test_ssh_tmux_send_pipes_handoff_through_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
 
