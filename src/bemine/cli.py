@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
 
@@ -60,6 +61,7 @@ Core concepts:
   capabilities  safe credential/capability manifest for workers
   permissions   explicit approval path for gated credentials
   workers       safe managed live sessions over tmux
+  audit         query the operational event log
   discord       project channel routing and Discord sync
 """
 
@@ -115,6 +117,19 @@ permissions and proxy paths.
 Examples:
   uv run bemine capabilities
   uv run bemine capabilities --json
+"""
+
+
+AUDIT_HELP = """\
+Inspect Bemine's operational event log.
+
+Use this when something acted weird and you need the ledger: worker transfers,
+credential approvals, dispatch calls, job runs, and usage-related events.
+
+Examples:
+  uv run bemine audit list --limit 20
+  uv run bemine audit list --category worker --event-type worker_transfer --json
+  uv run bemine audit list --project-id bm
 """
 
 
@@ -373,6 +388,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search.add_argument(
         "--json", action="store_true", help="Emit matching session rows as JSON."
+    )
+
+    audit = sub.add_parser(
+        "audit",
+        help="Inspect Bemine's operational event log.",
+        description="Inspect Bemine's operational event log.",
+        epilog=dedent(AUDIT_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    audit_sub = audit.add_subparsers(dest="audit_command", required=True)
+    audit_list = audit_sub.add_parser(
+        "list",
+        help="List recent audit events.",
+        description="List recent audit events from SQLite.",
+        formatter_class=HELP_FORMATTER,
+    )
+    audit_list.add_argument(
+        "--category", default="", help="Filter by category, e.g. worker."
+    )
+    audit_list.add_argument(
+        "--event-type",
+        default="",
+        help="Filter by event type, e.g. worker_transfer.",
+    )
+    audit_list.add_argument("--project-id", default="", help="Filter by project id.")
+    audit_list.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum events to print, capped at 500.",
+    )
+    audit_list.add_argument(
+        "--json", action="store_true", help="Emit parsed audit events as JSON."
     )
 
     status = sub.add_parser(
@@ -925,6 +973,58 @@ def _add_permission_request_args(
         )
 
 
+def audit_events_to_dicts(rows: list[object]) -> list[dict]:
+    events = []
+    for row in rows:
+        event = dict(row)
+        payload_json = str(event.pop("payload_json", "") or "")
+        try:
+            event["payload"] = json.loads(payload_json) if payload_json else {}
+        except json.JSONDecodeError:
+            event["payload"] = {"raw": payload_json}
+        events.append(event)
+    return events
+
+
+def render_audit_events(rows: list[object]) -> str:
+    events = audit_events_to_dicts(rows)
+    if not events:
+        return "No audit events found.\n"
+    lines = ["Audit events:"]
+    for event in events:
+        timestamp = datetime.fromtimestamp(float(event["ts"])).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        device = event.get("device_id") or "-"
+        project = event.get("project_id") or "-"
+        lines.append(
+            f"- {timestamp} #{event['id']} {event['category']}/{event['event_type']} "
+            f"actor={event['actor']} device={device} project={project}"
+        )
+        summary = _audit_payload_summary(event.get("payload"))
+        if summary:
+            lines.append(f"  {summary}")
+    return "\n".join(lines) + "\n"
+
+
+def _audit_payload_summary(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    source = payload.get("source")
+    target = payload.get("target")
+    if isinstance(source, dict) and isinstance(target, dict):
+        duplicate_count = len(payload.get("duplicate_heads") or [])
+        return (
+            f"{source.get('name')}[{source.get('runtime')}] -> "
+            f"{target.get('name')}[{target.get('runtime')}/{target.get('transport')}] "
+            f"duplicates={duplicate_count}"
+        )
+    for key in ("credential_id", "request_id", "provider", "job_id", "text_len"):
+        if key in payload:
+            return f"{key}={payload[key]}"
+    return ""
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1071,6 +1171,18 @@ def main(argv: list[str] | None = None) -> None:
                 print(
                     f"{row['runtime']} {row['cwd']} {row['updated_at']} {row['title']}"
                 )
+    elif args.command == "audit":
+        if args.audit_command == "list":
+            rows = kernel.db.list_audit_events(
+                category=args.category,
+                event_type=args.event_type,
+                project_id=args.project_id,
+                limit=args.limit,
+            )
+            if args.json:
+                print(json.dumps(audit_events_to_dicts(rows), indent=2, sort_keys=True))
+            else:
+                print(render_audit_events(rows), end="")
     elif args.command == "status":
         if args.local_only:
             devices = ["local"]

@@ -676,6 +676,39 @@ class BemineDB:
                 ),
             )
 
+    def list_audit_events(
+        self,
+        *,
+        category: str = "",
+        event_type: str = "",
+        project_id: str = "",
+        limit: int = 50,
+    ) -> list[sqlite3.Row]:
+        clauses = []
+        params: list[object] = []
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(limit, 500)))
+        with self.connect() as conn:
+            return conn.execute(
+                f"""
+                SELECT *
+                FROM audit_events
+                {where}
+                ORDER BY ts DESC, id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+
     def record_usage_sample(
         self,
         *,

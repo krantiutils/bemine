@@ -19,6 +19,7 @@ The current implementation is a working vertical slice, not the full mayor yet:
 - check local Proton Mail Bridge readiness
 - render worker startup packets and record vault-backed handoffs
 - track audit events, permission requests, credential policies, and usage samples
+- query audit events from the CLI for transfers, dispatch, jobs, and credential gates
 
 Functional now:
 
@@ -58,6 +59,8 @@ uv run bemine status
 uv run bemine rundown
 uv run bemine search "blocked schema"
 uv run bemine capabilities
+uv run bemine audit list --limit 20
+uv run bemine audit list --category worker --event-type worker_transfer
 uv run bemine config show
 uv run bemine context show
 uv run bemine dispatch status
@@ -421,6 +424,7 @@ The tests are integration-oriented:
 - SQLite + FTS5 search verification
 - Obsidian project page update verification
 - security and usage ledger verification
+- audit event CLI filtering and transfer summaries
 - TOTP-gated credential request and approval flow
 - Discord approval-code redaction
 - Discord per-project channel routing and Codex dispatch adapter
