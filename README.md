@@ -58,6 +58,7 @@ uv run bemine rundown
 uv run bemine search "blocked schema"
 uv run bemine capabilities
 uv run bemine context show
+uv run bemine dispatch status
 uv run bemine kimi status
 uv run bemine mail bridge-status
 uv run bemine jobs list
@@ -149,6 +150,7 @@ BEMINE_IGNORED_PROJECT_ROOTS=~/gt
 BEMINE_OPERATOR_CONTEXT_FILES=~/deploy.md
 BEMINE_HARNESS_CONTEXT_FILES=/home/cdjk/bm/SOUL.md:/home/cdjk/bm/SKILL.md
 BEMINE_CODEX_SANDBOX=danger-full-access
+BEMINE_CODEX_MODEL=
 BEMINE_DISPATCH_RUNTIME=kimi
 BEMINE_KIMI_DISPATCH_MAX_TOKENS=1600
 BEMINE_TOTP_SECRET=
@@ -171,6 +173,12 @@ channels when no per-project runtime is stored. It defaults to `kimi`. Existing
 project-channel config can still set a project to `codex`. Kimi dispatch uses
 the Hermes-backed Kimi API configuration and records token usage in SQLite.
 `BEMINE_KIMI_DISPATCH_MAX_TOKENS` controls the response budget.
+
+Use `bemine dispatch status` to see the active Discord dispatch runtime and
+resolved model/provider. For Kimi, the model is read from Hermes config
+(`~/.hermes/config.yaml`, currently `kimi-k2.6` on this machine). For Codex,
+set `BEMINE_CODEX_MODEL` to pin the model; when it is empty, Codex uses its own
+`$CODEX_HOME/config.toml` default.
 
 `BEMINE_CODEX_SANDBOX` controls the sandbox mode used by Discord Codex dispatch.
 It defaults to `danger-full-access` because `workspace-write` can fail under
@@ -338,6 +346,13 @@ For projects configured with `runtime: codex`, Bemine runs `codex exec --cd
 reacts when it receives work, shows Discord typing while the runtime runs, and
 replies with the final runtime message directly. Dispatch failures are prefixed
 with the runtime and project channel for triage.
+
+Codex dispatch runs with `--json`, so Bemine can mirror tool progress such as
+shell command starts/completions into Discord and record Codex token usage. Kimi
+is currently configured through the direct Kimi API path, so it reports the
+chosen model and usage but does not expose local tool-call events yet. The target
+architecture is a long-running configured session/worker for the selected
+runtime rather than per-message runtime switching.
 
 Codex dispatch defaults to `--sandbox danger-full-access` to avoid service-level
 bubblewrap failures such as `bwrap: loopback: Failed RTM_NEWADDR: Operation not

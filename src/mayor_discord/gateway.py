@@ -22,6 +22,7 @@ from bemine.status import collect_fleet_status, render_status
 from .config import Settings
 from .dispatch import (
     DispatchRequest,
+    DispatchProgress,
     DispatchResult,
     ProjectDispatcher,
     ProjectRoute,
@@ -309,10 +310,23 @@ class MayorDiscordGateway:
                 attachments=saved_attachments,
                 route_reason=route.reason,
             )
+            loop = asyncio.get_running_loop()
+
+            def publish_progress(progress: DispatchProgress) -> None:
+                future = asyncio.run_coroutine_threadsafe(
+                    _send_dispatch_progress(message, progress),
+                    loop,
+                )
+                try:
+                    future.result(timeout=5)
+                except Exception as exc:
+                    LOG.debug("could not send dispatch progress: %s", exc)
+
             result = await asyncio.to_thread(
                 ProjectDispatcher(settings).dispatch,
                 route.project,
                 request,
+                publish_progress,
             )
             await _acknowledge_message(
                 message,
@@ -463,6 +477,23 @@ def _dispatch_response_text(result: DispatchResult, route: ProjectRoute) -> str:
         return result.output
     runtime = resolve_dispatch_runtime(route.project.runtime).capitalize()
     return f"{runtime} dispatch issue for `#{route.project.channel_name}`:\n{result.output}"
+
+
+async def _send_dispatch_progress(
+    message: discord.Message,
+    progress: DispatchProgress,
+) -> None:
+    text = _dispatch_progress_text(progress)
+    if not text:
+        return
+    try:
+        await message.reply(text, mention_author=False)
+    except discord.DiscordException as exc:
+        LOG.debug("could not reply with dispatch progress: %s", exc)
+
+
+def _dispatch_progress_text(progress: DispatchProgress) -> str:
+    return progress.summary.strip()
 
 
 def _redact_sensitive_message(content: str) -> str:

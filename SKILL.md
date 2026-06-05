@@ -45,6 +45,8 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
   as managed tmux panes or an explicit app-server/session adapter.
 - Use `bemine workers` for live control. It can start owned tmux workers and
   adopt existing tmux sessions; raw TTY sessions remain read-only via status.
+- Use `bemine dispatch status` before assuming which runtime/model Discord is
+  using. Runtime/model selection is configuration-level, not per-message syntax.
 - Status must consider last interaction and whether the latest agent turn asks
   for input.
 - Avoid legacy Hermes/Gas Town semantics unless intentionally migrating data.

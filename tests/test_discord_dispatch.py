@@ -15,9 +15,12 @@ from mayor_discord.dispatch import (
     KimiDispatcher,
     ProjectDispatcher,
     ProjectChannel,
+    codex_progress_from_event,
+    dispatch_status_payload,
     infer_project_route,
     load_project_channels,
     project_channels_from_db,
+    render_dispatch_status,
     resolve_project_channel,
     resolve_codex_bin,
     resolve_codex_sandbox,
@@ -274,8 +277,12 @@ class _FakeDispatcher:
         self.calls: list[tuple[ProjectChannel, DispatchRequest]] = []
 
     def dispatch(
-        self, project: ProjectChannel, request: DispatchRequest
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback=None,
     ) -> DispatchResult:
+        del progress_callback
         self.calls.append((project, request))
         return DispatchResult(
             ok=True, project=project, output=self.output, elapsed_seconds=0.01
@@ -318,6 +325,177 @@ def test_project_dispatcher_routes_by_project_runtime(tmp_path: Path) -> None:
     assert codex_result.output == "codex-ok"
     assert len(kimi.calls) == 1
     assert len(codex.calls) == 1
+
+
+def test_dispatch_status_makes_runtime_and_model_explicit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BEMINE_DISPATCH_RUNTIME", "codex")
+    monkeypatch.setenv("BEMINE_CODEX_MODEL", "gpt-test-codex")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+
+    payload = dispatch_status_payload(settings)
+    text = render_dispatch_status(payload)
+
+    assert payload["runtime"] == "codex"
+    assert payload["model"] == "gpt-test-codex"
+    assert payload["model_source"] == "BEMINE_CODEX_MODEL"
+    assert (
+        payload["tool_calls"] == "available through codex exec --json progress events"
+    )
+    assert "- runtime: codex" in text
+    assert "- model: gpt-test-codex" in text
+
+
+def test_codex_progress_from_jsonl_command_events() -> None:
+    started = codex_progress_from_event(
+        {
+            "type": "item.started",
+            "item": {
+                "id": "item_0",
+                "type": "command_execution",
+                "command": "/bin/bash -lc 'echo sk-kimi-abcdefghijklmnopqrstuvwxyz'",
+                "status": "in_progress",
+            },
+        }
+    )
+    completed = codex_progress_from_event(
+        {
+            "type": "item.completed",
+            "item": {
+                "id": "item_0",
+                "type": "command_execution",
+                "command": "/bin/bash -lc pwd",
+                "exit_code": 0,
+                "status": "completed",
+            },
+        }
+    )
+
+    assert started is not None
+    assert started.runtime == "codex"
+    assert started.event_type == "item.started"
+    assert "shell:" in started.summary
+    assert "sk-kimi-abcdefghijklmnopqrstuvwxyz" not in started.summary
+    assert "<token>" in started.summary
+    assert completed is not None
+    assert completed.summary == "✅ shell done: `/bin/bash -lc pwd`"
+
+
+def test_codex_dispatch_parses_jsonl_progress_usage_and_audit(tmp_path: Path) -> None:
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+
+    def fake_runner(
+        command: list[str],
+        *,
+        input: str,
+        text: bool,
+        stdout: int,
+        stderr: int,
+        timeout: int,
+        check: bool,
+    ) -> subprocess.CompletedProcess[str]:
+        del input, text, stdout, stderr, timeout, check
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("codex final", encoding="utf-8")
+        stdout_jsonl = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "type": "item.started",
+                        "item": {
+                            "id": "item_0",
+                            "type": "command_execution",
+                            "command": "/bin/bash -lc pwd",
+                            "status": "in_progress",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "id": "item_0",
+                            "type": "command_execution",
+                            "command": "/bin/bash -lc pwd",
+                            "exit_code": 0,
+                            "status": "completed",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {
+                            "input_tokens": 10,
+                            "cached_input_tokens": 4,
+                            "output_tokens": 3,
+                            "reasoning_output_tokens": 1,
+                        },
+                    }
+                ),
+            ]
+        )
+        return subprocess.CompletedProcess(command, 0, stdout_jsonl, "")
+
+    progress: list[str] = []
+    result = CodexDispatcher(settings, runner=fake_runner, codex_bin="codex").dispatch(
+        ProjectChannel(channel_name="bemine", cwd=project_root, runtime="codex"),
+        DispatchRequest(
+            channel_id="channel-1",
+            channel_name="bemine",
+            message_id="message-1",
+            author_name="voidash",
+            content="run pwd",
+            attachments=[],
+        ),
+        lambda event: progress.append(event.summary),
+    )
+
+    assert result.ok is True
+    assert result.output == "codex final"
+    assert progress == [
+        "💻 shell: `/bin/bash -lc pwd`",
+        "✅ shell done: `/bin/bash -lc pwd`",
+    ]
+    db = BemineDB(settings.db_path)
+    with db.connect() as conn:
+        event_types = [
+            row["event_type"]
+            for row in conn.execute("SELECT event_type FROM audit_events ORDER BY id")
+        ]
+        usage = dict(conn.execute("SELECT * FROM usage_samples").fetchone())
+    assert event_types == [
+        "codex_dispatch_started",
+        "codex_tool_event",
+        "codex_tool_event",
+        "codex_usage_recorded",
+        "codex_dispatch_finished",
+    ]
+    assert usage["provider"] == "codex"
+    assert usage["runtime"] == "codex"
+    assert usage["input_tokens"] == 10
+    assert usage["output_tokens"] == 3
+    assert usage["total_tokens"] == 13
 
 
 def test_codex_dispatch_runs_in_project_root_with_images_and_audit(
@@ -393,6 +571,7 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(
     assert "ghp_abcdefghijklmnopqrstuvwxyz" not in result.output
     assert "<token>" in result.output
     assert command[:2] == ["codex", "exec"]
+    assert "--json" in command
     assert command[command.index("--cd") + 1] == str(project_root)
     assert command[command.index("--sandbox") + 1] == "danger-full-access"
     assert "--ask-for-approval" not in command

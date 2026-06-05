@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from mayor_discord.dispatch import DispatchResult, ProjectChannel, ProjectRoute
+from mayor_discord.dispatch import (
+    DispatchProgress,
+    DispatchResult,
+    ProjectChannel,
+    ProjectRoute,
+)
 from mayor_discord.gateway import (
     ACK_REACTION,
     _acknowledge_message,
     _best_effort_typing,
+    _dispatch_progress_text,
     _dispatch_response_text,
 )
 
@@ -97,3 +103,14 @@ def test_dispatch_response_keeps_failure_context() -> None:
         _dispatch_response_text(result, route)
         == "Kimi dispatch issue for `#bemine`:\nfailed"
     )
+
+
+def test_dispatch_progress_text_uses_runtime_summary() -> None:
+    progress = DispatchProgress(
+        runtime="codex",
+        event_type="item.started",
+        summary="💻 shell: `pwd`",
+        raw_event={},
+    )
+
+    assert _dispatch_progress_text(progress) == "💻 shell: `pwd`"

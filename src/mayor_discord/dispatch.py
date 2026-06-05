@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -32,6 +34,7 @@ DISPATCH_CONFIG_NAME = "discord-projects.json"
 MAX_CHANNELS_PER_CATEGORY = 50
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+ProgressCallback = Callable[["DispatchProgress"], None]
 
 
 @dataclass(frozen=True)
@@ -64,9 +67,20 @@ class DispatchResult:
     timed_out: bool = False
 
 
+@dataclass(frozen=True)
+class DispatchProgress:
+    runtime: str
+    event_type: str
+    summary: str
+    raw_event: Mapping[str, Any]
+
+
 class DispatchBackend(Protocol):
     def dispatch(
-        self, project: ProjectChannel, request: DispatchRequest
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None = None,
     ) -> DispatchResult: ...
 
 
@@ -371,15 +385,18 @@ class ProjectDispatcher:
         self.kimi_dispatcher = kimi_dispatcher
 
     def dispatch(
-        self, project: ProjectChannel, request: DispatchRequest
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None = None,
     ) -> DispatchResult:
         runtime = resolve_dispatch_runtime(project.runtime)
         if runtime == "kimi":
             dispatcher = self.kimi_dispatcher or KimiDispatcher(self.settings)
-            return dispatcher.dispatch(project, request)
+            return dispatcher.dispatch(project, request, progress_callback)
         if runtime == "codex":
             dispatcher = self.codex_dispatcher or CodexDispatcher(self.settings)
-            return dispatcher.dispatch(project, request)
+            return dispatcher.dispatch(project, request, progress_callback)
         return DispatchResult(
             ok=False,
             project=project,
@@ -408,8 +425,12 @@ class KimiDispatcher:
         self.db = BemineDB(settings.db_path)
 
     def dispatch(
-        self, project: ProjectChannel, request: DispatchRequest
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None = None,
     ) -> DispatchResult:
+        del progress_callback
         started = time.monotonic()
         self._audit(
             "kimi_dispatch_started",
@@ -547,18 +568,24 @@ class CodexDispatcher:
         settings: BemineSettings,
         *,
         runner: Runner | None = None,
+        popen_factory: Callable[..., subprocess.Popen[str]] | None = None,
         timeout_seconds: int = 900,
         codex_bin: str | None = None,
     ) -> None:
         self.settings = settings
-        self.runner = runner or subprocess.run
+        self.runner = runner
+        self.popen_factory = popen_factory or subprocess.Popen
         self.timeout_seconds = timeout_seconds
         self.codex_bin = codex_bin or resolve_codex_bin()
         self.codex_sandbox = resolve_codex_sandbox()
+        self.codex_model = resolve_codex_model()
         self.db = BemineDB(settings.db_path)
 
     def dispatch(
-        self, project: ProjectChannel, request: DispatchRequest
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None = None,
     ) -> DispatchResult:
         started = time.monotonic()
         self._audit(
@@ -574,6 +601,7 @@ class CodexDispatcher:
             command = [
                 self.codex_bin,
                 "exec",
+                "--json",
                 "--cd",
                 str(project.cwd),
                 "--sandbox",
@@ -582,18 +610,37 @@ class CodexDispatcher:
                 output_file.name,
                 "-",
             ]
+            if self.codex_model:
+                command.extend(["--model", self.codex_model])
             for attachment in request.attachments:
                 if _is_image_path(attachment):
                     command.extend(["--image", str(attachment)])
+            if self.runner is not None:
+                return self._dispatch_with_runner(
+                    command=command,
+                    prompt=prompt,
+                    output_file=output_file,
+                    started=started,
+                    project=project,
+                    request=request,
+                    progress_callback=progress_callback,
+                )
             try:
-                proc = self.runner(
+                proc = self.popen_factory(
                     command,
-                    input=prompt,
-                    text=True,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=self.timeout_seconds,
-                    check=False,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                stdout = self._stream_process(
+                    proc=proc,
+                    prompt=prompt,
+                    project=project,
+                    request=request,
+                    progress_callback=progress_callback,
+                    started=started,
                 )
             except subprocess.TimeoutExpired:
                 elapsed = time.monotonic() - started
@@ -652,6 +699,101 @@ class CodexDispatcher:
 
             output_file.seek(0)
             final_message = output_file.read().strip()
+        output = final_message or stdout.strip()
+        if not output:
+            output = "Codex finished without a final message."
+        output = _redact(output)
+        elapsed = time.monotonic() - started
+        returncode = proc.poll()
+        result = DispatchResult(
+            ok=returncode == 0,
+            project=project,
+            output=output,
+            elapsed_seconds=elapsed,
+            returncode=returncode,
+        )
+        self._audit_result("codex_dispatch_finished", project, request, result)
+        return result
+
+    def _dispatch_with_runner(
+        self,
+        *,
+        command: list[str],
+        prompt: str,
+        output_file: Any,
+        started: float,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None,
+    ) -> DispatchResult:
+        try:
+            proc = self.runner(
+                command,
+                input=prompt,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=self.timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=(
+                    f"Codex dispatch timed out after {self.timeout_seconds}s for "
+                    f"`#{project.channel_name}`."
+                ),
+                elapsed_seconds=elapsed,
+                timed_out=True,
+            )
+            self._audit_result("codex_dispatch_finished", project, request, result)
+            return result
+        except FileNotFoundError as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=(
+                    "Codex dispatch could not start because the `codex` binary was not found. "
+                    "Set `BEMINE_CODEX_BIN` to the absolute Codex executable path."
+                ),
+                elapsed_seconds=elapsed,
+                returncode=None,
+            )
+            self._audit_result(
+                "codex_dispatch_finished",
+                project,
+                request,
+                result,
+                extra={"error": str(exc), "codex_bin": self.codex_bin},
+            )
+            return result
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=f"Codex dispatch failed before completion: {_redact(str(exc))}",
+                elapsed_seconds=elapsed,
+                returncode=None,
+            )
+            self._audit_result(
+                "codex_dispatch_finished",
+                project,
+                request,
+                result,
+                extra={
+                    "error_type": type(exc).__name__,
+                    "error": _redact(str(exc)),
+                },
+            )
+            return result
+
+        self._handle_codex_stream_text(proc.stdout, project, request, progress_callback)
+        output_file.seek(0)
+        final_message = output_file.read().strip()
         output = final_message or proc.stdout.strip() or proc.stderr.strip()
         if not output:
             output = "Codex finished without a final message."
@@ -666,6 +808,127 @@ class CodexDispatcher:
         )
         self._audit_result("codex_dispatch_finished", project, request, result)
         return result
+
+    def _stream_process(
+        self,
+        *,
+        proc: subprocess.Popen[str],
+        prompt: str,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None,
+        started: float,
+    ) -> str:
+        if proc.stdin is None or proc.stdout is None:
+            raise RuntimeError("codex process did not expose stdin/stdout")
+        proc.stdin.write(prompt)
+        proc.stdin.close()
+
+        lines: queue.Queue[str | None] = queue.Queue()
+
+        def read_stdout() -> None:
+            try:
+                for line in proc.stdout:
+                    lines.put(line)
+            finally:
+                lines.put(None)
+
+        reader = threading.Thread(target=read_stdout, daemon=True)
+        reader.start()
+        collected: list[str] = []
+        deadline = started + self.timeout_seconds
+        stream_finished = False
+        while not stream_finished:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                raise subprocess.TimeoutExpired(
+                    cmd=proc.args, timeout=self.timeout_seconds
+                )
+            try:
+                line = lines.get(timeout=min(0.2, max(0.01, remaining)))
+            except queue.Empty:
+                if proc.poll() is not None and not reader.is_alive():
+                    break
+                continue
+            if line is None:
+                stream_finished = True
+                continue
+            collected.append(line)
+            self._handle_codex_stream_text(line, project, request, progress_callback)
+        reader.join(timeout=1)
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raise
+        return "".join(collected)
+
+    def _handle_codex_stream_text(
+        self,
+        text: str,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None,
+    ) -> None:
+        for line in text.splitlines():
+            event = _parse_json_line(line)
+            if not event:
+                continue
+            self._record_codex_event(project, request, event)
+            progress = codex_progress_from_event(event)
+            if progress and progress_callback:
+                progress_callback(progress)
+
+    def _record_codex_event(
+        self,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        event: Mapping[str, Any],
+    ) -> None:
+        event_type = str(event.get("type") or "")
+        if event_type == "turn.completed":
+            usage = event.get("usage")
+            if isinstance(usage, Mapping):
+                input_tokens = int(usage.get("input_tokens") or 0)
+                output_tokens = int(usage.get("output_tokens") or 0)
+                cached_tokens = int(usage.get("cached_input_tokens") or 0)
+                reasoning_tokens = int(usage.get("reasoning_output_tokens") or 0)
+                self.db.record_usage_sample(
+                    provider="codex",
+                    account="codex",
+                    runtime="codex",
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    total_tokens=input_tokens + output_tokens,
+                    raw_json=json.dumps(event, sort_keys=True),
+                )
+                self._audit(
+                    "codex_usage_recorded",
+                    project,
+                    request,
+                    {
+                        "input_tokens": input_tokens,
+                        "cached_input_tokens": cached_tokens,
+                        "output_tokens": output_tokens,
+                        "reasoning_output_tokens": reasoning_tokens,
+                    },
+                )
+            return
+        item = event.get("item")
+        if event_type in {"item.started", "item.completed"} and isinstance(
+            item, Mapping
+        ):
+            self._audit(
+                "codex_tool_event",
+                project,
+                request,
+                {
+                    "codex_event_type": event_type,
+                    "item_type": str(item.get("type") or ""),
+                    "summary": codex_progress_summary(event) or "",
+                },
+            )
 
     def _audit(
         self,
@@ -741,6 +1004,10 @@ def resolve_codex_sandbox() -> str:
     return configured
 
 
+def resolve_codex_model() -> str:
+    return os.environ.get("BEMINE_CODEX_MODEL", "").strip()
+
+
 def resolve_dispatch_runtime(runtime: str | None = None) -> str:
     configured = (runtime or "").strip().lower()
     if not configured:
@@ -759,6 +1026,100 @@ def resolve_kimi_dispatch_max_tokens() -> int:
     if value <= 0:
         raise ValueError("BEMINE_KIMI_DISPATCH_MAX_TOKENS must be positive")
     return value
+
+
+def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
+    runtime = resolve_dispatch_runtime()
+    payload: dict[str, Any] = {
+        "runtime": runtime,
+        "runtime_source": "BEMINE_DISPATCH_RUNTIME"
+        if os.environ.get("BEMINE_DISPATCH_RUNTIME", "").strip()
+        else "default",
+    }
+    if runtime == "kimi":
+        config = KimiHandler(settings.hermes_home).status()
+        payload.update(
+            {
+                "provider": config.provider,
+                "model": config.model,
+                "api_mode": config.api_mode,
+                "base_url": config.base_url,
+                "api_key_present": config.api_key_present,
+                "model_source": config.config_path,
+                "tool_calls": "not available on Bemine's current Kimi API dispatch path",
+            }
+        )
+    elif runtime == "codex":
+        model = resolve_codex_model()
+        payload.update(
+            {
+                "provider": "codex",
+                "model": model or "codex config/default",
+                "model_source": "BEMINE_CODEX_MODEL"
+                if model
+                else "$CODEX_HOME/config.toml",
+                "codex_bin": resolve_codex_bin(),
+                "sandbox": resolve_codex_sandbox(),
+                "tool_calls": "available through codex exec --json progress events",
+            }
+        )
+    else:
+        payload.update({"tool_calls": "unsupported runtime"})
+    return payload
+
+
+def render_dispatch_status(payload: Mapping[str, Any]) -> str:
+    lines = [
+        "Dispatch runtime:",
+        f"- runtime: {payload.get('runtime')}",
+        f"- model: {payload.get('model', 'unknown')}",
+        f"- provider: {payload.get('provider', 'unknown')}",
+        f"- model_source: {payload.get('model_source', 'unknown')}",
+        f"- tool_calls: {payload.get('tool_calls', 'unknown')}",
+    ]
+    if payload.get("sandbox"):
+        lines.append(f"- sandbox: {payload.get('sandbox')}")
+    if payload.get("api_key_present") is not None:
+        present = "present" if payload.get("api_key_present") else "missing"
+        lines.append(f"- api_key: {present}")
+    if payload.get("base_url"):
+        lines.append(f"- base_url: {payload.get('base_url')}")
+    return "\n".join(lines) + "\n"
+
+
+def codex_progress_from_event(event: Mapping[str, Any]) -> DispatchProgress | None:
+    summary = codex_progress_summary(event)
+    if not summary:
+        return None
+    event_type = str(event.get("type") or "")
+    return DispatchProgress(
+        runtime="codex",
+        event_type=event_type,
+        summary=summary,
+        raw_event=event,
+    )
+
+
+def codex_progress_summary(event: Mapping[str, Any]) -> str:
+    event_type = str(event.get("type") or "")
+    item = event.get("item")
+    if not isinstance(item, Mapping):
+        return ""
+    item_type = str(item.get("type") or "")
+    if item_type != "command_execution":
+        return ""
+    command = _compact_progress_value(str(item.get("command") or "shell command"))
+    if event_type == "item.started":
+        return f"💻 shell: `{command}`"
+    if event_type == "item.completed":
+        exit_code = item.get("exit_code")
+        status = "done" if exit_code == 0 else f"exit {exit_code}"
+        return (
+            f"✅ shell {status}: `{command}`"
+            if exit_code == 0
+            else f"⚠️ shell {status}: `{command}`"
+        )
+    return ""
 
 
 def build_codex_prompt(project: ProjectChannel, request: DispatchRequest) -> str:
@@ -846,6 +1207,24 @@ def _kimi_system_prompt() -> str:
         "and never expose secrets. If execution or credential access is required, ask "
         "for the precise Bemine action instead of pretending it already happened."
     )
+
+
+def _parse_json_line(line: str) -> Mapping[str, Any] | None:
+    stripped = line.strip()
+    if not stripped or not stripped.startswith("{"):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
+
+
+def _compact_progress_value(value: str, *, limit: int = 120) -> str:
+    text = _redact(" ".join(value.split()))
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 def _default_project_channels(
