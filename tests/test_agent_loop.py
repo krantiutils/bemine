@@ -58,9 +58,22 @@ def test_loop_executes_tool_then_returns_final_text(tmp_path):
     assert len(client.calls) == 2
     roles = [m["role"] for m in client.calls[1]["messages"]]
     assert "tool" in roles
+    # Each stored row is a complete OpenAI-shape message dict; loading it back is
+    # the identity (no double-wrapping under "content").
     stored = db.list_bemine_session_messages(session_id="s1")
-    assert any(m["role"] == "user" for m in stored)
-    assert any(m["role"] == "assistant" for m in stored)
+    dicts = [json.loads(m["content_json"]) for m in stored]
+    by_role = {m["role"]: m for m in dicts}
+    assert by_role["user"] == {"role": "user", "content": "status please"}
+    # Assistant tool_calls are persisted in OpenAI shape (nested under "function").
+    assistant = next(m for m in dicts if m["role"] == "assistant")
+    tc = assistant["tool_calls"][0]
+    assert tc["type"] == "function"
+    assert tc["function"]["name"] == "status_show"
+    assert tc["id"] == "t1"
+    # Tool result is the OpenAI tool-result shape keyed by tool_call_id.
+    tool_row = next(m for m in dicts if m["role"] == "tool")
+    assert tool_row["tool_call_id"] == "t1"
+    assert "content" in tool_row
 
 
 def test_loop_stops_at_max_iterations(tmp_path):

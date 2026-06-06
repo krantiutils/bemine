@@ -38,6 +38,16 @@ class BemineTool:
             "input_schema": dict(self.input_schema),
         }
 
+    def to_openai(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": dict(self.input_schema),
+            },
+        }
+
 
 class ToolExecutionError(RuntimeError):
     pass
@@ -49,6 +59,9 @@ class BemineToolRegistry:
 
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.to_anthropic() for tool in self._tools.values()]
+
+    def openai_schemas(self) -> list[dict[str, Any]]:
+        return [tool.to_openai() for tool in self._tools.values()]
 
     def execute(
         self,

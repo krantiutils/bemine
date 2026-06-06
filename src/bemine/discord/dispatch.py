@@ -1712,6 +1712,16 @@ def resolve_dispatch_runtime(runtime: str | None = None) -> str:
     return configured or "kimi"
 
 
+# Real default model ids per runtime, matching bemine.toml's configured values.
+# Used when [<runtime>].model is unset so a blank config never leaks the runtime
+# name (or device id) to the SDK as a bogus model id (-> 404).
+_DEFAULT_MODELS = {
+    "kimi": "kimi-k2.6",
+    "claude": "claude-sonnet-4-6",
+    "codex": "gpt-5.3-codex-spark",
+}
+
+
 @dataclass(frozen=True)
 class ChannelBinding:
     project_id: str
@@ -1784,7 +1794,7 @@ def resolve_channel_binding(settings: BemineSettings, message: Any) -> ChannelBi
         repo_dir=None,
     )
     runtime = resolve_dispatch_runtime(project.runtime if project else None)
-    model = config_string(runtime, "model", "")
+    model = config_string(runtime, "model", "") or _DEFAULT_MODELS.get(runtime, "")
     cwd = Path(project.cwd) if project else Path(settings.state_dir).parent
     project_id = (
         (project.project_id or project.channel_name) if project else "bemine"

@@ -31,6 +31,11 @@ def test_resolve_channel_binding_is_deterministic_with_fallback(tmp_path):
     binding = resolve_channel_binding(settings, msg)
     assert isinstance(binding, ChannelBinding)
     assert binding.runtime  # a concrete runtime, never empty
+    # I1: a blank [<runtime>].model must resolve to a real model id, never the
+    # runtime name or device id, so the SDK is never sent a bogus model -> 404.
+    assert binding.model  # never empty
+    assert binding.model != binding.runtime
+    assert binding.model != settings.device_id
     assert binding.project_id  # falls back to a default project id
     assert isinstance(binding.cwd, Path)
     assert isinstance(binding.system, str)

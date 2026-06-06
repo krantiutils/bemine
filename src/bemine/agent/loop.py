@@ -37,18 +37,23 @@ class AgentLoop:
     def run(self, *, session_id: str, project_id: str, cwd: Path, user_message: str,
             system: str, progress_callback: ProgressCallback | None = None) -> LoopResult:
         model = self._session_model(session_id)
+        # Each stored row already IS a complete OpenAI-shape message dict; load it
+        # directly so a persist/resume round-trip is the identity. Do NOT nest the
+        # stored dict under "content" (that double-wraps assistant/tool turns and
+        # breaks tool linkage on resume).
         messages: list[dict] = [
-            {"role": m["role"], "content": json.loads(m["content_json"])}
+            json.loads(m["content_json"])
             for m in self.db.list_bemine_session_messages(session_id=session_id)
         ]
-        messages.append({"role": "user", "content": user_message})
+        user_msg = {"role": "user", "content": user_message}
+        messages.append(user_msg)
         self.db.append_bemine_session_message(
-            session_id=session_id, role="user", content_json=json.dumps(user_message),
+            session_id=session_id, role="user", content_json=json.dumps(user_msg),
         )
 
         context = ToolContext(settings=self.settings, db=self.db,
                               session_id=session_id, project_id=project_id, cwd=cwd)
-        tool_schemas = self.tools.schemas()
+        tool_schemas = self.tools.openai_schemas()
         tool_call_count = 0
         response: NormalizedResponse | None = None
 
@@ -77,7 +82,8 @@ class AgentLoop:
             assistant_msg: dict = {"role": "assistant", "content": response.content or ""}
             if response.tool_calls:
                 assistant_msg["tool_calls"] = [
-                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    {"id": tc.id, "type": "function",
+                     "function": {"name": tc.name, "arguments": tc.arguments}}
                     for tc in response.tool_calls
                 ]
             messages.append(assistant_msg)
@@ -130,4 +136,10 @@ class AgentLoop:
 
     def _session_model(self, session_id: str) -> str:
         row = self.db.get_bemine_session(session_id)
-        return str(row["model"]) if row and row["model"] else self.settings.device_id
+        model = str(row["model"]) if row and row["model"] else ""
+        if not model:
+            raise ValueError(
+                f"bemine session {session_id!r} has no stored model id; "
+                "cannot select a provider model for the agent loop."
+            )
+        return model
