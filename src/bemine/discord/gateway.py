@@ -16,7 +16,7 @@ from discord.ext import commands
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
 from bemine.commands import run_command
 from bemine.config import BemineSettings, config_int
-from bemine.credentials import CredentialInventory, PermissionGate
+from bemine.security.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
 from bemine.status import _redact, collect_fleet_status, render_status

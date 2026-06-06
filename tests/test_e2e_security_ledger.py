@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 
 from bemine.db import BemineDB
-from bemine.credentials import PermissionGate
-from bemine.notifications import notify_permission_request
-from bemine.totp import hotp
+from bemine.security.credentials import PermissionGate
+from bemine.security.notifications import notify_permission_request
+from bemine.security.totp import hotp
 
 
 def test_permission_and_usage_ledgers_are_queryable(tmp_path: Path) -> None:

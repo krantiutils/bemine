@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .db import BemineDB
+from ..db import BemineDB
 
 
 class CredentialProxy:

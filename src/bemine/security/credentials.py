@@ -7,8 +7,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import config_string
-from .db import BemineDB
+from ..config import config_string
+from ..db import BemineDB
 from .totp import verify_totp
 
 

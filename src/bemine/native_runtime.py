@@ -102,6 +102,7 @@ class KimiNativeRuntime:
         input_tokens = 0
         output_tokens = 0
         final_text = ""
+        pending_messages: list[dict[str, Any]] = []
 
         for turn_index in range(max(1, min(self.max_turns, 20))):
             response = await self.handler.messages_async(
@@ -111,6 +112,9 @@ class KimiNativeRuntime:
                 max_tokens=max_tokens,
                 timeout=self.timeout_seconds,
             )
+            for pending_message in pending_messages:
+                self._append_message(session_id, pending_message)
+            pending_messages = []
             self._record_usage(session_id, response)
             usage = response.get("usage") if isinstance(response.get("usage"), Mapping) else {}
             input_tokens += _int(usage.get("input_tokens"))
@@ -121,11 +125,11 @@ class KimiNativeRuntime:
                 "content": _content_blocks(response),
             }
             messages.append(assistant_message)
-            self._append_message(session_id, assistant_message)
             final_text = _redact(_text_from_blocks(assistant_message["content"]))
 
             tool_uses = _tool_uses(assistant_message["content"])
             if not tool_uses:
+                self._append_message(session_id, assistant_message)
                 elapsed = time.monotonic() - started
                 return NativeRunResult(
                     ok=True,
@@ -157,7 +161,7 @@ class KimiNativeRuntime:
 
             tool_message = {"role": "user", "content": tool_results}
             messages.append(tool_message)
-            self._append_message(session_id, tool_message)
+            pending_messages.extend([assistant_message, tool_message])
 
             if turn_index == self.max_turns - 1:
                 break
@@ -188,7 +192,7 @@ class KimiNativeRuntime:
             except json.JSONDecodeError:
                 content = str(row["content_json"] or "")
             messages.append({"role": str(row["role"]), "content": content})
-        return messages
+        return _sanitize_message_history(messages)
 
     def _append_message(self, session_id: str, message: Mapping[str, Any]) -> None:
         self.db.append_bemine_session_message(
@@ -232,7 +236,7 @@ class KimiNativeRuntime:
             progress_callback(
                 "kimi",
                 "tool.started",
-                f"🛠️ tool: `{tool_use.name}`",
+                _tool_started_summary(tool_use),
                 {"tool_name": tool_use.name, "arguments": tool_use.arguments},
             )
         started = time.monotonic()
@@ -280,12 +284,10 @@ class KimiNativeRuntime:
             ),
         )
         if progress_callback:
-            icon = "✅" if status == "success" else "⚠️"
-            label = "done" if status == "success" else "failed"
             progress_callback(
                 "kimi",
                 "tool.completed",
-                f"{icon} tool {label}: `{tool_use.name}`",
+                _tool_completed_summary(tool_use, status=status, result=result),
                 {"tool_name": tool_use.name, "status": status, "result": result},
             )
         return result
@@ -325,9 +327,10 @@ def _tool_uses(content: object) -> list[_ToolUse]:
         if not isinstance(block, Mapping) or block.get("type") != "tool_use":
             continue
         arguments = block.get("input")
+        tool_id = block.get("id") or block.get("tool_call_id")
         tool_uses.append(
             _ToolUse(
-                tool_id=str(block.get("id") or ""),
+                tool_id=str(tool_id or ""),
                 name=str(block.get("name") or ""),
                 arguments=arguments if isinstance(arguments, Mapping) else {},
             )
@@ -335,8 +338,170 @@ def _tool_uses(content: object) -> list[_ToolUse]:
     return [tool_use for tool_use in tool_uses if tool_use.tool_id and tool_use.name]
 
 
+def _sanitize_message_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized = messages
+    while True:
+        next_sanitized = _sanitize_message_history_once(sanitized)
+        if next_sanitized == sanitized:
+            return _drop_trailing_user_messages(next_sanitized)
+        sanitized = next_sanitized
+
+
+def _sanitize_message_history_once(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sanitized: list[dict[str, Any]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.get("role") == "assistant" and _message_tool_use_ids(message):
+            next_message = messages[index + 1] if index + 1 < len(messages) else None
+            next_next = messages[index + 2] if index + 2 < len(messages) else None
+            if (
+                _is_tool_result_message(next_message)
+                and isinstance(next_next, Mapping)
+                and next_next.get("role") == "assistant"
+                and _tool_result_ids(next_message) == _message_tool_use_ids(message)
+            ):
+                sanitized.extend([message, dict(next_message)])
+                index += 2
+                continue
+            index += 2 if _is_tool_result_message(next_message) else 1
+            continue
+        if _is_tool_result_message(message):
+            index += 1
+            continue
+        sanitized.append(message)
+        index += 1
+    return sanitized
+
+
+def _message_tool_use_ids(message: Mapping[str, Any]) -> set[str]:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return set()
+    ids: set[str] = set()
+    for block in content:
+        if not isinstance(block, Mapping) or block.get("type") != "tool_use":
+            continue
+        tool_id = str(block.get("id") or block.get("tool_call_id") or "").strip()
+        if tool_id:
+            ids.add(tool_id)
+    return ids
+
+
+def _is_tool_result_message(message: object) -> bool:
+    return isinstance(message, Mapping) and bool(_tool_result_ids(message))
+
+
+def _tool_result_ids(message: Mapping[str, Any]) -> set[str]:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return set()
+    ids: set[str] = set()
+    for block in content:
+        if not isinstance(block, Mapping) or block.get("type") != "tool_result":
+            continue
+        tool_id = str(block.get("tool_use_id") or block.get("tool_call_id") or "").strip()
+        if tool_id:
+            ids.add(tool_id)
+    return ids
+
+
+def _drop_trailing_user_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    last = len(messages)
+    while last > 0 and messages[last - 1].get("role") == "user":
+        last -= 1
+    return messages[:last]
+
+
 def _int(value: object) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _tool_started_summary(tool_use: "_ToolUse") -> str:
+    if tool_use.name == "shell_run":
+        command = _compact_progress_value(
+            str(tool_use.arguments.get("command") or "shell command")
+        )
+        return f"💻 shell: `{command}`"
+    if tool_use.name == "file_read":
+        path = _compact_progress_value(str(tool_use.arguments.get("path") or "file"))
+        return f"📄 read: `{path}`"
+    if tool_use.name == "file_search":
+        query = _compact_progress_value(str(tool_use.arguments.get("query") or "search"))
+        glob = str(tool_use.arguments.get("glob") or "").strip()
+        if glob:
+            return f"🔎 search: `{query}` in `{_compact_progress_value(glob)}`"
+        return f"🔎 search: `{query}`"
+    args = _compact_progress_value(json.dumps(tool_use.arguments, sort_keys=True))
+    return f"🛠️ tool: `{tool_use.name}` {args}"
+
+
+def _tool_completed_summary(
+    tool_use: "_ToolUse",
+    *,
+    status: str,
+    result: Mapping[str, Any],
+) -> str:
+    if tool_use.name == "shell_run":
+        return _shell_completed_summary(tool_use, status=status, result=result)
+    icon = "✅" if status == "success" else "⚠️"
+    label = "done" if status == "success" else "failed"
+    return f"{icon} tool {label}: `{tool_use.name}`"
+
+
+def _shell_completed_summary(
+    tool_use: "_ToolUse",
+    *,
+    status: str,
+    result: Mapping[str, Any],
+) -> str:
+    command = _compact_progress_value(
+        str(tool_use.arguments.get("command") or "shell command")
+    )
+    payload = result.get("result") if isinstance(result.get("result"), Mapping) else {}
+    returncode = payload.get("returncode") if isinstance(payload, Mapping) else None
+    if status == "success" and returncode == 0:
+        headline = f"✅ shell done: `{command}`"
+    elif returncode is not None:
+        headline = f"⚠️ shell exit {returncode}: `{command}`"
+    else:
+        headline = f"⚠️ shell failed: `{command}`"
+
+    if not isinstance(payload, Mapping):
+        error = _compact_progress_value(str(result.get("error") or ""))
+        return f"{headline}\nerror: {error}" if error else headline
+
+    details: list[str] = []
+    stdout = _compact_output_snippet(str(payload.get("stdout") or ""))
+    stderr = _compact_output_snippet(str(payload.get("stderr") or ""))
+    if stdout:
+        details.append(f"stdout: {_inline_code(stdout)}")
+    if stderr:
+        details.append(f"stderr: {_inline_code(stderr)}")
+    if not details:
+        return headline
+    return "\n".join([headline, *details])
+
+
+def _compact_progress_value(value: str, *, limit: int = 120) -> str:
+    text = _redact(" ".join(value.split()))
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _compact_output_snippet(value: str, *, limit: int = 500) -> str:
+    text = _redact(value.strip())
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _inline_code(value: str) -> str:
+    return f"`{value.replace('`', 'ˋ')}`"

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .db import BemineDB
+from ..db import BemineDB
 
 
 Sender = Callable[[str], Mapping[str, Any]]

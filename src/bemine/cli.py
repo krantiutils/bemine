@@ -12,7 +12,7 @@ from .capabilities import build_capability_manifest, render_capability_manifest
 from .config import BemineSettings, render_toml_config
 from .config import config_path as bemine_config_path
 from .config import config_string, load_bemine_config
-from .credentials import CredentialInventory, PermissionGate
+from .security.credentials import CredentialInventory, PermissionGate
 from .jobs import (
     BemineDaemon,
     render_jobs,
@@ -23,9 +23,9 @@ from .jobs import (
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
-from .notifications import notify_permission_request_via_discord
+from .security.notifications import notify_permission_request_via_discord
 from .operator_context import load_operator_context, render_operator_context
-from .proxy import CredentialProxy
+from .security.proxy import CredentialProxy
 from .rituals import (
     build_prime_packet,
     record_handoff,

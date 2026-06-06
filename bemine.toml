@@ -24,13 +24,13 @@ operator_files = ["~/deploy.md"]
 harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
 
 [dispatch]
-runtime = "kimi"
+runtime = "codex"
 
 [kimi]
 provider = "kimi-coding"
 model = "kimi-k2.6"
-backend = "native"
-dispatch = "native"
+backend = "cli"
+dispatch = "cli"
 bin = "/home/cdjk/.local/bin/kimi"
 base_url = "https://api.kimi.com/coding"
 api_mode = "anthropic_messages"
@@ -38,7 +38,7 @@ dispatch_max_tokens = 1600
 
 [codex]
 backend = "exec"
-model = "gpt-5.4-mini"
+model = "gpt-5.3-codex-spark"
 sandbox = "danger-full-access"
 bin = ""
 
