@@ -15,7 +15,7 @@ from discord.ext import commands
 
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
 from bemine.commands import run_command
-from bemine.config import BemineSettings, config_int
+from bemine.config import BemineSettings, config_int, config_string
 from bemine.security.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
@@ -255,11 +255,11 @@ def run_bound_agent(
     progress_callback=None,
 ):
     """Deterministic: resolve the session bound to this channel/thread, append the user
-    message, run Bemine's agent loop. No intent classification."""
+    message, run Bemine's agent loop (or codex app-server for codex runtime).
+    No intent classification."""
+    import json
     from bemine.db import BemineDB
     from bemine.agent.session import ensure_session
-    from bemine.agent.loop import AgentLoop
-    from bemine.agent.clients import build_client_for_runtime
     from bemine.discord.dispatch import resolve_channel_binding
 
     db = BemineDB(settings.db_path)
@@ -281,6 +281,44 @@ def run_bound_agent(
         model=binding.model or binding.runtime,
         cwd=binding.cwd,
     )
+
+    if binding.runtime == "codex":
+        from bemine.agent.codex_appserver import run_codex_turn
+
+        sandbox = config_string("codex", "sandbox", "workspace-write")
+        codex_bin = config_string("codex", "bin", "") or "codex"
+
+        # Persist user message to session transcript
+        user_msg = {"role": "user", "content": normalized}
+        db.append_bemine_session_message(
+            session_id=session_id,
+            role="user",
+            content_json=json.dumps(user_msg),
+        )
+
+        final = run_codex_turn(
+            normalized,
+            cwd=binding.cwd,
+            developer_instructions=binding.system or "",
+            model=None,  # let codex use its own ~/.codex/config.toml default
+            sandbox=sandbox,
+            codex_bin=codex_bin,
+        )
+
+        # Persist assistant message to session transcript
+        assistant_msg = {"role": "assistant", "content": final}
+        db.append_bemine_session_message(
+            session_id=session_id,
+            role="assistant",
+            content_json=json.dumps(assistant_msg),
+        )
+
+        return final
+
+    # Non-codex path: use AgentLoop with the appropriate LLM client
+    from bemine.agent.loop import AgentLoop
+    from bemine.agent.clients import build_client_for_runtime
+
     client = build_client_for_runtime(settings, binding.runtime)
     loop = AgentLoop(settings=settings, db=db, client=client)
     result = loop.run(
