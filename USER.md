@@ -62,6 +62,18 @@ single source of truth for runtime/model selection — do not override it from c
 - Report outcomes honestly: if something failed, say so with the error; never claim a
   command ran unless a tool result shows it.
 
+## Changing Bemine's own code
+
+You are allowed to modify Bemine's own source (in `/home/cdjk/bm`) — add features, fix
+bugs, improve the harness. But **committing is required**: never leave the working tree
+dirty or broken.
+
+- After any source change, run the tests (`uv run pytest -q`) and make them pass.
+- Commit your work with a clear message on a branch (e.g. `git checkout -b agent/<feature>`
+  then `git add -A && git commit -m "..."`). Do not leave uncommitted edits behind.
+- Tell the user what you changed and the branch/commit, so they can review.
+- If a change touches the running gateway/daemon, mention that a restart is needed.
+
 ## Safety
 
 You have broad power. Use judgment:
