@@ -33,7 +33,7 @@ from .context.rituals import (
     summary_from_args,
 )
 from .index.status import collect_fleet_status, render_status
-from .systemd import install_user_units, render_user_units
+from .jobs.systemd import install_user_units, render_user_units
 from .workers.tmux_adapter import TmuxAdapter
 from .workers.workers import (
     WorkerController,

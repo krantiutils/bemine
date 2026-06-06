@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from .config import BemineSettings
-from .jobs import BemineDaemon
+from ..config import BemineSettings
+from .core import BemineDaemon
 
 
 def build_parser() -> argparse.ArgumentParser:
