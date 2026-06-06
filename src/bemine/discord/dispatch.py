@@ -1732,12 +1732,15 @@ class ChannelBinding:
 
 
 def _build_channel_system_prompt(
-    settings: BemineSettings, project: ProjectChannel | None
+    settings: BemineSettings,
+    project: ProjectChannel | None,
+    *,
+    runtime: str = "",
+    model: str = "",
 ) -> str:
     """Faithful reuse of the existing native-worker system prompt content. Concatenates
     the redacted harness + operator context the same way build_kimi_native_system_prompt
     does, without inventing new prompt policy."""
-    del settings
     harness_context = load_harness_context().text or "No harness context files found."
     operator_context = (
         load_operator_context().text or "No operator context files found."
@@ -1747,12 +1750,25 @@ def _build_channel_system_prompt(
         if project
         else "Project root: (none bound; coordination/default surface)"
     )
+    identity = [
+        "Active runtime configuration (AUTHORITATIVE — this is the ground truth; if the "
+        "user asks which model/runtime/configuration you are, answer with exactly this and "
+        "never guess a different one):",
+        f"- runtime: {runtime or 'unknown'}",
+        f"- model: {model or 'unknown'}",
+        f"- device: {settings.device_id}",
+        f"You are running as the `{runtime or 'unknown'}` runtime using model "
+        f"`{model or 'unknown'}`.",
+        "",
+    ]
     return _redact(
         "\n".join(
             [
                 "You are Bemine's native worker for a Discord-routed task.",
                 "You run inside Bemine's own harness and use only the tools Bemine provides.",
                 project_line,
+                "",
+                *identity,
                 "",
                 "Bemine harness context:",
                 harness_context,
@@ -1799,7 +1815,7 @@ def resolve_channel_binding(settings: BemineSettings, message: Any) -> ChannelBi
     project_id = (
         (project.project_id or project.channel_name) if project else "bemine"
     )
-    system = _build_channel_system_prompt(settings, project)
+    system = _build_channel_system_prompt(settings, project, runtime=runtime, model=model)
     return ChannelBinding(
         project_id=project_id,
         runtime=runtime,
