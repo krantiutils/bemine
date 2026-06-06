@@ -15,7 +15,7 @@ from .store import Store
 
 LOG = logging.getLogger("mayor.discord.send")
 DISCORD_API = "https://discord.com/api/v10"
-MAX_DISCORD_CONTENT = 3900
+MAX_DISCORD_CONTENT = 2000
 
 
 async def send_message(
@@ -29,7 +29,7 @@ async def send_message(
     settings.require_token()
     url = f"{DISCORD_API}/channels/{channel_id}/messages"
     headers = {"Authorization": f"Bot {settings.token}"}
-    parts = _split_discord_content(text)
+    parts = chunk_for_discord(text)
 
     timeout = aiohttp.ClientTimeout(total=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -130,27 +130,8 @@ def chunk_for_discord(text: str, *, limit: int = 2000) -> list[str]:
 
 
 def _split_discord_content(text: str, *, limit: int = MAX_DISCORD_CONTENT) -> list[str]:
-    if limit <= 0:
-        raise ValueError("limit must be positive")
-    if not text:
-        return [""]
-    chunks: list[str] = []
-    current = ""
-    for line in text.splitlines(keepends=True):
-        while len(line) > limit:
-            if current:
-                chunks.append(current.rstrip())
-                current = ""
-            chunks.append(line[:limit])
-            line = line[limit:]
-        if len(current) + len(line) > limit:
-            chunks.append(current.rstrip())
-            current = line
-        else:
-            current += line
-    if current or not chunks:
-        chunks.append(current.rstrip())
-    return chunks
+    """Thin alias for chunk_for_discord kept for backwards compatibility."""
+    return chunk_for_discord(text, limit=limit)
 
 
 def _parse_args() -> argparse.Namespace:
