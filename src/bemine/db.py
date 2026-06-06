@@ -950,6 +950,15 @@ class BemineDB:
             ).fetchone()
             return dict(row) if row else None
 
+    def get_bemine_session_by_channel(self, channel_id: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM bemine_sessions WHERE channel_id = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (channel_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def list_bemine_session_messages(
         self,
         *,
