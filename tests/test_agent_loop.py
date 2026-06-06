@@ -82,3 +82,35 @@ def test_loop_stops_at_max_iterations(tmp_path):
                       user_message="go", system="s")
     assert result.stopped_reason == "max_iterations"
     assert len(client.calls) == 3
+
+
+from bemine.agent.clients import AnthropicClient
+
+
+class _FakeAnthropicSDK:
+    """Stands in for anthropic.Anthropic(): records kwargs, returns a canned object."""
+    def __init__(self):
+        self.messages = self
+        self.seen = {}
+
+    def create(self, **kwargs):
+        self.seen = kwargs
+        class _Block:
+            type = "tool_use"; id = "t1"; name = "status_show"; input = {"limit": 1}
+        class _Resp:
+            content = [_Block()]; stop_reason = "tool_use"
+            usage = type("U", (), {"input_tokens": 10, "output_tokens": 3})()
+        return _Resp()
+
+
+def test_anthropic_client_normalizes_tool_use():
+    sdk = _FakeAnthropicSDK()
+    client = AnthropicClient(sdk=sdk, base_url="https://api.kimi.com/coding")
+    out = client.complete(
+        messages=[{"role": "user", "content": "status"}],
+        tools=[{"type": "function", "function": {"name": "status_show",
+                "description": "", "parameters": {"type": "object", "properties": {}}}}],
+        model="kimi-k2.6", system="You are Bemine.",
+    )
+    assert out.tool_calls and out.tool_calls[0].name == "status_show"
+    assert "tools" in sdk.seen
