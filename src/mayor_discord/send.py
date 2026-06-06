@@ -108,6 +108,27 @@ def _message_payload(text: str, *, channel_id: str, reply_to: str | None) -> dic
     return payload
 
 
+def chunk_for_discord(text: str, *, limit: int = 2000) -> list[str]:
+    """Split text into <=limit pieces, preferring newline boundaries, never exceeding limit.
+
+    Concatenation of the chunks reproduces the input exactly (no characters dropped).
+    """
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            chunks.append(remaining)
+            break
+        cut = remaining.rfind("\n", 0, limit)
+        if cut <= 0:
+            cut = limit
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:]
+    return chunks
+
+
 def _split_discord_content(text: str, *, limit: int = MAX_DISCORD_CONTENT) -> list[str]:
     if limit <= 0:
         raise ValueError("limit must be positive")
