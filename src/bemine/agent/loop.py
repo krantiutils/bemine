@@ -41,10 +41,19 @@ class AgentLoop:
         # directly so a persist/resume round-trip is the identity. Do NOT nest the
         # stored dict under "content" (that double-wraps assistant/tool turns and
         # breaks tool linkage on resume).
-        messages: list[dict] = [
-            json.loads(m["content_json"])
-            for m in self.db.list_bemine_session_messages(session_id=session_id)
-        ]
+        #
+        # Be resilient to legacy/foreign rows: the same session table may hold
+        # messages written by the old native_runtime path in Anthropic content-block
+        # format (a JSON *list*, not a {"role": ...} dict). Skip anything that isn't a
+        # well-formed message dict so resume never crashes on mixed history.
+        messages: list[dict] = []
+        for m in self.db.list_bemine_session_messages(session_id=session_id):
+            try:
+                stored = json.loads(m["content_json"])
+            except (TypeError, ValueError):
+                continue
+            if isinstance(stored, dict) and isinstance(stored.get("role"), str):
+                messages.append(stored)
         user_msg = {"role": "user", "content": user_message}
         messages.append(user_msg)
         self.db.append_bemine_session_message(

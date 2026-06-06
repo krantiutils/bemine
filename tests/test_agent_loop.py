@@ -150,3 +150,35 @@ def test_loop_records_usage_when_present(tmp_path):
     assert kimi_row["input_tokens"] == 80
     assert kimi_row["output_tokens"] == 20
     assert kimi_row["total_tokens"] == 100
+
+
+def test_loop_resume_skips_legacy_nonconforming_rows(tmp_path):
+    """Regression: a session table may hold legacy native_runtime messages stored as
+    Anthropic content-block LISTS (not {"role":...} dicts). Resume must skip them
+    instead of crashing with 'list object has no attribute get'."""
+    import json as _json
+    settings = _settings(tmp_path)
+    db = BemineDB(settings.db_path)
+    db.upsert_bemine_session(
+        session_id="legacy", channel_id="cl", project_id="p1", runtime="kimi",
+        model="kimi-k2.6", device_id="local", cwd=str(tmp_path), status="active", summary="")
+    # Legacy row: content_json is a JSON list (old anthropic tool_use block)
+    db.append_bemine_session_message(
+        session_id="legacy", role="assistant",
+        content_json=_json.dumps([{"id": "t0", "type": "tool_use", "name": "shell_run",
+                                   "input": {"command": "ls"}}]))
+    # Another legacy row: list of tool_result
+    db.append_bemine_session_message(
+        session_id="legacy", role="user",
+        content_json=_json.dumps([{"type": "tool_result", "content": "ok"}]))
+
+    client = FakeClient([NormalizedResponse(content="hi", tool_calls=None, finish_reason="stop")])
+    loop = AgentLoop(settings=settings, db=db, client=client, max_iterations=2)
+    result = loop.run(session_id="legacy", project_id="p1", cwd=tmp_path,
+                      user_message="hello", system="s")
+    assert result.final_text == "hi"
+    # The legacy list rows must NOT have been sent to the client (no list items)
+    sent = client.calls[0]["messages"]
+    assert all(isinstance(m, dict) and "role" in m for m in sent)
+    # Only the fresh user message should remain after filtering the 2 legacy rows
+    assert sent[-1] == {"role": "user", "content": "hello"}
