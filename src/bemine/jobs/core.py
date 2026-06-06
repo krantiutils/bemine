@@ -18,7 +18,7 @@ from .session_watcher import check_sessions, render_events
 DiscordSender = Callable[[str], Mapping[str, Any]]
 
 DEFAULT_DAILY_DIGEST_SCHEDULE = "0 18 * * *"
-DEFAULT_SESSION_WATCHER_SCHEDULE = "*/5 * * * *"
+DEFAULT_SESSION_WATCHER_SCHEDULE = "*/2 * * * *"
 
 
 @dataclass(frozen=True)

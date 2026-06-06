@@ -96,6 +96,11 @@ allowed_users = []
 allow_all_users = false
 context_messages = 12                 # prior messages included as context
 
+[jobs]
+# Session watcher: a session idle longer than this (and not asking) is "done working".
+# Lower = snappier "done" pings, but more chance of pinging during a long pause.
+session_idle_seconds = 180
+
 [policy]
 # How much the Discord agent's shell_run tool can do:
 #   project-write — (safe default) commands run only inside the channel's project dir
