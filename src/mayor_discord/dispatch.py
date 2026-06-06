@@ -38,6 +38,10 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 ProgressCallback = Callable[["DispatchProgress"], None]
 
 
+class DispatchInterrupted(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class ProjectChannel:
     channel_name: str
@@ -57,6 +61,7 @@ class DispatchRequest:
     attachments: list[Path]
     route_reason: str = ""
     conversation_context: str = ""
+    cancel_event: threading.Event | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,7 @@ class DispatchResult:
     elapsed_seconds: float
     returncode: int | None = None
     timed_out: bool = False
+    interrupted: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,51 @@ class DispatchProgress:
     event_type: str
     summary: str
     raw_event: Mapping[str, Any]
+
+
+def _dispatch_cancelled(request: DispatchRequest) -> bool:
+    return bool(request.cancel_event and request.cancel_event.is_set())
+
+
+def _interrupted_result(project: ProjectChannel, started: float) -> DispatchResult:
+    return DispatchResult(
+        ok=False,
+        project=project,
+        output="Dispatch interrupted by a newer Discord message.",
+        elapsed_seconds=time.monotonic() - started,
+        returncode=None,
+        interrupted=True,
+    )
+
+
+def _terminate_process(proc: subprocess.Popen[str]) -> None:
+    try:
+        proc.terminate()
+        proc.wait(timeout=2)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _emit_progress(
+    progress_callback: ProgressCallback | None,
+    *,
+    runtime: str,
+    event_type: str,
+    summary: str,
+    raw_event: Mapping[str, Any],
+) -> None:
+    if progress_callback:
+        progress_callback(
+            DispatchProgress(
+                runtime=runtime,
+                event_type=event_type,
+                summary=summary,
+                raw_event=raw_event,
+            )
+        )
 
 
 class DispatchBackend(Protocol):
@@ -419,11 +470,13 @@ class KimiDispatcher:
         settings: BemineSettings,
         *,
         runner: Runner | None = None,
+        popen_factory: Callable[..., subprocess.Popen[str]] | None = None,
         timeout_seconds: int = 900,
         kimi_bin: str | None = None,
     ) -> None:
         self.settings = settings
-        self.runner = runner or subprocess.run
+        self.runner = runner
+        self.popen_factory = popen_factory or subprocess.Popen
         self.timeout_seconds = timeout_seconds
         self.kimi_bin = kimi_bin or resolve_kimi_bin()
         self.config = load_kimi_config(settings.hermes_home)
@@ -435,8 +488,9 @@ class KimiDispatcher:
         request: DispatchRequest,
         progress_callback: ProgressCallback | None = None,
     ) -> DispatchResult:
-        del progress_callback
         started = time.monotonic()
+        if _dispatch_cancelled(request):
+            return _interrupted_result(project, started)
         self._audit(
             "kimi_dispatch_started",
             project,
@@ -471,6 +525,22 @@ class KimiDispatcher:
             "--prompt",
             prompt,
         ]
+        _emit_progress(
+            progress_callback,
+            runtime="kimi",
+            event_type="cli.started",
+            summary=f"🧰 kimi cli: `{_compact_progress_value(' '.join(command[:3]))}`",
+            raw_event={"command": command, "cwd": str(project.cwd)},
+        )
+        if self.runner is None:
+            return self._dispatch_with_popen(
+                command=command,
+                env=env,
+                started=started,
+                project=project,
+                request=request,
+                progress_callback=progress_callback,
+            )
         try:
             proc = self.runner(
                 command,
@@ -481,6 +551,17 @@ class KimiDispatcher:
                 check=False,
                 env=env,
             )
+            if _dispatch_cancelled(request):
+                result = _interrupted_result(project, started)
+                self._audit_result("kimi_dispatch_finished", project, request, result)
+                _emit_progress(
+                    progress_callback,
+                    runtime="kimi",
+                    event_type="cli.interrupted",
+                    summary="⚠️ kimi cli interrupted by newer message",
+                    raw_event={"returncode": None},
+                )
+                return result
         except subprocess.TimeoutExpired:
             elapsed = time.monotonic() - started
             result = DispatchResult(
@@ -546,6 +627,17 @@ class KimiDispatcher:
             elapsed_seconds=elapsed,
             returncode=proc.returncode,
         )
+        _emit_progress(
+            progress_callback,
+            runtime="kimi",
+            event_type="cli.completed",
+            summary=(
+                "✅ kimi cli done"
+                if proc.returncode == 0
+                else f"⚠️ kimi cli exit {proc.returncode}"
+            ),
+            raw_event={"returncode": proc.returncode},
+        )
         self._audit_result(
             "kimi_dispatch_finished",
             project,
@@ -556,6 +648,151 @@ class KimiDispatcher:
                 "provider": self.config.provider,
                 "cli_config": str(cli_config),
                 "stderr": _redact(proc.stderr.strip()[:1000]),
+            },
+        )
+        return result
+
+    def _dispatch_with_popen(
+        self,
+        *,
+        command: list[str],
+        env: Mapping[str, str],
+        started: float,
+        project: ProjectChannel,
+        request: DispatchRequest,
+        progress_callback: ProgressCallback | None,
+    ) -> DispatchResult:
+        try:
+            proc = self.popen_factory(
+                command,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=dict(env),
+            )
+            stdout = ""
+            stderr = ""
+            deadline = started + self.timeout_seconds
+            while True:
+                if _dispatch_cancelled(request):
+                    _terminate_process(proc)
+                    elapsed = time.monotonic() - started
+                    result = DispatchResult(
+                        ok=False,
+                        project=project,
+                        output="Kimi CLI dispatch interrupted by a newer Discord message.",
+                        elapsed_seconds=elapsed,
+                        returncode=proc.poll(),
+                        interrupted=True,
+                    )
+                    self._audit_result("kimi_dispatch_finished", project, request, result)
+                    _emit_progress(
+                        progress_callback,
+                        runtime="kimi",
+                        event_type="cli.interrupted",
+                        summary="⚠️ kimi cli interrupted by newer message",
+                        raw_event={"returncode": result.returncode},
+                    )
+                    return result
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _terminate_process(proc)
+                    raise subprocess.TimeoutExpired(
+                        cmd=command, timeout=self.timeout_seconds
+                    )
+                try:
+                    stdout, stderr = proc.communicate(
+                        timeout=min(0.25, max(0.01, remaining))
+                    )
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        except subprocess.TimeoutExpired:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=(
+                    f"Kimi dispatch timed out after {self.timeout_seconds}s for "
+                    f"`#{project.channel_name}`."
+                ),
+                elapsed_seconds=elapsed,
+                timed_out=True,
+            )
+            self._audit_result("kimi_dispatch_finished", project, request, result)
+            return result
+        except FileNotFoundError as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=(
+                    "Kimi dispatch could not start because the `kimi` binary was not found. "
+                    "Set `BEMINE_KIMI_BIN` or `kimi.bin` in `bemine.toml`."
+                ),
+                elapsed_seconds=elapsed,
+                returncode=None,
+            )
+            self._audit_result(
+                "kimi_dispatch_finished",
+                project,
+                request,
+                result,
+                extra={"error": str(exc), "kimi_bin": self.kimi_bin},
+            )
+            return result
+        except Exception as exc:
+            elapsed = time.monotonic() - started
+            result = DispatchResult(
+                ok=False,
+                project=project,
+                output=f"Kimi dispatch failed before completion: {_redact(str(exc))}",
+                elapsed_seconds=elapsed,
+                returncode=None,
+            )
+            self._audit_result(
+                "kimi_dispatch_finished",
+                project,
+                request,
+                result,
+                extra={"error_type": type(exc).__name__, "error": _redact(str(exc))},
+            )
+            return result
+
+        output = _redact(
+            stdout.strip()
+            or stderr.strip()
+            or "Kimi finished without a final message."
+        )
+        elapsed = time.monotonic() - started
+        result = DispatchResult(
+            ok=proc.returncode == 0,
+            project=project,
+            output=output,
+            elapsed_seconds=elapsed,
+            returncode=proc.returncode,
+        )
+        _emit_progress(
+            progress_callback,
+            runtime="kimi",
+            event_type="cli.completed",
+            summary=(
+                "✅ kimi cli done"
+                if proc.returncode == 0
+                else f"⚠️ kimi cli exit {proc.returncode}"
+            ),
+            raw_event={"returncode": proc.returncode},
+        )
+        self._audit_result(
+            "kimi_dispatch_finished",
+            project,
+            request,
+            result,
+            extra={
+                "model": self.config.model,
+                "provider": self.config.provider,
+                "cli_config": str(render_kimi_cli_config(self.settings, self.config)),
+                "stderr": _redact(stderr.strip()[:1000]),
             },
         )
         return result
@@ -598,6 +835,7 @@ class KimiDispatcher:
             "ok": result.ok,
             "returncode": result.returncode,
             "timed_out": result.timed_out,
+            "interrupted": result.interrupted,
             "elapsed_seconds": round(result.elapsed_seconds, 3),
         }
         if extra:
@@ -754,6 +992,7 @@ class KimiNativeDispatcher:
             "ok": result.ok,
             "returncode": result.returncode,
             "timed_out": result.timed_out,
+            "interrupted": result.interrupted,
             "elapsed_seconds": round(result.elapsed_seconds, 3),
         }
         if extra:
@@ -842,6 +1081,8 @@ class CodexDispatcher:
         progress_callback: ProgressCallback | None = None,
     ) -> DispatchResult:
         started = time.monotonic()
+        if _dispatch_cancelled(request):
+            return _interrupted_result(project, started)
         self._audit(
             "codex_dispatch_started",
             project,
@@ -896,6 +1137,18 @@ class CodexDispatcher:
                     progress_callback=progress_callback,
                     started=started,
                 )
+            except DispatchInterrupted:
+                elapsed = time.monotonic() - started
+                result = DispatchResult(
+                    ok=False,
+                    project=project,
+                    output="Codex dispatch interrupted by a newer Discord message.",
+                    elapsed_seconds=elapsed,
+                    returncode=None,
+                    interrupted=True,
+                )
+                self._audit_result("codex_dispatch_finished", project, request, result)
+                return result
             except subprocess.TimeoutExpired:
                 elapsed = time.monotonic() - started
                 result = DispatchResult(
@@ -981,6 +1234,10 @@ class CodexDispatcher:
         progress_callback: ProgressCallback | None,
     ) -> DispatchResult:
         try:
+            if _dispatch_cancelled(request):
+                result = _interrupted_result(project, started)
+                self._audit_result("codex_dispatch_finished", project, request, result)
+                return result
             proc = self.runner(
                 command,
                 input=prompt,
@@ -990,6 +1247,10 @@ class CodexDispatcher:
                 timeout=self.timeout_seconds,
                 check=False,
             )
+            if _dispatch_cancelled(request):
+                result = _interrupted_result(project, started)
+                self._audit_result("codex_dispatch_finished", project, request, result)
+                return result
         except subprocess.TimeoutExpired:
             elapsed = time.monotonic() - started
             result = DispatchResult(
@@ -1093,6 +1354,9 @@ class CodexDispatcher:
         deadline = started + self.timeout_seconds
         stream_finished = False
         while not stream_finished:
+            if _dispatch_cancelled(request):
+                _terminate_process(proc)
+                raise DispatchInterrupted()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 proc.kill()
@@ -1221,6 +1485,7 @@ class CodexDispatcher:
             "ok": result.ok,
             "returncode": result.returncode,
             "timed_out": result.timed_out,
+            "interrupted": result.interrupted,
             "elapsed_seconds": round(result.elapsed_seconds, 3),
         }
         if extra:
@@ -1445,6 +1710,93 @@ def resolve_dispatch_runtime(runtime: str | None = None) -> str:
     if not configured:
         configured = config_string("dispatch", "runtime", "").lower()
     return configured or "kimi"
+
+
+@dataclass(frozen=True)
+class ChannelBinding:
+    project_id: str
+    runtime: str
+    model: str
+    cwd: Path
+    system: str
+
+
+def _build_channel_system_prompt(
+    settings: BemineSettings, project: ProjectChannel | None
+) -> str:
+    """Faithful reuse of the existing native-worker system prompt content. Concatenates
+    the redacted harness + operator context the same way build_kimi_native_system_prompt
+    does, without inventing new prompt policy."""
+    del settings
+    harness_context = load_harness_context().text or "No harness context files found."
+    operator_context = (
+        load_operator_context().text or "No operator context files found."
+    )
+    project_line = (
+        f"Project root: {project.cwd}"
+        if project
+        else "Project root: (none bound; coordination/default surface)"
+    )
+    return _redact(
+        "\n".join(
+            [
+                "You are Bemine's native worker for a Discord-routed task.",
+                "You run inside Bemine's own harness and use only the tools Bemine provides.",
+                project_line,
+                "",
+                "Bemine harness context:",
+                harness_context,
+                "",
+                "Shared operator context:",
+                operator_context,
+                "",
+                "Credential and infrastructure rules:",
+                "- Use status/capability tools before assuming credential access.",
+                "- Hugging Face identity/token access is baseline shared when present; never print the token.",
+                "- AWS, Google, Porkbun, and other cost-incurring or infrastructure credentials require explicit permission.",
+                "- Deployment runbooks live in operator context, especially `~/deploy.md`.",
+                "",
+                "Runtime-specific rules:",
+                "- Use Bemine tool calls when local state, files, commands, status, or audit history are needed.",
+                "- Do not claim a command ran unless a tool result shows it ran.",
+                "- Work inside the project root unless the user clearly asks for coordination only.",
+                "- Keep final responses concise and suitable for Discord Markdown.",
+                "- If you changed files, mention the files and verification command.",
+                "- If blocked or needing approval/credentials, say exactly what is needed.",
+                "- Never print or expose secrets.",
+            ]
+        )
+    )
+
+
+def resolve_channel_binding(settings: BemineSettings, message: Any) -> ChannelBinding:
+    """Deterministic: channel/category -> project (resolve_project_channel); runtime/model
+    from config; NO content inference. DMs and unmapped channels fall back to a default
+    project + default runtime so a novel message still reaches a real agent."""
+    channel = getattr(message, "channel", None)
+    channel_name = getattr(channel, "name", "") or ""
+    category = getattr(channel, "category", None)
+    category_name = getattr(category, "name", "") if category else ""
+    project = resolve_project_channel(
+        channel_name=channel_name,
+        category_name=category_name,
+        state_dir=settings.state_dir,
+        repo_dir=None,
+    )
+    runtime = resolve_dispatch_runtime(project.runtime if project else None)
+    model = config_string(runtime, "model", "")
+    cwd = Path(project.cwd) if project else Path(settings.state_dir).parent
+    project_id = (
+        (project.project_id or project.channel_name) if project else "bemine"
+    )
+    system = _build_channel_system_prompt(settings, project)
+    return ChannelBinding(
+        project_id=project_id,
+        runtime=runtime,
+        model=model,
+        cwd=cwd,
+        system=system,
+    )
 
 
 def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:

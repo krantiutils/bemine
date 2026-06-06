@@ -64,3 +64,55 @@ class CodexClient:
         )
         raw = self._sdk.responses.create(**kwargs)
         return self._transport.normalize_response(raw)
+
+
+import os  # noqa: E402
+
+from bemine.config import BemineSettings, config_string  # noqa: E402
+
+
+def build_client_for_runtime(settings: BemineSettings, runtime: str):
+    """Deterministic runtime -> LLMClient. Construction never makes network calls and
+    never raises in a keyless env: a placeholder api_key is used when none is configured."""
+    runtime = (runtime or "kimi").lower()
+    if runtime == "codex":
+        import openai
+
+        return CodexClient(
+            sdk=openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "sk-none"))
+        )
+
+    import anthropic
+
+    if runtime == "claude":
+        base_url = config_string("claude", "base_url", "") or None
+        api_key = (
+            os.environ.get(
+                config_string("claude", "api_key_env", "MERIDIAN_API_KEY"), "sk-none"
+            )
+            or "sk-none"
+        )
+        sdk = (
+            anthropic.Anthropic(api_key=api_key, base_url=base_url)
+            if base_url
+            else anthropic.Anthropic(api_key=api_key)
+        )
+        return AnthropicClient(sdk=sdk, base_url=base_url)
+
+    # kimi (Anthropic-compatible)
+    base_url = config_string("kimi", "base_url", "https://api.kimi.com/coding")
+    api_key = ""
+    try:
+        from bemine.kimi_handler import load_kimi_config, resolve_kimi_api_key
+
+        config = load_kimi_config(settings.hermes_home)
+        api_key = resolve_kimi_api_key(settings.hermes_home, config)
+    except Exception:
+        api_key = ""
+    if not api_key:
+        api_key = (
+            os.environ.get(config_string("kimi", "api_key_env", "KIMI_API_KEY"), "")
+            or "sk-none"
+        )
+    sdk = anthropic.Anthropic(api_key=api_key, base_url=base_url)
+    return AnthropicClient(sdk=sdk, base_url=base_url)
