@@ -94,7 +94,12 @@ def test_loop_stops_at_max_iterations(tmp_path):
     result = loop.run(session_id="s2", project_id="p1", cwd=tmp_path,
                       user_message="go", system="s")
     assert result.stopped_reason == "max_iterations"
-    assert len(client.calls) == 3
+    # 3 tool-loop iterations + 1 final tool-free call to force an answer.
+    assert len(client.calls) == 4
+    # The final call is made WITHOUT tools (forces a text answer, not more tool calls).
+    assert client.calls[-1]["tools"] == []
+    # The user always gets a non-empty reply, even at the limit.
+    assert result.final_text
 
 
 from bemine.agent.clients import AnthropicClient

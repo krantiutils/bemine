@@ -131,9 +131,35 @@ class AgentLoop:
                 self.db.append_bemine_session_message(
                     session_id=session_id, role="tool", content_json=json.dumps(tool_msg),
                 )
-        return LoopResult(final_text=(response.content if response else "") or "",
-                          tool_calls=tool_call_count, iterations=self.max_iterations,
-                          stopped_reason="max_iterations")
+        # Hit the tool-step limit while still calling tools. Make one final, tool-FREE
+        # call so the user gets an actual answer instead of silence ("(no output)").
+        if cancel_event is not None and cancel_event.is_set():
+            return LoopResult(final_text="", tool_calls=tool_call_count,
+                              iterations=self.max_iterations, stopped_reason="cancelled")
+        nudge = {
+            "role": "user",
+            "content": (
+                "You've reached the tool-step limit. Stop using tools and give your best "
+                "final answer now, based on what you've already gathered."
+            ),
+        }
+        try:
+            final = self.client.complete(messages=messages + [nudge], tools=[],
+                                         model=model, system=system)
+            final_text = (final.content or "").strip()
+        except Exception:
+            final_text = ""
+        if not final_text:
+            final_text = ((response.content or "") if response else "").strip() or (
+                f"(stopped after {self.max_iterations} tool steps without a final answer "
+                "— ask me to continue)"
+            )
+        self.db.append_bemine_session_message(
+            session_id=session_id, role="assistant",
+            content_json=json.dumps({"role": "assistant", "content": final_text}),
+        )
+        return LoopResult(final_text=final_text, tool_calls=tool_call_count,
+                          iterations=self.max_iterations, stopped_reason="max_iterations")
 
     def _run_tool(self, tc: ToolCall, context: ToolContext,
                   progress_callback: ProgressCallback | None) -> str:

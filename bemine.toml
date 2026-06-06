@@ -50,7 +50,7 @@ runtime = "kimi"
 # ----------------------------------------------------------------------------
 [agent]
 max_output_tokens = 4096              # max length of a single reply
-max_tool_iterations = 8              # safety cap on tool calls per message
+max_tool_iterations = 16             # tool-step budget per message (it still answers at the limit)
 harness_context_limit = 24000        # max chars of SOUL/SKILL/USER injected into context
 
 # ----------------------------------------------------------------------------
