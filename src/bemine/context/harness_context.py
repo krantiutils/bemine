@@ -4,11 +4,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config import config_list
+from ..config import config_int, config_list
 from .operator_context import redact_operator_context
 
 
-DEFAULT_HARNESS_CONTEXT_LIMIT = 8_000
+# Big enough to hold SOUL.md + SKILL.md + USER.md without truncating the agent's
+# capability doc. Tunable via [agent].harness_context_limit. ~24k chars ≈ 6k tokens,
+# trivial for any modern model's context window.
+DEFAULT_HARNESS_CONTEXT_LIMIT = 24_000
 
 
 @dataclass(frozen=True)
@@ -29,8 +32,10 @@ def load_harness_context(
     *,
     repo_dir: Path | None = None,
     files: list[Path] | None = None,
-    limit: int = DEFAULT_HARNESS_CONTEXT_LIMIT,
+    limit: int | None = None,
 ) -> HarnessContext:
+    if limit is None:
+        limit = config_int("agent", "harness_context_limit", DEFAULT_HARNESS_CONTEXT_LIMIT)
     if limit <= 0:
         raise ValueError("limit must be positive")
     paths = files if files is not None else _configured_harness_files(repo_dir=repo_dir)
