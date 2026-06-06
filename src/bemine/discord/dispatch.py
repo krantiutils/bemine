@@ -25,7 +25,7 @@ from bemine.kimi_handler import (
     load_kimi_config,
     resolve_kimi_api_key,
 )
-from bemine.native_runtime import KimiNativeRuntime
+from bemine.workers.native_runtime import KimiNativeRuntime
 from bemine.operator_context import load_operator_context
 from bemine.project_filters import ignored_project_reason
 from bemine.status import _redact

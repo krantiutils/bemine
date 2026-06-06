@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from .config import BemineSettings
-from .db import BemineDB
+from ..config import BemineSettings
+from ..db import BemineDB
 from .tmux_adapter import TmuxAdapter
-from .util import project_id_from_cwd
+from ..util import project_id_from_cwd
 
 
 WORKER_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")

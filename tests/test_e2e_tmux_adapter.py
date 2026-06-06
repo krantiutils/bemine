@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from bemine.tmux_adapter import TmuxAdapter
+from bemine.workers.tmux_adapter import TmuxAdapter
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux is not installed")

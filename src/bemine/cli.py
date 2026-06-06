@@ -34,8 +34,8 @@ from .rituals import (
 )
 from .status import collect_fleet_status, render_status
 from .systemd import install_user_units, render_user_units
-from .tmux_adapter import TmuxAdapter
-from .workers import (
+from .workers.tmux_adapter import TmuxAdapter
+from .workers.workers import (
     WorkerController,
     WorkerError,
     render_duplicate_heads,
