@@ -114,3 +114,26 @@ def test_anthropic_client_normalizes_tool_use():
     )
     assert out.tool_calls and out.tool_calls[0].name == "status_show"
     assert "tools" in sdk.seen
+
+
+def test_loop_records_usage_when_present(tmp_path):
+    from bemine.providers.types import Usage
+    settings = _settings(tmp_path)
+    db = BemineDB(settings.db_path)
+    db.upsert_bemine_session(
+        session_id="su", channel_id="cu", project_id="p1", runtime="kimi",
+        model="kimi-k2.6", device_id="local", cwd=str(tmp_path), status="active", summary="",
+    )
+    # Usage fields are prompt_tokens / completion_tokens / total_tokens
+    usage_obj = Usage(prompt_tokens=80, completion_tokens=20, total_tokens=100)
+    resp = NormalizedResponse(content="hi", tool_calls=None, finish_reason="stop", usage=usage_obj)
+    client = FakeClient([resp])
+    AgentLoop(settings=settings, db=db, client=client).run(
+        session_id="su", project_id="p1", cwd=tmp_path, user_message="hello", system="s"
+    )
+    rollup = db.usage_rollup()
+    assert any(r["provider"] == "kimi" for r in rollup)
+    kimi_row = next(r for r in rollup if r["provider"] == "kimi")
+    assert kimi_row["input_tokens"] == 80
+    assert kimi_row["output_tokens"] == 20
+    assert kimi_row["total_tokens"] == 100

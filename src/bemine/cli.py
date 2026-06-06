@@ -550,6 +550,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="Emit response and usage as JSON."
     )
 
+    usage_cmd = sub.add_parser(
+        "usage",
+        help="Show codex/claude/kimi token usage.",
+        description="Show a rollup of recorded token usage by provider.",
+        epilog="Examples:\n  uv run bemine usage\n  uv run bemine usage --provider kimi\n  uv run bemine usage --json",
+        formatter_class=HELP_FORMATTER,
+    )
+    usage_cmd.add_argument(
+        "--provider", default="", help="Filter by provider name, e.g. kimi, codex, claude."
+    )
+    usage_cmd.add_argument(
+        "--json", action="store_true", help="Emit rollup as JSON."
+    )
+
     dispatch = sub.add_parser(
         "dispatch",
         help="Inspect the configured Discord dispatch runtime/model.",
@@ -1247,6 +1261,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(manifest, indent=2, sort_keys=True))
         else:
             print(render_capability_manifest(manifest), end="")
+    elif args.command == "usage":
+        rollup = kernel.db.usage_rollup(provider=getattr(args, "provider", None) or None)
+        if getattr(args, "json", False):
+            print(json.dumps(rollup, indent=2))
+        else:
+            from bemine.usage import render_usage
+            print(render_usage(rollup))
     elif args.command == "context":
         if args.context_command == "show":
             context = load_operator_context(limit=args.limit)

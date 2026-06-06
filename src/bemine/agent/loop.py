@@ -52,9 +52,28 @@ class AgentLoop:
         tool_call_count = 0
         response: NormalizedResponse | None = None
 
+        session_row = self.db.get_bemine_session(session_id)
+        runtime = (session_row or {}).get("runtime", "")
+
         for iteration in range(1, self.max_iterations + 1):
             response = self.client.complete(messages=messages, tools=tool_schemas,
                                             model=model, system=system)
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                in_tok = int(getattr(usage, "prompt_tokens", 0) or 0)
+                out_tok = int(getattr(usage, "completion_tokens", 0) or 0)
+                total_tok = int(getattr(usage, "total_tokens", 0) or 0)
+                if total_tok == 0 and (in_tok or out_tok):
+                    total_tok = in_tok + out_tok
+                self.db.record_usage_sample(
+                    provider=runtime or model,
+                    raw_json="{}",
+                    runtime=runtime or None,
+                    session_id=session_id,
+                    input_tokens=in_tok,
+                    output_tokens=out_tok,
+                    total_tokens=total_tok,
+                )
             assistant_msg: dict = {"role": "assistant", "content": response.content or ""}
             if response.tool_calls:
                 assistant_msg["tool_calls"] = [

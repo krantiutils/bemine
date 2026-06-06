@@ -787,6 +787,22 @@ class BemineDB:
                 ),
             )
 
+    def usage_rollup(self, *, provider: str | None = None) -> list[dict]:
+        sql = (
+            "SELECT provider, COUNT(*) AS samples, "
+            "COALESCE(SUM(input_tokens),0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens),0) AS output_tokens, "
+            "COALESCE(SUM(total_tokens),0) AS total_tokens, "
+            "MAX(ts) AS last_ts FROM usage_samples "
+        )
+        params: tuple = ()
+        if provider:
+            sql += "WHERE provider = ? "
+            params = (provider,)
+        sql += "GROUP BY provider ORDER BY total_tokens DESC"
+        with self.connect() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
     def upsert_managed_session(
         self,
         *,
