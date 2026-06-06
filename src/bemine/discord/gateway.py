@@ -140,6 +140,57 @@ class DiscordResponder:
             await self.send(chunk)
 
 
+class _ProgressReporter:
+    """Bridges the agent loop's sync progress_callback (called from a worker thread)
+    to a single, live-edited Discord status message so the user sees it working."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, channel: discord.abc.Messageable) -> None:
+        self._loop = loop
+        self._channel = channel
+        self._lines: list[str] = []
+        self._msg: discord.Message | None = None
+        self._lock = asyncio.Lock()
+        self._closed = False
+
+    def __call__(self, text: str) -> None:
+        # Sync, invoked from the agent worker thread.
+        tool = text.split("tool:", 1)[-1].strip() if "tool:" in text else text.strip()
+        self._lines.append(f"• `{tool}`")
+        try:
+            asyncio.run_coroutine_threadsafe(self._render(), self._loop)
+        except RuntimeError:
+            pass
+
+    async def _render(self) -> None:
+        async with self._lock:
+            if self._closed:
+                return
+            body = "🛠️ Working…\n" + "\n".join(self._lines[-10:])
+            try:
+                if self._msg is None:
+                    self._msg = await self._channel.send(body[:1900])
+                else:
+                    await self._msg.edit(content=body[:1900])
+            except discord.DiscordException as exc:
+                LOG.debug("progress render failed: %s", exc)
+
+    async def finish(self, *, note: str | None = None) -> None:
+        async with self._lock:
+            self._closed = True
+            if self._msg is None:
+                return
+            try:
+                if note is not None:
+                    await self._msg.edit(content=note[:1900])
+                elif self._lines:
+                    summary = "✅ Done — actions:\n" + "\n".join(self._lines[-10:])
+                    await self._msg.edit(content=summary[:1900])
+                else:
+                    await self._msg.delete()
+            except discord.DiscordException as exc:
+                LOG.debug("progress finish failed: %s", exc)
+
+
 def _discord_context_message_limit() -> int:
     return max(0, min(50, config_int("discord", "context_messages", 12)))
 
@@ -253,6 +304,7 @@ def run_bound_agent(
     normalized,
     saved_attachments=None,
     progress_callback=None,
+    cancel_event=None,
 ):
     """Deterministic: resolve the session bound to this channel/thread, append the user
     message, run Bemine's agent loop (or codex app-server for codex runtime).
@@ -282,9 +334,14 @@ def run_bound_agent(
         cwd=binding.cwd,
     )
 
+    if cancel_event is not None and cancel_event.is_set():
+        return ""
+
     if binding.runtime == "codex":
         from bemine.agent.codex_appserver import run_codex_turn
 
+        if progress_callback:
+            progress_callback("tool: codex (running…)")
         sandbox = config_string("codex", "sandbox", "workspace-write")
         codex_bin = config_string("codex", "bin", "") or "codex"
 
@@ -329,6 +386,7 @@ def run_bound_agent(
         user_message=normalized,
         system=binding.system,
         progress_callback=progress_callback,
+        cancel_event=cancel_event,
     )
     return result.final_text
 
@@ -505,24 +563,72 @@ class MayorDiscordGateway:
             return
 
         if normalized or saved_attachments:
-            await _acknowledge_message(message, emoji=WORKING_REACTION)
+            channel_key = str(message.channel.id)
+            # If a dispatch is already running in this channel, interrupt it and fold in
+            # the newer message (signal the worker to stop, cancel the awaiting task).
+            prev_task = self._dispatch_tasks.get(channel_key)
+            prev_event = self._dispatch_cancel_events.get(channel_key)
+            if prev_task is not None and not prev_task.done():
+                if prev_event is not None:
+                    prev_event.set()
+                prev_task.cancel()
+                try:
+                    await responder.send(
+                        "↻ New message — interrupting the previous run and restarting with this one."
+                    )
+                except discord.DiscordException:
+                    pass
+
+            cancel_event = threading.Event()
+            self._dispatch_cancel_events[channel_key] = cancel_event
+            task = asyncio.ensure_future(
+                self._run_dispatch(message, normalized, saved_attachments, responder, cancel_event)
+            )
+            self._dispatch_tasks[channel_key] = task
             try:
-                final_text = await asyncio.to_thread(
-                    run_bound_agent,
-                    BemineSettings.load(),
-                    message,
-                    normalized,
-                    saved_attachments,
-                )
-            except Exception as exc:
-                await _acknowledge_message(message, emoji=WARNING_REACTION)
-                await responder.send(f"Dispatch failed: {exc}")
-                return
-            await _acknowledge_message(message, emoji=SUCCESS_REACTION)
-            await responder.send_chunks(final_text or "(no output)", limit=1900)
+                await task
+            except asyncio.CancelledError:
+                pass
             return
 
         await self.bot.process_commands(message)
+
+    async def _run_dispatch(
+        self,
+        message: discord.Message,
+        normalized: str,
+        saved_attachments: list[Path],
+        responder: "DiscordResponder",
+        cancel_event: threading.Event,
+    ) -> None:
+        await _acknowledge_message(message, emoji=WORKING_REACTION)
+        loop = asyncio.get_running_loop()
+        reporter = _ProgressReporter(loop, message.channel)
+        try:
+            final_text = await asyncio.to_thread(
+                run_bound_agent,
+                BemineSettings.load(),
+                message,
+                normalized,
+                saved_attachments,
+                reporter,
+                cancel_event,
+            )
+        except asyncio.CancelledError:
+            await reporter.finish(note="↻ Interrupted.")
+            raise
+        except Exception as exc:
+            await reporter.finish(note=None)
+            await _acknowledge_message(message, emoji=WARNING_REACTION)
+            await responder.send(f"Dispatch failed: {exc}")
+            return
+        # If a newer message superseded this run, don't post a stale answer.
+        if cancel_event.is_set():
+            await reporter.finish(note="↻ Interrupted.")
+            return
+        await reporter.finish(note=None)
+        await _acknowledge_message(message, emoji=SUCCESS_REACTION)
+        await responder.send_chunks(final_text or "(no output)", limit=1900)
 
     def _is_allowed(self, author: discord.abc.User) -> bool:
         if self.settings.allow_all_users:

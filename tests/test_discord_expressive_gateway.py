@@ -301,7 +301,7 @@ def test_novel_plain_message_routes_to_agent(tmp_path: Path, monkeypatch) -> Non
     seen: dict[str, object] = {}
 
     def fake_run(settings, message, normalized, saved_attachments=None,
-                 progress_callback=None):
+                 progress_callback=None, cancel_event=None):
         seen["normalized"] = normalized
         seen["saved_attachments"] = saved_attachments
         return "AGENT REPLY"

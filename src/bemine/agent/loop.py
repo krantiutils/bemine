@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
@@ -35,7 +35,8 @@ class AgentLoop:
         self.max_iterations = max_iterations
 
     def run(self, *, session_id: str, project_id: str, cwd: Path, user_message: str,
-            system: str, progress_callback: ProgressCallback | None = None) -> LoopResult:
+            system: str, progress_callback: ProgressCallback | None = None,
+            cancel_event: Any | None = None) -> LoopResult:
         model = self._session_model(session_id)
         # Each stored row already IS a complete OpenAI-shape message dict; load it
         # directly so a persist/resume round-trip is the identity. Do NOT nest the
@@ -70,6 +71,9 @@ class AgentLoop:
         runtime = (session_row or {}).get("runtime", "")
 
         for iteration in range(1, self.max_iterations + 1):
+            if cancel_event is not None and cancel_event.is_set():
+                return LoopResult(final_text="", tool_calls=tool_call_count,
+                                  iterations=iteration - 1, stopped_reason="cancelled")
             response = self.client.complete(messages=messages, tools=tool_schemas,
                                             model=model, system=system)
             usage = getattr(response, "usage", None)
