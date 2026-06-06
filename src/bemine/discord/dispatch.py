@@ -1731,6 +1731,24 @@ class ChannelBinding:
     system: str
 
 
+def _shell_capability_lines() -> list[str]:
+    policy = config_string("policy", "shell", "project-write")
+    if policy == "unrestricted":
+        return [
+            "- You have a GENERAL system shell via `shell_run`: you can run any command "
+            "anywhere on this machine, install software, manage services, and call external "
+            "APIs (including Discord using $MAYOR_DISCORD_BOT_TOKEN from your environment).",
+            "- Default to DOING the task with the shell rather than saying you cannot. To act "
+            "on Discord (e.g. create a channel), call the Discord REST API with the bot token; "
+            "discover the target guild via GET /users/@me/guilds if you don't know its id.",
+            "- Pause to confirm only for clearly destructive or irreversible actions (deleting "
+            "data, force-pushing, tearing down infrastructure).",
+        ]
+    return [
+        "- Work inside the project root; `shell_run` is limited to the project directory.",
+    ]
+
+
 def _build_channel_system_prompt(
     settings: BemineSettings,
     project: ProjectChannel | None,
@@ -1785,7 +1803,7 @@ def _build_channel_system_prompt(
                 "Runtime-specific rules:",
                 "- Use Bemine tool calls when local state, files, commands, status, or audit history are needed.",
                 "- Do not claim a command ran unless a tool result shows it ran.",
-                "- Work inside the project root unless the user clearly asks for coordination only.",
+                *_shell_capability_lines(),
                 "- Keep final responses concise and suitable for Discord Markdown.",
                 "- If you changed files, mention the files and verification command.",
                 "- If blocked or needing approval/credentials, say exactly what is needed.",

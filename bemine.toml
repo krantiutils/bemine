@@ -93,5 +93,16 @@ allowed_users = []
 allow_all_users = false
 context_messages = 12                 # prior messages included as context
 
+[policy]
+# How much the Discord agent's shell_run tool can do:
+#   project-write — (safe default) commands run only inside the channel's project dir
+#   unrestricted  — full machine: any command, any dir, install software, call any API
+#                   (the agent inherits the gateway env, incl. $MAYOR_DISCORD_BOT_TOKEN)
+#   disabled      — no shell at all
+# "unrestricted" gives the agent broad power; only use it if you trust everyone in
+# [discord].allowed_users, since they can make it run arbitrary commands.
+shell = "unrestricted"
+allow_external_paths = true           # let file_read/file_search reach outside the project
+
 [security]
 totp_secret_env = "BEMINE_TOTP_SECRET"

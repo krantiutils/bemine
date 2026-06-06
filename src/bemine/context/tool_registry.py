@@ -127,13 +127,19 @@ def default_tools() -> list[BemineTool]:
         ),
         BemineTool(
             name="shell_run",
-            description="Run a shell command in the project root or an allowed project subdirectory.",
+            description=(
+                "Run a shell command. Use this for any task other tools don't cover — "
+                "system administration, installing tools, managing services, and calling "
+                "external APIs (e.g. Discord via $MAYOR_DISCORD_BOT_TOKEN). Scope depends "
+                "on [policy].shell: project-only by default, or the whole machine when "
+                "unrestricted."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "command": {"type": "string"},
                     "cwd": {"type": "string"},
-                    "timeout": {"type": "integer", "minimum": 1, "maximum": 120},
+                    "timeout": {"type": "integer", "minimum": 1, "maximum": 600},
                 },
                 "required": ["command"],
             },
@@ -254,8 +260,14 @@ def _shell_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
     command = str(args.get("command") or "").strip()
     if not command:
         raise ToolExecutionError("command is required")
-    cwd = _resolve_project_path(str(args.get("cwd") or "."), context.cwd)
-    timeout = _int(args.get("timeout"), default=60, minimum=1, maximum=120)
+    if policy == "unrestricted":
+        # Full-system shell: any working directory, no project sandbox. Enabled
+        # deliberately via [policy].shell = "unrestricted".
+        raw_cwd = str(args.get("cwd") or "").strip()
+        cwd = (Path(raw_cwd).expanduser() if raw_cwd else context.cwd).resolve()
+    else:
+        cwd = _resolve_project_path(str(args.get("cwd") or "."), context.cwd)
+    timeout = _int(args.get("timeout"), default=60, minimum=1, maximum=600)
     proc = subprocess.run(
         command,
         cwd=cwd,
