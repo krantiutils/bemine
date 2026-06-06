@@ -1,60 +1,97 @@
-# Bemine's human-facing configuration.
-# Secrets stay in env files or credential stores; this file names the knobs and
-# the active runtime/model choices.
+# Bemine configuration — human-facing knobs.
+#
+# Secrets never live here (they stay in env vars / credential stores); this file
+# only names which env var holds each secret and sets the active defaults.
+#
+# Quick start: the two knobs you'll touch most are:
+#   [dispatch].runtime      — which agent answers Discord messages by default
+#   [agent].max_output_tokens — how long replies can be
+# Everything else has a sane default.
 
 [identity]
 device_id = "cdjk"
 
 [paths]
-state_dir = ".bemine"
-vault_dir = "~/Documents/Mayor"
+state_dir = ".bemine"                 # Bemine's local SQLite state + runtime files
+vault_dir = "~/Documents/Mayor"       # Obsidian memory vault
 codex_home = "~/.codex"
 claude_home = "~/.claude"
 kimi_home = "~/devlog/raw/kimi"
 hermes_home = "~/.hermes"
 
 [status]
+# Devices Bemine checks for agent sessions. "local" is this machine; the rest are
+# SSH-reachable hosts. Trim this to the devices you actually use.
 devices = ["local", "mbp", "mbp2", "k2"]
 
 [projects]
-ignored_roots = ["~/gt"]
+ignored_roots = ["~/gt"]              # repos under these paths are never indexed
 
 [context]
+# Files injected (redacted) into dispatched-agent prompts.
 operator_files = ["~/deploy.md"]
 harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
 
+# ----------------------------------------------------------------------------
+# Which agent answers a Discord message.
+# ----------------------------------------------------------------------------
 [dispatch]
+# Default runtime for messages that aren't in a project channel (DMs, home, etc.).
+# Project channels can override this per-channel.
+#   kimi   — fast, self-contained (uses your Kimi key). Good general default.
+#   claude — highest-quality chat; uses your Claude Max plan via the Meridian
+#            proxy (needs the `meridian` service running on 127.0.0.1:3456).
+#   codex  — full coding agent on your ChatGPT plan; edits files / runs commands
+#            in the channel's project dir. Best reserved for coding channels.
 runtime = "kimi"
 
+# ----------------------------------------------------------------------------
+# Agent loop behavior (applies to kimi + claude, which run Bemine's own loop).
+# ----------------------------------------------------------------------------
+[agent]
+max_output_tokens = 4096              # max length of a single reply
+max_tool_iterations = 8              # safety cap on tool calls per message
+
+# ----------------------------------------------------------------------------
+# Per-runtime settings. Subscriptions/keys are used — no pay-per-token API keys.
+# ----------------------------------------------------------------------------
 [kimi]
-provider = "kimi-coding"
+# The live Discord path talks to Kimi's Anthropic-compatible API directly.
 model = "kimi-k2.6"
-backend = "cli"
-dispatch = "cli"
-bin = "/home/cdjk/.local/bin/kimi"
 base_url = "https://api.kimi.com/coding"
 api_mode = "anthropic_messages"
-dispatch_max_tokens = 1600
+provider = "kimi-coding"
+bin = "/home/cdjk/.local/bin/kimi"   # only used by the legacy kimi-CLI path
+backend = "cli"                       # legacy CLI knob; live path ignores it
 
 [codex]
-backend = "exec"
-model = "gpt-5.3-codex-spark"
-sandbox = "danger-full-access"
-bin = ""
+# Codex runs via its app-server using your ChatGPT (Codex) plan — no API key.
+# (The Discord agent always uses the app-server; no backend knob needed here.)
+model = ""                            # empty = use Codex's own configured model
+# Sandbox for codex actions in a channel's project dir:
+#   read-only        — safest; codex can read but not change files
+#   workspace-write  — codex may edit files / run commands within the project dir
+#   danger-full-access — no sandbox (not recommended)
+sandbox = "workspace-write"
+bin = ""                              # empty = find `codex` on PATH
 
 [claude]
+# Claude runs through the Meridian proxy, which bridges your Claude Max plan to
+# an Anthropic-compatible endpoint. Start it with: systemctl --user start meridian
 backend = "meridian"
 model = "claude-sonnet-4-6"
 base_url = "http://127.0.0.1:3456"
-api_key_env = "MERIDIAN_API_KEY"
+api_key_env = "MERIDIAN_API_KEY"      # Meridian accepts any value by default
 
 [discord]
 token_env = "MAYOR_DISCORD_BOT_TOKEN"
 home_channel_id = ""
 guild_id = ""
+# Access control. allow_all_users = false is the safe default: only the user IDs
+# listed here (or in MAYOR_DISCORD_ALLOWED_USERS) may talk to the bot.
 allowed_users = []
 allow_all_users = false
-context_messages = 12
+context_messages = 12                 # prior messages included as context
 
 [security]
 totp_secret_env = "BEMINE_TOTP_SECRET"

@@ -1517,7 +1517,7 @@ def resolve_codex_sandbox() -> str:
     configured = os.environ.get("BEMINE_CODEX_SANDBOX", "").strip()
     configured = configured or config_string("codex", "sandbox", "")
     if not configured:
-        return "danger-full-access"
+        return "workspace-write"
     if configured not in {"read-only", "workspace-write", "danger-full-access"}:
         raise ValueError(
             "BEMINE_CODEX_SANDBOX must be one of: read-only, workspace-write, danger-full-access"

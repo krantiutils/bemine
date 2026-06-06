@@ -320,7 +320,8 @@ def run_bound_agent(
     from bemine.agent.clients import build_client_for_runtime
 
     client = build_client_for_runtime(settings, binding.runtime)
-    loop = AgentLoop(settings=settings, db=db, client=client)
+    loop = AgentLoop(settings=settings, db=db, client=client,
+                     max_iterations=config_int("agent", "max_tool_iterations", 8))
     result = loop.run(
         session_id=session_id,
         project_id=binding.project_id,

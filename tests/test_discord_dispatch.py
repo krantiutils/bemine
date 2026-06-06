@@ -1010,7 +1010,7 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(
     assert command[:2] == ["codex", "exec"]
     assert "--json" in command
     assert command[command.index("--cd") + 1] == str(project_root)
-    assert command[command.index("--sandbox") + 1] == "danger-full-access"
+    assert command[command.index("--sandbox") + 1] == "workspace-write"
     assert "--ask-for-approval" not in command
     assert str(image_path) in command
     assert str(note_path) not in command
@@ -1161,10 +1161,10 @@ def test_resolve_kimi_bin_falls_back_to_user_local_bin(
     assert resolve_kimi_bin() == str(kimi)
 
 
-def test_resolve_codex_sandbox_defaults_to_systemd_safe_mode(monkeypatch) -> None:
+def test_resolve_codex_sandbox_defaults_to_workspace_write(monkeypatch) -> None:
     monkeypatch.delenv("BEMINE_CODEX_SANDBOX", raising=False)
 
-    assert resolve_codex_sandbox() == "danger-full-access"
+    assert resolve_codex_sandbox() == "workspace-write"
 
 
 def test_resolve_codex_sandbox_can_be_overridden(monkeypatch) -> None:

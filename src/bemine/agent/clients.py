@@ -38,7 +38,7 @@ class AnthropicClient:
             model=model,
             messages=full_messages,
             tools=list(tools),
-            max_tokens=1600,
+            max_tokens=_max_output_tokens(),
             base_url=self._base_url,
         )
         raw = self._sdk.messages.create(**kwargs)
@@ -60,7 +60,7 @@ class CodexClient:
             model=model,
             messages=full_messages,
             tools=list(tools),
-            max_tokens=1600,
+            max_tokens=_max_output_tokens(),
         )
         raw = self._sdk.responses.create(**kwargs)
         return self._transport.normalize_response(raw)
@@ -68,7 +68,13 @@ class CodexClient:
 
 import os  # noqa: E402
 
-from bemine.config import BemineSettings, config_string  # noqa: E402
+from bemine.config import BemineSettings, config_int, config_string  # noqa: E402
+
+
+def _max_output_tokens() -> int:
+    # Sane human default: long enough for a substantial chat reply, tunable via
+    # [agent].max_output_tokens in bemine.toml.
+    return config_int("agent", "max_output_tokens", 4096)
 
 
 def build_client_for_runtime(settings: BemineSettings, runtime: str):
