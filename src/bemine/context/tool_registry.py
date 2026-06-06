@@ -87,6 +87,31 @@ def default_tools() -> list[BemineTool]:
             handler=_status_show,
         ),
         BemineTool(
+            name="bemine_config",
+            description=(
+                "Show Bemine's active runtime, model, device, and configured defaults. "
+                "AUTHORITATIVE — use this to answer any question about which model/runtime/"
+                "configuration is in use; never guess."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_bemine_config,
+        ),
+        BemineTool(
+            name="jobs_list",
+            description="List Bemine's scheduled cron jobs (name, schedule, enabled, last run).",
+            input_schema={"type": "object", "properties": {}},
+            handler=_jobs_list,
+        ),
+        BemineTool(
+            name="usage_report",
+            description="Show recorded token usage by provider (codex/claude/kimi).",
+            input_schema={
+                "type": "object",
+                "properties": {"provider": {"type": "string"}},
+            },
+            handler=_usage_report,
+        ),
+        BemineTool(
             name="audit_list",
             description="List recent Bemine audit events, optionally filtered by category or event type.",
             input_schema={
@@ -152,6 +177,44 @@ def _status_show(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, 
         "statuses": [status.to_dict() for status in statuses[:limit]],
         "errors": [error.__dict__ for error in errors],
     }
+
+
+def _bemine_config(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    del args
+    session = context.db.get_bemine_session(context.session_id) or {}
+    return {
+        "active_runtime": session.get("runtime") or "",
+        "active_model": session.get("model") or "",
+        "device": context.settings.device_id,
+        "default_runtime": config_string("dispatch", "runtime", ""),
+        "available_runtimes": {
+            "kimi": config_string("kimi", "model", ""),
+            "claude": f'{config_string("claude", "model", "")} (via Meridian proxy)',
+            "codex": "ChatGPT plan via codex app-server",
+        },
+    }
+
+
+def _jobs_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    del args
+    rows = context.db.list_jobs()
+    return {
+        "jobs": [
+            {
+                "job_id": row["job_id"],
+                "schedule": row["schedule"],
+                "enabled": bool(row["enabled"]),
+                "last_run_at": row["last_run_at"],
+                "failure_count": row["failure_count"],
+            }
+            for row in rows
+        ]
+    }
+
+
+def _usage_report(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    provider = str(args.get("provider") or "").strip() or None
+    return {"providers": context.db.usage_rollup(provider=provider)}
 
 
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

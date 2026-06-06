@@ -616,7 +616,11 @@ def test_native_kimi_tool_names_are_api_safe() -> None:
 
     names = [tool["name"] for tool in BemineToolRegistry().schemas()]
 
-    assert names == ["status_show", "audit_list", "shell_run", "file_read", "file_search"]
+    # Core tools must be present; the registry may add more (e.g. state tools).
+    assert {
+        "status_show", "audit_list", "shell_run", "file_read", "file_search",
+        "bemine_config", "jobs_list", "usage_report",
+    } <= set(names)
     assert all(valid_name.match(name) for name in names)
 
 
