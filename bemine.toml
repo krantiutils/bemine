@@ -24,7 +24,7 @@ operator_files = ["~/deploy.md"]
 harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
 
 [dispatch]
-runtime = "codex"
+runtime = "kimi"
 
 [kimi]
 provider = "kimi-coding"
