@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -277,6 +278,7 @@ def _shell_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
         stderr=subprocess.PIPE,
         timeout=timeout,
         check=False,
+        env=_shell_env(cwd),
     )
     return {
         "command": command,
@@ -321,6 +323,38 @@ def _file_search(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, 
         "matches": [_redact(line) for line in lines],
         "stderr": _redact(proc.stderr[-2000:]),
     }
+
+
+def _load_env_files(*extra: Path) -> dict[str, str]:
+    """Parse the same .env files the Discord gateway reads (so the agent's shell has the
+    user's credentials, e.g. DISCORD_BOT_TOKEN, KIMI_API_KEY). KEY=VALUE lines only."""
+    loaded: dict[str, str] = {}
+    paths = [Path.home() / ".hermes" / ".env", *extra]
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key:
+                loaded[key] = value.strip().strip('"').strip("'")
+    return loaded
+
+
+def _shell_env(cwd: Path) -> dict[str, str]:
+    """Subprocess environment for shell_run: OS env wins, .env secrets fill the gaps.
+    Aliases DISCORD_BOT_TOKEN -> MAYOR_DISCORD_BOT_TOKEN so either name works."""
+    env = {**_load_env_files(cwd / ".env"), **os.environ}
+    token = env.get("MAYOR_DISCORD_BOT_TOKEN") or env.get("DISCORD_BOT_TOKEN")
+    if token:
+        env.setdefault("DISCORD_BOT_TOKEN", token)
+        env.setdefault("MAYOR_DISCORD_BOT_TOKEN", token)
+    return env
 
 
 def _resolve_project_path(value: str, project_root: Path) -> Path:
