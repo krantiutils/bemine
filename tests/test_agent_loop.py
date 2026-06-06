@@ -24,7 +24,7 @@ def test_fake_client_scripts_responses():
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
-from bemine.tool_registry import BemineToolRegistry
+from bemine.context.tool_registry import BemineToolRegistry
 from bemine.agent.loop import AgentLoop
 
 

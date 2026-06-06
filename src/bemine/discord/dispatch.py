@@ -18,7 +18,7 @@ import aiohttp
 
 from bemine.config import BemineSettings, config_path, config_string
 from bemine.db import BemineDB
-from bemine.harness_context import load_harness_context
+from bemine.context.harness_context import load_harness_context
 from bemine.kimi_handler import (
     KimiHandler,
     JsonTransport,
@@ -26,7 +26,7 @@ from bemine.kimi_handler import (
     resolve_kimi_api_key,
 )
 from bemine.workers.native_runtime import KimiNativeRuntime
-from bemine.operator_context import load_operator_context
+from bemine.context.operator_context import load_operator_context
 from bemine.project_filters import ignored_project_reason
 from bemine.status import _redact
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.workers.native_runtime import _sanitize_message_history
-from bemine.tool_registry import BemineToolRegistry
+from bemine.context.tool_registry import BemineToolRegistry
 from bemine.discord.dispatch import (
     PROJECT_CATEGORY_NAME,
     CodexDispatcher,

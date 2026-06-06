@@ -8,7 +8,7 @@ from typing import Callable
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.providers.types import NormalizedResponse, ToolCall
-from bemine.tool_registry import BemineToolRegistry, ToolContext
+from bemine.context.tool_registry import BemineToolRegistry, ToolContext
 from bemine.agent.clients import LLMClient
 
 ProgressCallback = Callable[[str], None]

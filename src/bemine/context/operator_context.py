@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import config_list
+from ..config import config_list
 
 
 DEFAULT_CONTEXT_LIMIT = 12_000

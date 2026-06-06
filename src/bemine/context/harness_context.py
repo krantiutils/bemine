@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import config_list
+from ..config import config_list
 from .operator_context import redact_operator_context
 
 
