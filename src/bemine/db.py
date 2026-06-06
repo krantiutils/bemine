@@ -943,6 +943,13 @@ class BemineDB:
                 (now, session_id),
             )
 
+    def get_bemine_session(self, session_id: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM bemine_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
     def list_bemine_session_messages(
         self,
         *,
