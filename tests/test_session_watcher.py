@@ -41,3 +41,23 @@ def test_render_events_formats_and_empty():
         {"type": "finished", "device_id": "local", "session_id": "s2", "cwd": "/y", "age_seconds": 9},
     ])
     assert "Needs input" in text and "Finished" in text and "s1" in text and "s2" in text
+
+
+def test_session_watcher_job_empty_output_does_not_crash_notify(tmp_path, monkeypatch):
+    """Regression: a notify_discord job with empty output (no events) must not crash on
+    an unbound `sent` (UnboundLocalError) — it should succeed and not notify."""
+    from bemine.db import BemineDB
+    from bemine.kernel import BemineKernel
+    from bemine.jobs.core import run_job_by_id, seed_default_jobs
+
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([], []))  # no events
+    kernel = BemineKernel(settings)
+    seed_default_jobs(kernel.db, settings=settings)
+
+    sent_calls = []
+    result = run_job_by_id(settings, "session_watcher",
+                           sender=lambda text: sent_calls.append(text) or {"id": "x"})
+    assert result.status == "success"
+    assert result.notified is False
+    assert sent_calls == []  # nothing posted for empty output

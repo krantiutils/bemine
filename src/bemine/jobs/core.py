@@ -204,10 +204,11 @@ def run_job_row(
         if not isinstance(config, dict):
             raise ValueError("job config_json must be an object")
         output = _run_job_type(settings, job_id, config)
-        if config.get("notify_discord", False):
+        # Only notify when there is something to send (session_watcher returns "" when
+        # there are no events — don't post an empty message or touch an unbound `sent`).
+        if config.get("notify_discord", False) and output.strip():
             sender = sender or _discord_sender(db, channel_id=config.get("channel_id"))
-            if output.strip():
-                sent = dict(sender(output))
+            sent = dict(sender(output))
             notified = bool(sent.get("id") or sent.get("message_id"))
             _record_job_notification(db, job_id, sent)
     except Exception:
