@@ -100,7 +100,10 @@ def test_daily_digest_job_records_run_and_uses_sender(tmp_path: Path) -> None:
         assert run[0] == "success"
         assert "Bemine daily digest" in run[1]
         assert "123456" not in run[1]
-        job = conn.execute("SELECT last_run_at, next_run_at, failure_count FROM jobs").fetchone()
+        job = conn.execute(
+            "SELECT last_run_at, next_run_at, failure_count FROM jobs WHERE job_id = ?",
+            ("daily_digest",),
+        ).fetchone()
         assert job[0]
         assert job[1]
         assert job[2] == 0

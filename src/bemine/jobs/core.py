@@ -13,10 +13,12 @@ from ..config import BemineSettings
 from ..db import BemineDB
 from ..kernel import BemineKernel
 from ..index.status import _redact, collect_fleet_status, render_status
+from .session_watcher import check_sessions, render_events
 
 DiscordSender = Callable[[str], Mapping[str, Any]]
 
 DEFAULT_DAILY_DIGEST_SCHEDULE = "0 18 * * *"
+DEFAULT_SESSION_WATCHER_SCHEDULE = "*/5 * * * *"
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,18 @@ class JobRunResult:
 def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition, ...]:
     devices = (settings.status_devices if settings else ["local", "mbp", "mbp2", "k2"])
     return (
+        JobDefinition(
+            job_id="session_watcher",
+            name="Session watcher",
+            trigger_type="cron",
+            schedule=DEFAULT_SESSION_WATCHER_SCHEDULE,
+            config={
+                "type": "session_watcher",
+                "devices": devices,
+                "notify_discord": True,
+                "only_when_events": True,
+            },
+        ),
         JobDefinition(
             job_id="daily_digest",
             name="Daily project digest",
@@ -191,8 +205,9 @@ def run_job_row(
             raise ValueError("job config_json must be an object")
         output = _run_job_type(settings, job_id, config)
         if config.get("notify_discord", False):
-            sender = sender or _discord_sender(db)
-            sent = dict(sender(output))
+            sender = sender or _discord_sender(db, channel_id=config.get("channel_id"))
+            if output.strip():
+                sent = dict(sender(output))
             notified = bool(sent.get("id") or sent.get("message_id"))
             _record_job_notification(db, job_id, sent)
     except Exception:
@@ -320,8 +335,22 @@ def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, An
         return generate_daily_digest(settings, config)
     if job_type == "reminder":
         return generate_reminder(job_id, config)
+    if job_type == "session_watcher":
+        return generate_session_watcher_report(settings, config)
     raise ValueError(f"unsupported job type: {job_type}")
 
+
+
+
+def generate_session_watcher_report(settings: BemineSettings, config: Mapping[str, Any]) -> str:
+    from pathlib import Path
+    state_path = settings.state_dir / "session_watcher_state.json"
+    events = check_sessions(settings, state_path)
+    if config.get("only_when_events", True) and not events:
+        return ""
+    if not events:
+        return "**Session watcher**\nNo session changes detected."
+    return render_events(events)
 
 def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:
     text = str(config.get("text") or "").strip()
@@ -340,7 +369,7 @@ def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:
     )
 
 
-def _discord_sender(db: BemineDB) -> DiscordSender:
+def _discord_sender(db: BemineDB, channel_id: str | None = None) -> DiscordSender:
     from bemine.discord.config import Settings
     from bemine.discord.send import send_message
     from bemine.discord.store import Store
@@ -357,20 +386,22 @@ def _discord_sender(db: BemineDB) -> DiscordSender:
         inbox_dir=db.path.parent / "inbox",
     )
     settings.require_token()
-    settings.require_home_channel()
+    target_channel_id = (channel_id or settings.home_channel_id).strip()
+    if not target_channel_id:
+        settings.require_home_channel()
 
     def sender(text: str) -> Mapping[str, Any]:
         result = asyncio.run(
             send_message(
                 settings=settings,
-                channel_id=settings.home_channel_id,
+                channel_id=target_channel_id,
                 text=text,
                 files=[],
             )
         )
         Store(db.path).record_outbound(
             discord_message_id=str(result.get("id") or ""),
-            channel_id=settings.home_channel_id,
+            channel_id=target_channel_id,
             content=text,
             files=[],
         )
