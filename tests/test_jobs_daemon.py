@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.jobs import next_run_after, run_job_by_id, seed_default_jobs, upsert_reminder_job
-from bemine.systemd import render_user_units
+from bemine.jobs.systemd import render_user_units
 
 
 def test_cron_next_run_for_daily_digest_uses_local_time() -> None:

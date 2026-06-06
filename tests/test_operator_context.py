@@ -5,8 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from bemine.harness_context import load_harness_context
-from bemine.operator_context import load_operator_context, redact_operator_context
+from bemine.context.harness_context import load_harness_context
+from bemine.context.operator_context import load_operator_context, redact_operator_context
 
 
 def test_operator_context_loads_deploy_md_and_redacts_secrets(tmp_path: Path) -> None:

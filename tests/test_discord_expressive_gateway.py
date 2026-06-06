@@ -1,32 +1,27 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
-import pytest
-
-from bemine.config import BemineSettings
-from bemine.db import BemineDB
-from bemine.workers import WorkerDuplicateGroup, WorkerRecord, WorkerTransferResult
-from mayor_discord.dispatch import (
+from bemine.discord.dispatch import (
     DispatchProgress,
     DispatchResult,
     ProjectChannel,
     ProjectRoute,
 )
-from mayor_discord.gateway import (
+import bemine.discord.gateway as gw
+from bemine.discord.gateway import (
     ACK_REACTION,
+    SUCCESS_REACTION,
+    WORKING_REACTION,
     _acknowledge_message,
     _best_effort_typing,
     _discord_chunk,
     _dispatch_progress_text,
     _dispatch_response_text,
     _format_conversation_context,
-    _local_tool_response,
-    _needs_reference_clarification,
 )
-from mayor_discord.store import Store
+from bemine.discord.store import Store
 
 
 class FakeMessage:
@@ -138,301 +133,6 @@ def test_discord_chunk_closes_and_reopens_markdown_fences() -> None:
     assert chunks[1].startswith("```")
 
 
-def test_discord_local_tool_router_updates_dispatch_config(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = tmp_path / "bemine.toml"
-    config.write_text(
-        """
-[dispatch]
-runtime = "kimi"
-
-[kimi]
-model = "kimi-k2.6"
-
-[codex]
-model = ""
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("BEMINE_CONFIG", str(config))
-
-    result = _local_tool_response(
-        "switch to gpt 5.4 mini please",
-        router=lambda _content, _catalog: {
-            "tool": "config.update_dispatch",
-            "arguments": {"runtime": "codex", "model": "gpt 5.4 mini"},
-            "confidence": 0.91,
-        },
-    )
-
-    assert result is not None
-    assert result.tool == "config.update_dispatch"
-    assert "runtime: codex" in result.text
-    assert 'runtime = "codex"' in config.read_text(encoding="utf-8")
-    assert 'model = "gpt-5.4-mini"' in config.read_text(encoding="utf-8")
-
-
-def test_discord_local_tool_router_falls_through_to_project_dispatch() -> None:
-    result = _local_tool_response(
-        "fix the tests in this project",
-        router=lambda _content, _catalog: {
-            "tool": "project.dispatch",
-            "arguments": {},
-            "confidence": 0.93,
-        },
-    )
-
-    assert result is None
-
-
-def test_discord_local_tool_router_ignores_low_confidence_tool_choice() -> None:
-    result = _local_tool_response(
-        "maybe do something with config",
-        router=lambda _content, _catalog: {
-            "tool": "config.show",
-            "arguments": {},
-            "confidence": 0.3,
-        },
-    )
-
-    assert result is None
-
-
-def test_discord_local_tool_router_adds_checklist_item(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = tmp_path / "bemine.toml"
-    vault = tmp_path / "vault"
-    config.write_text(
-        f"""
-[paths]
-vault_dir = "{vault}"
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("BEMINE_CONFIG", str(config))
-
-    result = _local_tool_response(
-        "add coffee beans to my buy list",
-        router=lambda _content, _catalog: {
-            "tool": "checklist.add",
-            "arguments": {"list": "buy", "item": "coffee beans"},
-            "confidence": 0.95,
-        },
-    )
-
-    checklist = vault / "Checklists" / "Shopping.md"
-    assert result is not None
-    assert result.tool == "checklist.add"
-    assert "coffee beans" in result.text
-    assert "- [ ] coffee beans" in checklist.read_text(encoding="utf-8")
-
-
-def test_discord_local_tool_router_transfers_worker_context(monkeypatch) -> None:
-    captured: dict[str, object] = {}
-    source = WorkerRecord(
-        name="bm-codex",
-        runtime="codex",
-        transport="tmux",
-        device_id="testbox",
-        project_id="bm",
-        cwd="/home/cdjk/bm",
-        command="codex",
-        status="running",
-        exists=True,
-    )
-    target = WorkerRecord(
-        name="mbp2-claude",
-        runtime="claude",
-        transport="ssh-tmux",
-        device_id="mbp2",
-        project_id="bm",
-        cwd="/home/cdjk/bm",
-        command="adopted-existing-tmux-session",
-        status="adopted",
-        exists=True,
-    )
-
-    class FakeWorkerController:
-        def __init__(self, _settings: BemineSettings) -> None:
-            pass
-
-        def transfer(self, **kwargs: object) -> WorkerTransferResult:
-            captured.update(kwargs)
-            return WorkerTransferResult(
-                source=source,
-                target=target,
-                prompt="handoff",
-                duplicate_heads=[],
-            )
-
-    monkeypatch.setattr("mayor_discord.gateway.WorkerController", FakeWorkerController)
-
-    result = _local_tool_response(
-        "move bm from codex to claude on mbp2",
-        router=lambda _content, _catalog: {
-            "tool": "workers.transfer",
-            "arguments": {
-                "source": "bm-codex",
-                "target": "mbp2-claude",
-                "runtime": "claude",
-                "target_device": "mbp2",
-            },
-            "confidence": 0.96,
-        },
-    )
-
-    assert result is not None
-    assert result.tool == "workers.transfer"
-    assert captured["source_name"] == "bm-codex"
-    assert captured["target_name"] == "mbp2-claude"
-    assert captured["target_runtime"] == "claude"
-    assert captured["target_device"] == "mbp2"
-    assert "Worker transfer queued:" in result.text
-    assert "`mbp2-claude` [claude]" in result.text
-
-
-def test_discord_local_tool_router_shows_worker_duplicates(monkeypatch) -> None:
-    heads = [
-        WorkerRecord(
-            name="codex-head",
-            runtime="codex",
-            transport="tmux",
-            device_id="testbox",
-            project_id="bm",
-            cwd="/home/cdjk/bm",
-            command="codex",
-            status="running",
-            exists=True,
-        ),
-        WorkerRecord(
-            name="claude-head",
-            runtime="claude",
-            transport="ssh-tmux",
-            device_id="mbp2",
-            project_id="bm",
-            cwd="/home/cdjk/bm",
-            command="claude",
-            status="adopted",
-            exists=True,
-        ),
-    ]
-
-    class FakeWorkerController:
-        def __init__(self, _settings: BemineSettings) -> None:
-            pass
-
-        def duplicate_heads(self) -> list[WorkerDuplicateGroup]:
-            return [WorkerDuplicateGroup(project_id="bm", heads=heads)]
-
-    monkeypatch.setattr("mayor_discord.gateway.WorkerController", FakeWorkerController)
-
-    result = _local_tool_response(
-        "show me duplicate worker heads",
-        router=lambda _content, _catalog: {
-            "tool": "workers.duplicates",
-            "arguments": {},
-            "confidence": 0.92,
-        },
-    )
-
-    assert result is not None
-    assert result.tool == "workers.duplicates"
-    assert "Duplicate active worker heads:" in result.text
-    assert "codex-head" in result.text
-    assert "claude-head" in result.text
-
-
-def test_discord_local_tool_router_shows_audit_events(
-    tmp_path: Path, monkeypatch
-) -> None:
-    config = tmp_path / "bemine.toml"
-    state = tmp_path / "state"
-    vault = tmp_path / "vault"
-    config.write_text(
-        f"""
-[paths]
-state_dir = "{state}"
-vault_dir = "{vault}"
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("BEMINE_CONFIG", str(config))
-    settings = BemineSettings.load()
-    db = BemineDB(settings.db_path)
-    db.record_audit_event(
-        category="worker",
-        event_type="worker_transfer",
-        actor="worker-controller",
-        device_id="testbox",
-        project_id="bm",
-        payload_json=json.dumps(
-            {
-                "source": {"name": "source", "runtime": "codex"},
-                "target": {
-                    "name": "target",
-                    "runtime": "claude",
-                    "transport": "ssh-tmux",
-                },
-                "duplicate_heads": [{}],
-            },
-            sort_keys=True,
-        ),
-    )
-
-    result = _local_tool_response(
-        "show worker transfer audit",
-        router=lambda _content, _catalog: {
-            "tool": "audit.list",
-            "arguments": {"category": "worker", "event_type": "worker_transfer"},
-            "confidence": 0.93,
-        },
-    )
-
-    assert result is not None
-    assert result.tool == "audit.list"
-    assert "worker/worker_transfer" in result.text
-    assert "source[codex] -> target[claude/ssh-tmux] duplicates=1" in result.text
-
-
-def test_discord_checklist_tool_rejects_empty_item() -> None:
-    with pytest.raises(ValueError, match="checklist item is required"):
-        _local_tool_response(
-            "add it to shopping",
-            router=lambda _content, _catalog: {
-                "tool": "checklist.add",
-                "arguments": {"list": "Shopping", "item": ""},
-                "confidence": 0.9,
-            },
-        )
-
-
-def test_discord_local_tool_router_receives_channel_context() -> None:
-    seen: dict[str, str] = {}
-
-    result = _local_tool_response(
-        "in codeblock please",
-        conversation_context="- voidash: show me the config please",
-        router=lambda content, _catalog: (
-            seen.setdefault("content", content),
-            {
-                "tool": "config.show",
-                "arguments": {"format": "toml"},
-                "confidence": 0.9,
-            },
-        )[1],
-    )
-
-    assert result is not None
-    assert "show me the config please" in seen["content"]
-    assert "Current Discord message:\nin codeblock please" in seen["content"]
-    assert result.text.startswith("```toml")
-
-
 def test_store_recent_inbound_messages_are_channel_scoped_and_ordered(
     tmp_path: Path,
 ) -> None:
@@ -510,24 +210,6 @@ def test_store_recent_channel_messages_include_bot_replies_in_order(
     assert "TTS status reply" in context
 
 
-def test_vague_reference_needs_bot_context_before_mayor_fallback() -> None:
-    assert _needs_reference_clarification(
-        "what is this?",
-        conversation_context="- voidash [now]: previous user message",
-        route_reason="mayor-fallback",
-    )
-    assert not _needs_reference_clarification(
-        "what is this?",
-        conversation_context="- balen (bot) [now]: previous bot answer",
-        route_reason="mayor-fallback",
-    )
-    assert not _needs_reference_clarification(
-        "what is this?",
-        conversation_context="",
-        route_reason="project-channel",
-    )
-
-
 def test_conversation_context_redacts_tokens_and_keeps_recent_tail() -> None:
     rows = [
         {
@@ -546,3 +228,119 @@ def test_conversation_context_redacts_tokens_and_keeps_recent_tail() -> None:
 
     assert "ghp_abcdefghijklmnopqrstuvwxyz" not in context
     assert "new message to keep" in context
+
+
+class _FakeAuthor:
+    def __init__(self) -> None:
+        self.id = 4242
+        self.global_name = "voidash"
+
+    def __str__(self) -> str:
+        return "voidash#0001"
+
+
+class _PassthroughChannel:
+    def __init__(self) -> None:
+        self.id = 99001
+        self.name = "general"
+        self.category = None
+        self.type = "text"
+        self.sent: list[str] = []
+
+    async def send(self, content: str):
+        self.sent.append(content)
+        return _SentMessage()
+
+
+class _SentMessage:
+    id = 77777
+
+
+class _PassthroughMessage:
+    def __init__(self, content: str) -> None:
+        self.id = 555
+        self.content = content
+        self.channel = _PassthroughChannel()
+        self.guild = None
+        self.author = _FakeAuthor()
+        self.attachments: list[object] = []
+        self.created_at = _FakeCreatedAt()
+        self.reactions: list[str] = []
+        self.replies: list[str] = []
+
+    async def add_reaction(self, emoji: str) -> None:
+        self.reactions.append(emoji)
+
+    async def reply(self, content: str, mention_author: bool = False):
+        self.replies.append(content)
+        return _SentMessage()
+
+
+class _FakeCreatedAt:
+    def isoformat(self) -> str:
+        return "2026-06-05T09:00:00+05:45"
+
+
+def _make_gateway(tmp_path: Path):
+    from bemine.discord.config import Settings
+    from bemine.discord.gateway import MayorDiscordGateway
+
+    settings = Settings(
+        token="dummy-token",
+        home_channel_id="",
+        allowed_users={"4242"},
+        allow_all_users=True,
+        mayor_home=tmp_path,
+        db_path=tmp_path / "bemine.db",
+        inbox_dir=tmp_path / "inbox",
+    )
+    return MayorDiscordGateway(settings)
+
+
+def test_novel_plain_message_routes_to_agent(tmp_path: Path, monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run(settings, message, normalized, saved_attachments=None,
+                 progress_callback=None):
+        seen["normalized"] = normalized
+        seen["saved_attachments"] = saved_attachments
+        return "AGENT REPLY"
+
+    monkeypatch.setattr(gw, "run_bound_agent", fake_run)
+
+    gateway = _make_gateway(tmp_path)
+    message = _PassthroughMessage("tell me a joke about kubernetes")
+
+    asyncio.run(gateway._handle_allowed_message(message))
+
+    # A novel plain message reached the deterministic agent, not a classifier.
+    assert seen["normalized"] == "tell me a joke about kubernetes"
+    # The agent's reply was streamed back to the channel.
+    assert message.replies == ["AGENT REPLY"]
+    assert WORKING_REACTION in message.reactions
+    assert SUCCESS_REACTION in message.reactions
+
+
+def test_empty_message_does_not_route_to_agent(tmp_path: Path, monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run(settings, message, normalized, saved_attachments=None,
+                 progress_callback=None):
+        seen["normalized"] = normalized
+        return "SHOULD NOT HAPPEN"
+
+    monkeypatch.setattr(gw, "run_bound_agent", fake_run)
+
+    gateway = _make_gateway(tmp_path)
+
+    async def _noop_process(_message):
+        return None
+
+    monkeypatch.setattr(gateway.bot, "process_commands", _noop_process)
+    message = _PassthroughMessage("")  # empty content, no attachments
+
+    asyncio.run(gateway._handle_allowed_message(message))
+
+    # Empty message with no attachments must NOT reach the agent.
+    assert "normalized" not in seen
+    assert message.replies == []

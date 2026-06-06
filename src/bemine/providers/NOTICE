@@ -1,0 +1,6 @@
+The files in this directory (types.py, base.py, anthropic_transport.py,
+codex_transport.py, _anthropic_adapter.py, _codex_responses_adapter.py) are
+derived from NousResearch/hermes-agent (https://github.com/NousResearch/hermes-agent),
+licensed MIT. Local modifications: import paths adjusted to bemine.providers and
+Hermes-only helpers replaced by bemine.providers._compat. Original MIT license text
+retained per upstream LICENSE.

@@ -4,7 +4,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .models import ProjectRundown, SessionRecord
+from .index.models import ProjectRundown, SessionRecord
 from .util import project_id_from_cwd, project_name_from_cwd
 
 
@@ -787,6 +787,22 @@ class BemineDB:
                 ),
             )
 
+    def usage_rollup(self, *, provider: str | None = None) -> list[dict]:
+        sql = (
+            "SELECT provider, COUNT(*) AS samples, "
+            "COALESCE(SUM(input_tokens),0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens),0) AS output_tokens, "
+            "COALESCE(SUM(total_tokens),0) AS total_tokens, "
+            "MAX(ts) AS last_ts FROM usage_samples "
+        )
+        params: tuple = ()
+        if provider:
+            sql += "WHERE provider = ? "
+            params = (provider,)
+        sql += "GROUP BY provider ORDER BY total_tokens DESC"
+        with self.connect() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
     def upsert_managed_session(
         self,
         *,
@@ -942,6 +958,22 @@ class BemineDB:
                 """,
                 (now, session_id),
             )
+
+    def get_bemine_session(self, session_id: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM bemine_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_bemine_session_by_channel(self, channel_id: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM bemine_sessions WHERE channel_id = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (channel_id,),
+            ).fetchone()
+            return dict(row) if row else None
 
     def list_bemine_session_messages(
         self,

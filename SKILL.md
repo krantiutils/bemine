@@ -55,18 +55,18 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 ## Important Surfaces
 
 - CLI: `src/bemine/cli.py`
-- Status and history: `src/bemine/status.py`, `src/bemine/discovery.py`
-- Discord gateway: `src/mayor_discord/gateway.py`
-- Runtime dispatch: `src/mayor_discord/dispatch.py` uses `bemine.toml` for the
+- Status and history: `src/bemine/index/status.py`, `src/bemine/index/discovery.py`
+- Discord gateway: `src/bemine/discord/gateway.py`
+- Runtime dispatch: `src/bemine/discord/dispatch.py` uses `bemine.toml` for the
   default runtime/model and keeps per-project runtime selectable.
 - Kimi API handler: `src/bemine/kimi_handler.py` is for direct API checks;
   Discord project dispatch uses local Kimi CLI tool mode from
-  `src/mayor_discord/dispatch.py`.
-- Credential inventory and gates: `src/bemine/credentials.py`,
-  `src/bemine/proxy.py`, `src/bemine/totp.py`
-- Jobs and daemon: `src/bemine/jobs.py`, `src/bemine/daemon.py`
-- Obsidian vault sync: `src/bemine/vault.py`
-- Managed workers: `src/bemine/workers.py`, `src/bemine/tmux_adapter.py`
+  `src/bemine/discord/dispatch.py`.
+- Credential inventory and gates: `src/bemine/security/credentials.py`,
+  `src/bemine/security/proxy.py`, `src/bemine/security/totp.py`
+- Jobs and daemon: `src/bemine/jobs/core.py`, `src/bemine/jobs/daemon.py`
+- Obsidian vault sync: `src/bemine/index/vault.py`
+- Managed workers: `src/bemine/workers/workers.py`, `src/bemine/workers/tmux_adapter.py`
 - Harness identity: `SOUL.md`
 
 ## Self Improvement Loop

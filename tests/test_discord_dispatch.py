@@ -7,8 +7,9 @@ from pathlib import Path
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
-from bemine.tool_registry import BemineToolRegistry
-from mayor_discord.dispatch import (
+from bemine.workers.native_runtime import _sanitize_message_history
+from bemine.context.tool_registry import BemineToolRegistry
+from bemine.discord.dispatch import (
     PROJECT_CATEGORY_NAME,
     CodexDispatcher,
     DispatchRequest,
@@ -394,6 +395,10 @@ tool_max_turns = 4
         "tool.started",
         "tool.completed",
     ]
+    assert progress[0].summary == "💻 shell: `printf native-ok`"
+    assert progress[1].summary == (
+        "✅ shell done: `printf native-ok`\nstdout: `native-ok`"
+    )
 
     db = BemineDB(settings.db_path)
     with db.connect() as conn:
@@ -424,6 +429,186 @@ tool_max_turns = 4
         "kimi_tool_call_finished",
         "kimi_native_dispatch_finished",
     ]
+
+
+def test_kimi_native_rejected_tool_followup_does_not_store_pending_history(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_path = tmp_path / "bemine.toml"
+    config_path.write_text(
+        """
+[kimi]
+provider = "kimi-coding"
+model = "kimi-k2.6"
+base_url = "https://api.kimi.com/coding"
+api_mode = "anthropic_messages"
+dispatch_max_tokens = 800
+session_message_window = 12
+tool_max_turns = 4
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config_path))
+    monkeypatch.setenv("KIMI_API_KEY", "sk-kimi-abcdefghijklmnopqrstuvwxyz")
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+    requests: list[dict[str, object]] = []
+
+    def fake_transport(url, headers, payload, timeout):
+        requests.append(
+            {
+                "url": url,
+                "headers": dict(headers),
+                "payload": dict(payload),
+                "timeout": timeout,
+            }
+        )
+        if len(requests) == 1:
+            return {
+                "model": "kimi-k2.6",
+                "stop_reason": "tool_use",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "tool_1",
+                        "name": "shell_run",
+                        "input": {"command": "printf native-ok", "timeout": 5},
+                    },
+                ],
+            }
+        raise RuntimeError(
+            'Kimi request failed 400: {"error":{"message":"tool_call_id  is not found"}}'
+        )
+
+    dispatcher = KimiNativeDispatcher(
+        settings,
+        transport=fake_transport,
+        timeout_seconds=30,
+    )
+
+    result = dispatcher.dispatch(
+        ProjectChannel(
+            channel_name="bemine",
+            cwd=project_root,
+            project_id="proj_bm",
+            project_name="bm",
+            runtime="kimi",
+        ),
+        DispatchRequest(
+            channel_id="channel-1",
+            channel_name="bemine",
+            message_id="message-1",
+            author_name="voidash",
+            content="run a tiny smoke",
+            attachments=[],
+        ),
+    )
+
+    assert result.ok is False
+    assert "tool_call_id  is not found" in result.output
+    assert len(requests) == 2
+
+    db = BemineDB(settings.db_path)
+    with db.connect() as conn:
+        messages = conn.execute(
+            "SELECT role, content_json FROM bemine_session_messages ORDER BY id"
+        ).fetchall()
+
+    assert [row["role"] for row in messages] == ["user"]
+    assert "tool_result" not in messages[0]["content_json"]
+
+
+def test_kimi_native_history_sanitizer_drops_unaccepted_tool_exchange() -> None:
+    messages = [
+        {"role": "user", "content": "first request"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "shell_run",
+                    "input": {"command": "pwd"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": '{"ok": true}',
+                    "is_error": False,
+                }
+            ],
+        },
+        {"role": "user", "content": "test"},
+    ]
+
+    assert _sanitize_message_history(messages) == []
+
+
+def test_kimi_native_history_sanitizer_drops_cascading_tool_exchanges() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_1",
+                    "name": "shell_run",
+                    "input": {"command": "pwd"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_1",
+                    "content": '{"ok": true}',
+                    "is_error": False,
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "tool_2",
+                    "name": "shell_run",
+                    "input": {"command": "date"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tool_2",
+                    "content": '{"ok": true}',
+                    "is_error": False,
+                }
+            ],
+        },
+        {"role": "user", "content": "test"},
+    ]
+
+    assert _sanitize_message_history(messages) == []
 
 
 def test_native_kimi_tool_names_are_api_safe() -> None:
@@ -538,7 +723,7 @@ runtime = "codex"
 
 [codex]
 backend = "app-server"
-model = "gpt-5.4-mini"
+model = "gpt-5.3-codex-spark"
 """,
         encoding="utf-8",
     )
@@ -969,9 +1154,9 @@ def test_resolve_kimi_bin_falls_back_to_user_local_bin(
     kimi.parent.mkdir(parents=True)
     kimi.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.delenv("BEMINE_KIMI_BIN", raising=False)
-    monkeypatch.setattr("mayor_discord.dispatch.config_string", lambda *_args: "")
-    monkeypatch.setattr("mayor_discord.dispatch.shutil.which", lambda _name: None)
-    monkeypatch.setattr("mayor_discord.dispatch.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("bemine.discord.dispatch.config_string", lambda *_args: "")
+    monkeypatch.setattr("bemine.discord.dispatch.shutil.which", lambda _name: None)
+    monkeypatch.setattr("bemine.discord.dispatch.Path.home", lambda: tmp_path)
 
     assert resolve_kimi_bin() == str(kimi)
 

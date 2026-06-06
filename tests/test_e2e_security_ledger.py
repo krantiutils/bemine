@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 
 from bemine.db import BemineDB
-from bemine.credentials import PermissionGate
-from bemine.notifications import notify_permission_request
-from bemine.totp import hotp
+from bemine.security.credentials import PermissionGate
+from bemine.security.notifications import notify_permission_request
+from bemine.security.totp import hotp
 
 
 def test_permission_and_usage_ledgers_are_queryable(tmp_path: Path) -> None:
@@ -338,7 +338,7 @@ def test_permission_request_can_notify_discord_sender(tmp_path: Path) -> None:
 
 
 def test_discord_approval_message_redacts_totp_before_storage() -> None:
-    from mayor_discord.gateway import _parse_approval_command, _redact_sensitive_message
+    from bemine.discord.gateway import _parse_approval_command, _redact_sensitive_message
 
     content = "bemine approve perm_abc123 123456"
     assert _parse_approval_command(content) == ("perm_abc123", "123456")

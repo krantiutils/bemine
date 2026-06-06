@@ -13,8 +13,8 @@ import pytest
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
-from bemine.tmux_adapter import TmuxAdapter
-from bemine.workers import SshTmuxAdapter, WorkerController
+from bemine.workers.tmux_adapter import TmuxAdapter
+from bemine.workers.workers import SshTmuxAdapter, WorkerController
 
 
 def _run(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from bemine.config import BemineSettings, load_bemine_config
-from mayor_discord.dispatch import (
+from bemine.discord.dispatch import (
     dispatch_status_payload,
     resolve_codex_model,
     resolve_dispatch_runtime,

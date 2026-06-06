@@ -12,7 +12,7 @@ from .capabilities import build_capability_manifest, render_capability_manifest
 from .config import BemineSettings, render_toml_config
 from .config import config_path as bemine_config_path
 from .config import config_string, load_bemine_config
-from .credentials import CredentialInventory, PermissionGate
+from .security.credentials import CredentialInventory, PermissionGate
 from .jobs import (
     BemineDaemon,
     render_jobs,
@@ -23,19 +23,19 @@ from .jobs import (
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
-from .notifications import notify_permission_request_via_discord
-from .operator_context import load_operator_context, render_operator_context
-from .proxy import CredentialProxy
-from .rituals import (
+from .security.notifications import notify_permission_request_via_discord
+from .context.operator_context import load_operator_context, render_operator_context
+from .security.proxy import CredentialProxy
+from .context.rituals import (
     build_prime_packet,
     record_handoff,
     render_prime_packet,
     summary_from_args,
 )
-from .status import collect_fleet_status, render_status
-from .systemd import install_user_units, render_user_units
-from .tmux_adapter import TmuxAdapter
-from .workers import (
+from .index.status import collect_fleet_status, render_status
+from .jobs.systemd import install_user_units, render_user_units
+from .workers.tmux_adapter import TmuxAdapter
+from .workers.workers import (
     WorkerController,
     WorkerError,
     render_duplicate_heads,
@@ -548,6 +548,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     kimi_ask.add_argument(
         "--json", action="store_true", help="Emit response and usage as JSON."
+    )
+
+    usage_cmd = sub.add_parser(
+        "usage",
+        help="Show codex/claude/kimi token usage.",
+        description="Show a rollup of recorded token usage by provider.",
+        epilog="Examples:\n  uv run bemine usage\n  uv run bemine usage --provider kimi\n  uv run bemine usage --json",
+        formatter_class=HELP_FORMATTER,
+    )
+    usage_cmd.add_argument(
+        "--provider", default="", help="Filter by provider name, e.g. kimi, codex, claude."
+    )
+    usage_cmd.add_argument(
+        "--json", action="store_true", help="Emit rollup as JSON."
     )
 
     dispatch = sub.add_parser(
@@ -1247,6 +1261,13 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(manifest, indent=2, sort_keys=True))
         else:
             print(render_capability_manifest(manifest), end="")
+    elif args.command == "usage":
+        rollup = kernel.db.usage_rollup(provider=getattr(args, "provider", None) or None)
+        if getattr(args, "json", False):
+            print(json.dumps(rollup, indent=2))
+        else:
+            from bemine.usage import render_usage
+            print(render_usage(rollup))
     elif args.command == "context":
         if args.context_command == "show":
             context = load_operator_context(limit=args.limit)
@@ -1316,7 +1337,7 @@ def main(argv: list[str] | None = None) -> None:
                 print(result.text)
     elif args.command == "dispatch":
         if args.dispatch_command == "status":
-            from mayor_discord.dispatch import (
+            from bemine.discord.dispatch import (
                 dispatch_status_payload,
                 render_dispatch_status,
             )
@@ -1516,7 +1537,7 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"# {unit.name}\n{unit.text}")
     elif args.command == "discord":
         if args.discord_command == "write-project-channels":
-            from mayor_discord.dispatch import (
+            from bemine.discord.dispatch import (
                 project_channels_from_db,
                 write_project_channel_config,
             )
@@ -1533,8 +1554,8 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
         elif args.discord_command == "sync-project-channels":
-            from mayor_discord.config import Settings as DiscordSettings
-            from mayor_discord.dispatch import sync_project_channels_to_discord
+            from bemine.discord.config import Settings as DiscordSettings
+            from bemine.discord.dispatch import sync_project_channels_to_discord
 
             discord_settings = DiscordSettings.load()
             guild_id = (
