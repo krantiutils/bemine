@@ -48,7 +48,9 @@ def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition,
     session_config: dict[str, Any] = {
         "type": "session_watcher",
         "devices": devices,
-        "notify_discord": True,
+        # The watcher self-delivers (per-project channel + DM fallback), so the generic
+        # job notifier stays off to avoid a duplicate send.
+        "notify_discord": False,
         "only_when_events": True,
     }
     if notify_user_id:
@@ -353,14 +355,18 @@ def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, An
 
 
 def generate_session_watcher_report(settings: BemineSettings, config: Mapping[str, Any]) -> str:
-    from pathlib import Path
+    from .session_watcher import deliver_events
+
     state_path = settings.state_dir / "session_watcher_state.json"
     events = check_sessions(settings, state_path)
-    if config.get("only_when_events", True) and not events:
-        return ""
     if not events:
-        return "**Session watcher**\nNo session changes detected."
-    return render_events(events)
+        return "" if config.get("only_when_events", True) else "No session changes detected."
+    # Self-delivers per-project (channel matched by cwd) with a DM fallback. Returns a
+    # delivery summary recorded as job output; the job has notify_discord disabled so
+    # run_job_row does not also send.
+    return "Session watcher delivered — " + deliver_events(
+        settings, events, dm_user_id=str(config.get("dm_user_id") or "") or None
+    )
 
 def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:
     text = str(config.get("text") or "").strip()

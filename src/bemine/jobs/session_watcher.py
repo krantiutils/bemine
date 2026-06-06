@@ -133,6 +133,100 @@ def render_events(events: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _project_channel_map(settings: BemineSettings) -> dict[str, str]:
+    """cwd -> project channel name, from .bemine/discord-projects.json."""
+    path = settings.state_dir / "discord-projects.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, str] = {}
+    for entry in data.values():
+        if isinstance(entry, dict) and entry.get("cwd") and entry.get("channel_name"):
+            out[str(entry["cwd"]).rstrip("/")] = str(entry["channel_name"])
+    return out
+
+
+def _match_channel_name(cwd: str, cwd_map: dict[str, str]) -> str | None:
+    """Map a session cwd to a project channel name (exact, then longest-prefix match)."""
+    cwd = (cwd or "").rstrip("/")
+    if not cwd:
+        return None
+    best: str | None = None
+    best_len = -1
+    for pcwd, name in cwd_map.items():
+        if (cwd == pcwd or cwd.startswith(pcwd + "/")) and len(pcwd) > best_len:
+            best, best_len = name, len(pcwd)
+    return best
+
+
+async def _resolve_guild_channels(settings, session) -> dict[str, str]:
+    """Lowercased channel name -> channel id across the bot's guilds (text channels)."""
+    import aiohttp  # noqa: F401  (session is an aiohttp session)
+
+    base = "https://discord.com/api/v10"
+    headers = {"Authorization": f"Bot {settings.token}"}
+    name_to_id: dict[str, str] = {}
+    async with session.get(f"{base}/users/@me/guilds", headers=headers) as r:
+        guilds = json.loads(await r.text())
+    if not isinstance(guilds, list):
+        return name_to_id
+    for guild in guilds:
+        async with session.get(f"{base}/guilds/{guild['id']}/channels", headers=headers) as r:
+            chans = json.loads(await r.text())
+        if not isinstance(chans, list):
+            continue
+        for c in chans:
+            if c.get("type") == 0:  # text channel
+                name_to_id.setdefault(str(c["name"]).lower(), str(c["id"]))
+    return name_to_id
+
+
+async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str | None) -> str:
+    import aiohttp
+
+    from bemine.discord.config import Settings
+    from bemine.discord.send import send_message, open_dm_channel
+
+    ds = Settings.load()
+    cwd_map = _project_channel_map(settings)
+    by_channel: dict[str, list[dict[str, Any]]] = {}
+    dm_events: list[dict[str, Any]] = []
+
+    async with aiohttp.ClientSession() as session:
+        name_to_id = await _resolve_guild_channels(ds, session)
+        for event in events:
+            channel_name = _match_channel_name(str(event.get("cwd", "")), cwd_map)
+            channel_id = name_to_id.get((channel_name or "").lower()) if channel_name else None
+            if channel_id:
+                by_channel.setdefault(channel_id, []).append(event)
+            else:
+                dm_events.append(event)
+
+        summary: list[str] = []
+        for channel_id, evs in by_channel.items():
+            await send_message(settings=ds, channel_id=channel_id, text=render_events(evs), files=[])
+            summary.append(f"channel {channel_id}: {len(evs)}")
+        if dm_events and dm_user_id:
+            dm_id = await open_dm_channel(ds, str(dm_user_id))
+            await send_message(settings=ds, channel_id=dm_id, text=render_events(dm_events), files=[])
+            summary.append(f"DM: {len(dm_events)}")
+        elif dm_events:
+            summary.append(f"unrouted (no DM target): {len(dm_events)}")
+    return "; ".join(summary) or "no events delivered"
+
+
+def deliver_events(settings: BemineSettings, events: list[dict[str, Any]],
+                   *, dm_user_id: str | None = None) -> str:
+    """Route each session event to its project's Discord channel (matched by cwd), with a
+    DM fallback for sessions that don't map to a channel. Returns a delivery summary."""
+    import asyncio
+
+    if not events:
+        return ""
+    return asyncio.run(_deliver_async(settings, events, dm_user_id))
+
+
 if __name__ == "__main__":
     settings = BemineSettings.load()
     state_path = settings.state_dir / STATE_FILE

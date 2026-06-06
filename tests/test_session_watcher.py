@@ -61,3 +61,24 @@ def test_session_watcher_job_empty_output_does_not_crash_notify(tmp_path, monkey
     assert result.status == "success"
     assert result.notified is False
     assert sent_calls == []  # nothing posted for empty output
+
+
+def test_match_channel_name_routes_by_cwd():
+    from bemine.jobs.session_watcher import _match_channel_name
+    cwd_map = {
+        "/home/cdjk/github/neptts-bench": "neptts-bench",
+        "/home/cdjk/github": "github",
+        "/home/cdjk/bm": "bemine",
+    }
+    assert _match_channel_name("/home/cdjk/github/neptts-bench", cwd_map) == "neptts-bench"
+    # subdir picks the longest-prefix project
+    assert _match_channel_name("/home/cdjk/github/neptts-bench/src", cwd_map) == "neptts-bench"
+    assert _match_channel_name("/home/cdjk/github/other-thing", cwd_map) == "github"
+    assert _match_channel_name("/tmp/elsewhere", cwd_map) is None
+    assert _match_channel_name("", cwd_map) is None
+
+
+def test_deliver_events_empty_is_noop():
+    from bemine.jobs.session_watcher import deliver_events
+    from bemine.config import BemineSettings
+    assert deliver_events(BemineSettings.load(), []) == ""
