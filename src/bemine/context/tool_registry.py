@@ -148,6 +148,47 @@ def default_tools() -> list[BemineTool]:
             policy="project-write",
         ),
         BemineTool(
+            name="tmux_list",
+            description=(
+                "List running tmux panes (target, current path, current command). Use this "
+                "to find which session a user's reply should go to — match by project path."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_tmux_list,
+        ),
+        BemineTool(
+            name="tmux_send",
+            description=(
+                "Send input to a running tmux pane (e.g. relay the user's reply into a "
+                "waiting codex/claude/kimi terminal session). Sends the text then Enter to "
+                "submit, unless enter=false. Get the target from tmux_list."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "tmux target, e.g. 'work:0.1' or a session name"},
+                    "text": {"type": "string"},
+                    "enter": {"type": "boolean"},
+                },
+                "required": ["target", "text"],
+            },
+            handler=_tmux_send,
+            policy="project-write",
+        ),
+        BemineTool(
+            name="tmux_capture",
+            description="Capture the recent visible output of a tmux pane (to see a session's current state).",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string"},
+                    "lines": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+                "required": ["target"],
+            },
+            handler=_tmux_capture,
+        ),
+        BemineTool(
             name="file_read",
             description="Read a UTF-8 text file inside the project root.",
             input_schema={
@@ -287,6 +328,52 @@ def _shell_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
         "stdout": _redact(proc.stdout[-12000:]),
         "stderr": _redact(proc.stderr[-12000:]),
     }
+
+
+def _tmux_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    proc = subprocess.run(
+        ["tmux", "list-panes", "-a", "-F",
+         "#{session_name}:#{window_index}.#{pane_index}\t#{pane_current_path}\t#{pane_current_command}"],
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False,
+    )
+    panes = []
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3:
+            panes.append({"target": parts[0], "path": parts[1], "command": parts[2]})
+    return {"panes": panes, "stderr": _redact(proc.stderr[-500:])}
+
+
+def _tmux_send(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    target = str(args.get("target") or "").strip()
+    if not target:
+        raise ToolExecutionError("target (tmux session/pane) is required")
+    text = str(args.get("text") or "")
+    enter = args.get("enter", True)
+    enter = True if enter is None else bool(enter)
+    # Send literal text first, then a separate Enter so the running program submits it.
+    send = subprocess.run(["tmux", "send-keys", "-t", target, "-l", text],
+                          text=True, stderr=subprocess.PIPE, timeout=15, check=False)
+    if send.returncode != 0:
+        raise ToolExecutionError(f"tmux send-keys failed: {send.stderr.strip()}")
+    if enter:
+        subprocess.run(["tmux", "send-keys", "-t", target, "Enter"],
+                       text=True, stderr=subprocess.PIPE, timeout=15, check=False)
+    return {"target": target, "sent": _redact(text), "enter": enter, "ok": True}
+
+
+def _tmux_capture(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    target = str(args.get("target") or "").strip()
+    if not target:
+        raise ToolExecutionError("target (tmux session/pane) is required")
+    lines = _int(args.get("lines"), default=40, minimum=1, maximum=200)
+    proc = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", target, "-S", f"-{lines}"],
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=False,
+    )
+    if proc.returncode != 0:
+        raise ToolExecutionError(f"tmux capture-pane failed: {proc.stderr.strip()}")
+    return {"target": target, "output": _redact(proc.stdout[-6000:])}
 
 
 def _file_read(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

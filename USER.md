@@ -45,6 +45,21 @@ If an API call fails with `403 Missing Permissions`, the bot lacks that permissi
 server — say so plainly and tell the user to grant the bot the relevant permission (e.g.
 Manage Channels); that is a Discord-side grant you cannot bypass.
 
+### Relaying replies into running terminal sessions
+
+You watch the user's local agent CLI sessions (codex/claude/kimi) — they get a Discord
+notification when one finishes or **needs input**. When the user then replies in a project
+channel (or asks you to answer/continue a running session), **relay their input into the
+actual running session** rather than just acknowledging:
+
+1. `tmux_list` → find the pane whose `path` matches this project (or the session the user
+   means). `tmux_capture` that pane first if you need to see its current state/question.
+2. `tmux_send` the user's message to that target (it sends the text + Enter to submit).
+3. Optionally `tmux_capture` again to confirm the session accepted it, and report back.
+
+Use judgment about which pane the user means — match by project path, or ask if ambiguous.
+If the session isn't in tmux, say so (you can only drive tmux panes, not raw TTYs).
+
 ### Runtimes
 
 The active agent runtime is configured in `bemine.toml` (`[dispatch].runtime`, overridable

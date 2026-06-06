@@ -620,6 +620,7 @@ def test_native_kimi_tool_names_are_api_safe() -> None:
     assert {
         "status_show", "audit_list", "shell_run", "file_read", "file_search",
         "bemine_config", "jobs_list", "usage_report",
+        "tmux_list", "tmux_send", "tmux_capture",
     } <= set(names)
     assert all(valid_name.match(name) for name in names)
 
