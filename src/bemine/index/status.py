@@ -16,7 +16,10 @@ from ..util import compact_text
 DEFAULT_STATUS_DEVICES = ("local", "mbp", "mbp2", "k2", "pi", "windows")
 CODE_RE = re.compile(r"\b(?:\d{6,8}|[A-Z0-9]{4}-[A-Z0-9]{4})\b")
 TOKEN_RE = re.compile(
-    r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,}|sk[-_][A-Za-z0-9_-]{12,})\b"
+    r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|hf_[A-Za-z0-9]{20,}|sk[-_][A-Za-z0-9_-]{12,}"
+    # Discord bot tokens (3 dot-separated base64 segments) and JWTs (eyJ...).
+    r"|[A-Za-z0-9_-]{23,28}\.[A-Za-z0-9_-]{6,8}\.[A-Za-z0-9_-]{27,}"
+    r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b"
 )
 UUID_RE = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 
