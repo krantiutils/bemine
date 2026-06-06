@@ -18,6 +18,24 @@ DISCORD_API = "https://discord.com/api/v10"
 MAX_DISCORD_CONTENT = 2000
 
 
+async def open_dm_channel(settings: Settings, user_id: str) -> str:
+    """Open (or fetch) the bot's DM channel with a user and return its channel id."""
+    url = f"{DISCORD_API}/users/@me/channels"
+    headers = {
+        "Authorization": f"Bot {settings.token}",
+        "Content-Type": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            url, headers=headers, json={"recipient_id": str(user_id)}
+        ) as resp:
+            body = await resp.text()
+            if resp.status >= 400:
+                raise RuntimeError(f"open DM failed {resp.status}: {body}")
+            return str(json.loads(body)["id"])
+
+
 async def send_message(
     *,
     settings: Settings,

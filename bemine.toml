@@ -87,6 +87,8 @@ api_key_env = "MERIDIAN_API_KEY"      # Meridian accepts any value by default
 [discord]
 token_env = "MAYOR_DISCORD_BOT_TOKEN"
 home_channel_id = ""
+# DM this Discord user id with session-watcher updates (empty = post to home channel).
+notify_user_id = "681542219488166101"
 guild_id = ""
 # Access control. allow_all_users = false is the safe default: only the user IDs
 # listed here (or in MAYOR_DISCORD_ALLOWED_USERS) may talk to the bot.

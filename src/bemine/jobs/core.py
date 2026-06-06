@@ -40,19 +40,26 @@ class JobRunResult:
 
 
 def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition, ...]:
+    from ..config import config_string
+
     devices = (settings.status_devices if settings else ["local", "mbp", "mbp2", "k2"])
+    # Who to DM with session updates. Empty -> falls back to the home channel.
+    notify_user_id = config_string("discord", "notify_user_id", "")
+    session_config: dict[str, Any] = {
+        "type": "session_watcher",
+        "devices": devices,
+        "notify_discord": True,
+        "only_when_events": True,
+    }
+    if notify_user_id:
+        session_config["dm_user_id"] = notify_user_id
     return (
         JobDefinition(
             job_id="session_watcher",
             name="Session watcher",
             trigger_type="cron",
             schedule=DEFAULT_SESSION_WATCHER_SCHEDULE,
-            config={
-                "type": "session_watcher",
-                "devices": devices,
-                "notify_discord": True,
-                "only_when_events": True,
-            },
+            config=session_config,
         ),
         JobDefinition(
             job_id="daily_digest",
@@ -207,7 +214,9 @@ def run_job_row(
         # Only notify when there is something to send (session_watcher returns "" when
         # there are no events — don't post an empty message or touch an unbound `sent`).
         if config.get("notify_discord", False) and output.strip():
-            sender = sender or _discord_sender(db, channel_id=config.get("channel_id"))
+            sender = sender or _discord_sender(
+                db, channel_id=config.get("channel_id"), dm_user_id=config.get("dm_user_id")
+            )
             sent = dict(sender(output))
             notified = bool(sent.get("id") or sent.get("message_id"))
             _record_job_notification(db, job_id, sent)
@@ -370,9 +379,11 @@ def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:
     )
 
 
-def _discord_sender(db: BemineDB, channel_id: str | None = None) -> DiscordSender:
+def _discord_sender(
+    db: BemineDB, channel_id: str | None = None, dm_user_id: str | None = None
+) -> DiscordSender:
     from bemine.discord.config import Settings
-    from bemine.discord.send import send_message
+    from bemine.discord.send import send_message, open_dm_channel
     from bemine.discord.store import Store
     import asyncio
 
@@ -387,9 +398,13 @@ def _discord_sender(db: BemineDB, channel_id: str | None = None) -> DiscordSende
         inbox_dir=db.path.parent / "inbox",
     )
     settings.require_token()
-    target_channel_id = (channel_id or settings.home_channel_id).strip()
-    if not target_channel_id:
-        settings.require_home_channel()
+    if dm_user_id:
+        # Deliver to the user's DM (resolve the bot<->user DM channel).
+        target_channel_id = asyncio.run(open_dm_channel(settings, str(dm_user_id)))
+    else:
+        target_channel_id = (channel_id or settings.home_channel_id).strip()
+        if not target_channel_id:
+            settings.require_home_channel()
 
     def sender(text: str) -> Mapping[str, Any]:
         result = asyncio.run(
