@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .models import SessionRecord
-from .util import compact_text, stable_id
+from ..util import compact_text, stable_id
 
 
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:

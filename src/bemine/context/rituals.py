@@ -10,15 +10,15 @@ from ..config import BemineSettings
 from ..db import BemineDB
 from .harness_context import load_harness_context
 from .operator_context import load_operator_context
-from ..rundown import render_rundown
-from ..status import (
+from ..index.rundown import render_rundown
+from ..index.status import (
     SessionStatus,
     collect_fleet_status,
     collect_local_status,
     render_status,
 )
 from ..util import compact_text, project_id_from_cwd, project_name_from_cwd
-from ..vault import ObsidianVault
+from ..index.vault import ObsidianVault
 
 
 @dataclass(frozen=True)
@@ -134,7 +134,7 @@ def render_prime_packet(packet: PrimePacket) -> str:
     statuses = [SessionStatus(**row) for row in packet.statuses]
     errors = []
     if packet.errors:
-        from .status import StatusError
+        from ..index.status import StatusError
 
         errors = [StatusError(**row) for row in packet.errors]
     lines.append(render_status(statuses, errors, limit=len(statuses)).rstrip())
@@ -158,7 +158,7 @@ def render_prime_packet(packet: PrimePacket) -> str:
 
 
 def render_rundown_from_packet(packet: PrimePacket) -> str:
-    from .models import ProjectRundown
+    from ..index.models import ProjectRundown
 
     projects = [
         ProjectRundown(

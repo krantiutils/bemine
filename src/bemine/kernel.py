@@ -5,10 +5,10 @@ from dataclasses import dataclass
 
 from .config import BemineSettings
 from .db import BemineDB
-from .discovery import discover_claude_sessions, discover_codex_sessions, discover_kimi_sessions
-from .project_filters import ignored_project_reason
-from .rundown import render_rundown
-from .vault import ObsidianVault
+from .index.discovery import discover_claude_sessions, discover_codex_sessions, discover_kimi_sessions
+from .index.project_filters import ignored_project_reason
+from .index.rundown import render_rundown
+from .index.vault import ObsidianVault
 
 
 @dataclass(frozen=True)

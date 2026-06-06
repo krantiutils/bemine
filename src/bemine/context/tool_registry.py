@@ -8,7 +8,7 @@ from typing import Any, Callable, Mapping
 
 from ..config import BemineSettings, config_bool, config_string
 from ..db import BemineDB
-from ..status import _redact, collect_fleet_status
+from ..index.status import _redact, collect_fleet_status
 
 
 ToolHandler = Callable[[Mapping[str, Any], "ToolContext"], Mapping[str, Any]]

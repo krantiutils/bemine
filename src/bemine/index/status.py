@@ -8,9 +8,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import BemineSettings
+from ..config import BemineSettings
 from .project_filters import ignored_project_reason
-from .util import compact_text
+from ..util import compact_text
 
 
 DEFAULT_STATUS_DEVICES = ("local", "mbp", "mbp2", "k2", "pi", "windows")

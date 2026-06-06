@@ -21,7 +21,7 @@ class CommandSpec:
 
 
 def _status(settings: BemineSettings, args: Mapping) -> CommandResult:
-    from bemine.status import collect_fleet_status, render_status
+    from bemine.index.status import collect_fleet_status, render_status
 
     statuses, errors = collect_fleet_status(settings)
     limit = int(args.get("limit", 8))

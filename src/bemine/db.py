@@ -4,7 +4,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .models import ProjectRundown, SessionRecord
+from .index.models import ProjectRundown, SessionRecord
 from .util import project_id_from_cwd, project_name_from_cwd
 
 

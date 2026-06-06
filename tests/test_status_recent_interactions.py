@@ -7,9 +7,9 @@ import sys
 import time
 from pathlib import Path
 
-from bemine.status import SessionStatus, collect_local_status, render_status
-from bemine.status import _dedupe_statuses
-from bemine.status import _infer_ask
+from bemine.index.status import SessionStatus, collect_local_status, render_status
+from bemine.index.status import _dedupe_statuses
+from bemine.index.status import _infer_ask
 
 
 def test_status_orders_by_last_interaction_and_marks_agent_asks(tmp_path: Path) -> None:

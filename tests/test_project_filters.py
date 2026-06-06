@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bemine.project_filters import ignored_project_reason, ignored_project_roots
+from bemine.index.project_filters import ignored_project_reason, ignored_project_roots
 
 
 def test_ignored_project_reason_filters_default_legacy_gt_root(

@@ -27,8 +27,8 @@ from bemine.kimi_handler import (
 )
 from bemine.workers.native_runtime import KimiNativeRuntime
 from bemine.context.operator_context import load_operator_context
-from bemine.project_filters import ignored_project_reason
-from bemine.status import _redact
+from bemine.index.project_filters import ignored_project_reason
+from bemine.index.status import _redact
 
 PROJECT_CATEGORY_NAME = "Bemine Projects"
 DISPATCH_CONFIG_NAME = "discord-projects.json"

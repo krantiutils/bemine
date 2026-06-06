@@ -32,7 +32,7 @@ from .context.rituals import (
     render_prime_packet,
     summary_from_args,
 )
-from .status import collect_fleet_status, render_status
+from .index.status import collect_fleet_status, render_status
 from .systemd import install_user_units, render_user_units
 from .workers.tmux_adapter import TmuxAdapter
 from .workers.workers import (

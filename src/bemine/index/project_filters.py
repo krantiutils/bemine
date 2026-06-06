@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .config import config_list
+from ..config import config_list
 
 
 def ignored_project_reason(cwd: str | Path, *, name: str = "") -> str | None:

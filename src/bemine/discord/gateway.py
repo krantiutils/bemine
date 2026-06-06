@@ -19,7 +19,7 @@ from bemine.config import BemineSettings, config_int
 from bemine.security.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
-from bemine.status import _redact, collect_fleet_status, render_status
+from bemine.index.status import _redact, collect_fleet_status, render_status
 
 from .config import Settings
 from .dispatch import (

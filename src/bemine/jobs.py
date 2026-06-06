@@ -12,7 +12,7 @@ from typing import Any
 from .config import BemineSettings
 from .db import BemineDB
 from .kernel import BemineKernel
-from .status import _redact, collect_fleet_status, render_status
+from .index.status import _redact, collect_fleet_status, render_status
 
 DiscordSender = Callable[[str], Mapping[str, Any]]
 

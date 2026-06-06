@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .models import ProjectRundown
-from .util import safe_filename
+from ..util import safe_filename
 
 
 STATUS_START = "<!-- bemine:status:start -->"
