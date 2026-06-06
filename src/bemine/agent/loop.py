@@ -14,6 +14,23 @@ from bemine.agent.clients import LLMClient
 ProgressCallback = Callable[[str], None]
 
 
+def _progress_label(name: str, args: dict) -> str:
+    """A human-readable, redacted one-liner for a tool call — shows WHAT it's doing
+    (the command/path/query), not just the tool name."""
+    from bemine.index.status import _redact
+
+    key = {"shell_run": "command", "file_read": "path", "file_search": "query"}.get(name)
+    detail = str(args.get(key, "")) if key else ""
+    if not detail and name == "audit_list":
+        detail = str(args.get("category") or args.get("event_type") or "")
+    if not detail:
+        return name
+    detail = _redact(detail).replace("`", "'").replace("\n", " ").strip()
+    if len(detail) > 160:
+        detail = detail[:160] + "…"
+    return f"{name}: {detail}"
+
+
 @dataclass(frozen=True)
 class LoopResult:
     final_text: str
@@ -120,12 +137,14 @@ class AgentLoop:
 
     def _run_tool(self, tc: ToolCall, context: ToolContext,
                   progress_callback: ProgressCallback | None) -> str:
-        if progress_callback:
-            progress_callback(f"tool: {tc.name}")
         try:
             args = json.loads(tc.arguments) if tc.arguments else {}
         except json.JSONDecodeError:
+            if progress_callback:
+                progress_callback(f"{tc.name}: (invalid args)")
             return json.dumps({"error": "invalid tool arguments JSON"})
+        if progress_callback:
+            progress_callback(_progress_label(tc.name, args))
         self.db.record_tool_call_started(
             session_id=context.session_id,
             tool_call_id=tc.id,

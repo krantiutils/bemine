@@ -154,8 +154,13 @@ class _ProgressReporter:
 
     def __call__(self, text: str) -> None:
         # Sync, invoked from the agent worker thread.
-        tool = text.split("tool:", 1)[-1].strip() if "tool:" in text else text.strip()
-        self._lines.append(f"• `{tool}`")
+        label = text.strip()
+        if label.lower().startswith("tool:"):
+            label = label[len("tool:"):].strip()
+        label = label.replace("`", "'").replace("\n", " ")
+        if len(label) > 180:
+            label = label[:180] + "…"
+        self._lines.append(f"• `{label}`")
         try:
             asyncio.run_coroutine_threadsafe(self._render(), self._loop)
         except RuntimeError:
@@ -341,7 +346,7 @@ def run_bound_agent(
         from bemine.agent.codex_appserver import run_codex_turn
 
         if progress_callback:
-            progress_callback("tool: codex (running…)")
+            progress_callback("codex (running…)")
         sandbox = config_string("codex", "sandbox", "workspace-write")
         codex_bin = config_string("codex", "bin", "") or "codex"
 
