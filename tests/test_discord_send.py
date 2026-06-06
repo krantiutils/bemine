@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from mayor_discord import send
-from mayor_discord.config import Settings
+from bemine.discord import send
+from bemine.discord.config import Settings
 
 
 def test_send_message_splits_long_text_and_replies_only_first_chunk(monkeypatch, tmp_path: Path) -> None:

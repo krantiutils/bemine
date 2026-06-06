@@ -2,7 +2,7 @@ from pathlib import Path
 
 from bemine.config import BemineSettings
 from bemine.agent.clients import build_client_for_runtime, AnthropicClient, CodexClient
-from mayor_discord.dispatch import resolve_channel_binding, ChannelBinding
+from bemine.discord.dispatch import resolve_channel_binding, ChannelBinding
 
 
 def test_runtime_factory_maps_runtime_to_client(tmp_path):

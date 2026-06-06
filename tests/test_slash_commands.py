@@ -1,6 +1,6 @@
 from pathlib import Path
 from bemine.config import BemineSettings
-from mayor_discord.gateway import slash_command_text
+from bemine.discord.gateway import slash_command_text
 
 
 def test_slash_command_calls_registry(tmp_path):

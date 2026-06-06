@@ -1337,7 +1337,7 @@ def main(argv: list[str] | None = None) -> None:
                 print(result.text)
     elif args.command == "dispatch":
         if args.dispatch_command == "status":
-            from mayor_discord.dispatch import (
+            from bemine.discord.dispatch import (
                 dispatch_status_payload,
                 render_dispatch_status,
             )
@@ -1537,7 +1537,7 @@ def main(argv: list[str] | None = None) -> None:
                     print(f"# {unit.name}\n{unit.text}")
     elif args.command == "discord":
         if args.discord_command == "write-project-channels":
-            from mayor_discord.dispatch import (
+            from bemine.discord.dispatch import (
                 project_channels_from_db,
                 write_project_channel_config,
             )
@@ -1554,8 +1554,8 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
         elif args.discord_command == "sync-project-channels":
-            from mayor_discord.config import Settings as DiscordSettings
-            from mayor_discord.dispatch import sync_project_channels_to_discord
+            from bemine.discord.config import Settings as DiscordSettings
+            from bemine.discord.dispatch import sync_project_channels_to_discord
 
             discord_settings = DiscordSettings.load()
             guild_id = (

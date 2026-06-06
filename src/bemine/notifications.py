@@ -100,9 +100,9 @@ def notify_permission_request_via_discord(
     db: BemineDB,
     request_id: str,
 ) -> PermissionNotificationResult:
-    from mayor_discord.config import Settings
-    from mayor_discord.send import send_message
-    from mayor_discord.store import Store
+    from bemine.discord.config import Settings
+    from bemine.discord.send import send_message
+    from bemine.discord.store import Store
 
     base = Settings.load()
     settings = Settings(

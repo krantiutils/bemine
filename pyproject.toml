@@ -13,10 +13,10 @@ dependencies = [
 [project.scripts]
 bemine = "bemine.cli:main"
 bemine-daemon = "bemine.daemon:main"
-bemine-discord-gateway = "mayor_discord.gateway:main"
-bemine-discord-send = "mayor_discord.send:main"
-mayor-discord-gateway = "mayor_discord.gateway:main"
-mayor-discord-send = "mayor_discord.send:main"
+bemine-discord-gateway = "bemine.discord.gateway:main"
+bemine-discord-send = "bemine.discord.send:main"
+mayor-discord-gateway = "bemine.discord.gateway:main"
+mayor-discord-send = "bemine.discord.send:main"
 
 [dependency-groups]
 dev = [
@@ -28,4 +28,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bemine", "src/mayor_discord"]
+packages = ["src/bemine"]

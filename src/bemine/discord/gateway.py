@@ -260,7 +260,7 @@ def run_bound_agent(
     from bemine.agent.session import ensure_session
     from bemine.agent.loop import AgentLoop
     from bemine.agent.clients import build_client_for_runtime
-    from mayor_discord.dispatch import resolve_channel_binding
+    from bemine.discord.dispatch import resolve_channel_binding
 
     db = BemineDB(settings.db_path)
     binding = resolve_channel_binding(settings, message)

@@ -1,4 +1,4 @@
-from mayor_discord.send import chunk_for_discord
+from bemine.discord.send import chunk_for_discord
 
 
 def test_chunk_for_discord_splits_on_limit():

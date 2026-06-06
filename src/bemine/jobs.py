@@ -341,9 +341,9 @@ def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:
 
 
 def _discord_sender(db: BemineDB) -> DiscordSender:
-    from mayor_discord.config import Settings
-    from mayor_discord.send import send_message
-    from mayor_discord.store import Store
+    from bemine.discord.config import Settings
+    from bemine.discord.send import send_message
+    from bemine.discord.store import Store
     import asyncio
 
     base = Settings.load()

@@ -3,14 +3,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from mayor_discord.dispatch import (
+from bemine.discord.dispatch import (
     DispatchProgress,
     DispatchResult,
     ProjectChannel,
     ProjectRoute,
 )
-import mayor_discord.gateway as gw
-from mayor_discord.gateway import (
+import bemine.discord.gateway as gw
+from bemine.discord.gateway import (
     ACK_REACTION,
     SUCCESS_REACTION,
     WORKING_REACTION,
@@ -21,7 +21,7 @@ from mayor_discord.gateway import (
     _dispatch_response_text,
     _format_conversation_context,
 )
-from mayor_discord.store import Store
+from bemine.discord.store import Store
 
 
 class FakeMessage:
@@ -282,8 +282,8 @@ class _FakeCreatedAt:
 
 
 def _make_gateway(tmp_path: Path):
-    from mayor_discord.config import Settings
-    from mayor_discord.gateway import MayorDiscordGateway
+    from bemine.discord.config import Settings
+    from bemine.discord.gateway import MayorDiscordGateway
 
     settings = Settings(
         token="dummy-token",
