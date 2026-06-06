@@ -504,6 +504,40 @@ def _text_from_content(value: Any) -> str:
     return ""
 
 
+def session_transcript_tail(
+    path: Path, runtime: str, *, max_lines: int = 30, max_chars: int = 1600
+) -> str:
+    """Last ~max_lines of human-readable output from a session log (redacted). Used to
+    put the model's recent output into notifications so you can read it without opening
+    the terminal."""
+    runtime = (runtime or "").lower()
+    out_lines: list[str] = []
+    for obj in _read_jsonl_tail(path):
+        role, text = "", ""
+        if runtime == "codex":
+            payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
+            if obj.get("type") == "response_item" and payload.get("type") == "message":
+                role = str(payload.get("role") or "")
+                text = _text_from_content(payload.get("content"))
+        elif runtime == "claude":
+            role = str(obj.get("type") or "")
+            msg = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+            text = _text_from_content(msg.get("content"))
+        else:  # kimi / generic
+            role = str(obj.get("role") or obj.get("type") or "")
+            text = _text_from_content(
+                obj.get("message") or obj.get("content") or obj.get("text")
+            )
+        if role in {"user", "assistant"} and text.strip():
+            label = "you" if role == "user" else "model"
+            for line in text.strip().splitlines():
+                out_lines.append(f"[{label}] {line}")
+    tail = _redact("\n".join(out_lines[-max_lines:]))
+    if len(tail) > max_chars:
+        tail = "…\n" + tail[-max_chars:]
+    return tail
+
+
 def _session_id_from_path(path: Path) -> str:
     match = UUID_RE.search(path.stem)
     return match.group(1) if match else path.stem

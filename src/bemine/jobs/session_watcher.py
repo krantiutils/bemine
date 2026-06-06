@@ -8,7 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from bemine.config import BemineSettings
-from bemine.index.status import collect_fleet_status, SessionStatus
+from bemine.index.status import collect_fleet_status, SessionStatus, session_transcript_tail
+
+
+def _output_tail(status: "SessionStatus") -> str:
+    """Last ~30 lines of the session's output (redacted), for the notification."""
+    if not status.source_path:
+        return ""
+    try:
+        return session_transcript_tail(Path(status.source_path), status.runtime)
+    except Exception:
+        return ""
 
 
 STATE_FILE = "session_watcher_state.json"
@@ -94,6 +104,7 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
                 "cwd": status.cwd,
                 "ask_summary": status.ask_summary,
                 "age_seconds": status.age_seconds,
+                "output_tail": _output_tail(status),
             })
 
         # "Done" detection: we must have OBSERVED the session actively working (recent
@@ -113,6 +124,7 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
                 "cwd": status.cwd,
                 "latest_summary": status.latest_summary,
                 "age_seconds": status.age_seconds,
+                "output_tail": _output_tail(status),
             })
             notified_done = True
             seen_active = False
@@ -166,7 +178,11 @@ def render_events(events: list[dict[str, Any]]) -> str:
                 f"\u26a0\ufe0f **Needs input** — `{event['session_id']}` on {event['device_id']} "
                 f"(`{event['cwd'] or 'unknown'}`)\n  > {event['ask_summary']}"
             )
-    
+        # Recent output so you can read what happened without opening the terminal.
+        out_tail = str(event.get("output_tail") or "").strip()
+        if out_tail:
+            lines.append("```\n" + out_tail[:1600] + "\n```")
+
     return "\n".join(lines)
 
 
