@@ -2,54 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import argparse
-import json
 import logging
 import re
+import threading
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Mapping
+from typing import Any, AsyncIterator, Mapping
 
 import discord
 from discord.ext import commands
 
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
-from bemine.config import (
-    BemineSettings,
-    config_int,
-    config_path,
-    load_bemine_config,
-    render_toml_config,
-    update_bemine_config,
-)
+from bemine.config import BemineSettings, config_int
 from bemine.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
 from bemine.status import _redact, collect_fleet_status, render_status
-from bemine.workers import (
-    WorkerController,
-    WorkerError,
-    render_duplicate_heads,
-    render_transfer,
-    render_workers,
-)
 
 from .config import Settings
 from .dispatch import (
-    DispatchRequest,
     DispatchProgress,
     DispatchResult,
-    ProjectDispatcher,
     ProjectRoute,
-    dispatch_status_payload,
     infer_project_route,
-    render_dispatch_status,
     resolve_dispatch_runtime,
 )
 from .store import Store
-
-from bemine.cli import audit_events_to_dicts, render_audit_events
 
 
 LOG = logging.getLogger("mayor.discord.gateway")
@@ -63,20 +42,6 @@ APPROVAL_CODE_RE = re.compile(
     r"\b((?:!?(?:mayor|bemine)\s+)?approve\s+\S+\s+)(\d{6,8})\b",
     re.IGNORECASE,
 )
-
-@dataclass(frozen=True)
-class LocalToolResult:
-    tool: str
-    text: str
-
-
-@dataclass(frozen=True)
-class LocalToolSpec:
-    name: str
-    description: str
-    arguments: str
-    handler: Callable[[Mapping[str, Any]], str]
-
 
 class DiscordResponder:
     def __init__(self, store: Store, source_message: discord.Message) -> None:
@@ -171,386 +136,6 @@ def _capability_text() -> str:
     return render_capability_manifest(manifest)
 
 
-def _config_text(*, toml: bool = False) -> str:
-    data = load_bemine_config()
-    if toml:
-        return render_toml_config(data)
-    settings = BemineSettings.load()
-    dispatch = dispatch_status_payload(settings)
-    lines = [
-        "Bemine config:",
-        f"- file: {config_path()}",
-        f"- device: {settings.device_id}",
-        f"- state: {settings.state_dir}",
-        f"- vault: {settings.vault_dir}",
-        f"- status devices: {', '.join(settings.status_devices)}",
-        "",
-        render_dispatch_status(dispatch).strip(),
-    ]
-    return "\n".join(lines) + "\n"
-
-
-def _local_tool_response(
-    content: str,
-    *,
-    conversation_context: str = "",
-    router: Callable[[str, str], Mapping[str, Any] | None] | None = None,
-) -> LocalToolResult | None:
-    decision = _route_local_tool(
-        content,
-        conversation_context=conversation_context,
-        router=router,
-    )
-    if decision is None:
-        return None
-    tool = _local_tool_by_name().get(str(decision.get("tool") or ""))
-    if tool is None:
-        return None
-    args = decision.get("arguments")
-    arguments = args if isinstance(args, Mapping) else {}
-    return LocalToolResult(tool=tool.name, text=tool.handler(arguments))
-
-
-def _route_local_tool(
-    content: str,
-    *,
-    conversation_context: str = "",
-    router: Callable[[str, str], Mapping[str, Any] | None] | None = None,
-) -> Mapping[str, Any] | None:
-    normalized = " ".join(content.strip().split())
-    if not normalized:
-        return None
-    catalog = _tool_catalog_text()
-    router = router or _route_local_tool_with_kimi
-    try:
-        decision = router(_router_prompt(normalized, conversation_context), catalog)
-    except Exception as exc:
-        LOG.debug("local tool router failed: %s", exc)
-        return None
-    if not isinstance(decision, Mapping):
-        return None
-    tool_name = str(decision.get("tool") or "")
-    if tool_name in {"", "project.dispatch", "none"}:
-        return None
-    if tool_name not in _local_tool_by_name():
-        return None
-    confidence = _float(decision.get("confidence"), default=1.0)
-    return decision if confidence >= 0.55 else None
-
-
-def _router_prompt(content: str, conversation_context: str) -> str:
-    if not conversation_context.strip():
-        return content
-    return (
-        "Recent channel context, oldest to newest:\n"
-        f"{conversation_context.strip()}\n\n"
-        "Current Discord message:\n"
-        f"{content}"
-    )
-
-
-def _needs_reference_clarification(
-    content: str,
-    *,
-    conversation_context: str,
-    route_reason: str,
-) -> bool:
-    normalized = " ".join(content.lower().strip().split())
-    if route_reason != "mayor-fallback":
-        return False
-    if not normalized:
-        return False
-    vague_messages = {
-        "what is this",
-        "what is this?",
-        "what's this",
-        "whats this",
-        "what is that",
-        "what is that?",
-        "what's that",
-        "whats that",
-        "why",
-        "why?",
-        "explain this",
-        "explain that",
-    }
-    if normalized not in vague_messages:
-        return False
-    return "(bot)" not in conversation_context
-
-
-def _route_local_tool_with_kimi(content: str, catalog: str) -> Mapping[str, Any] | None:
-    settings = BemineSettings.load()
-    prompt = (
-        "Discord operator message:\n"
-        f"{content}\n\n"
-        "Available local Bemine tools:\n"
-        f"{catalog}\n\n"
-        "Choose one local tool only when the user is asking Bemine to inspect or "
-        "change harness state. Choose project.dispatch for open-ended project work, "
-        "conversation, coding tasks, or anything that does not clearly need a local "
-        "Bemine tool. Return only JSON with keys: tool, arguments, confidence."
-    )
-    result = KimiHandler(settings.hermes_home).ask(
-        prompt,
-        system=(
-            "You are Bemine's Discord tool router. Output strict JSON only. "
-            "Do not explain commands to the user."
-        ),
-        max_tokens=300,
-        timeout=20.0,
-    )
-    return _parse_tool_decision(result.text)
-
-
-def _parse_tool_decision(text: str) -> Mapping[str, Any] | None:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
-        stripped = re.sub(r"\s*```$", "", stripped)
-    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        parsed = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, Mapping) else None
-
-
-def _tool_catalog_text() -> str:
-    return "\n".join(
-        f"- {tool.name}: {tool.description} Arguments: {tool.arguments}"
-        for tool in _local_tools()
-    )
-
-
-def _local_tool_by_name() -> dict[str, LocalToolSpec]:
-    return {tool.name: tool for tool in _local_tools()}
-
-
-def _local_tools() -> tuple[LocalToolSpec, ...]:
-    return (
-        LocalToolSpec(
-            name="config.show",
-            description="Show Bemine's active config file and effective runtime settings.",
-            arguments='{"format": "summary|toml"}',
-            handler=_tool_config_show,
-        ),
-        LocalToolSpec(
-            name="config.update_dispatch",
-            description="Change the default Discord dispatch runtime/model in bemine.toml.",
-            arguments='{"runtime": "codex|kimi", "model": "model id such as gpt-5.4-mini or kimi-k2.6"}',
-            handler=_tool_config_update_dispatch,
-        ),
-        LocalToolSpec(
-            name="dispatch.status",
-            description="Show the active Discord dispatch runtime, model, provider, and tool-call support.",
-            arguments="{}",
-            handler=_tool_dispatch_status,
-        ),
-        LocalToolSpec(
-            name="status.show",
-            description="Show recent Codex, Claude, and Kimi sessions by last interaction.",
-            arguments='{"limit": 1-20}',
-            handler=_tool_status_show,
-        ),
-        LocalToolSpec(
-            name="rundown.show",
-            description="Show the project rundown from indexed history and vault memory.",
-            arguments="{}",
-            handler=lambda _args: _build_rundown(),
-        ),
-        LocalToolSpec(
-            name="capabilities.show",
-            description="Show the redacted credential and infrastructure capability manifest.",
-            arguments="{}",
-            handler=lambda _args: _capability_text(),
-        ),
-        LocalToolSpec(
-            name="permissions.pending",
-            description="Show pending gated credential permission requests.",
-            arguments="{}",
-            handler=lambda _args: _pending_permissions_text(),
-        ),
-        LocalToolSpec(
-            name="workers.list",
-            description="Show managed live workers and whether their tmux sessions are reachable.",
-            arguments="{}",
-            handler=_tool_workers_list,
-        ),
-        LocalToolSpec(
-            name="workers.duplicates",
-            description="Show projects with more than one active managed worker head.",
-            arguments="{}",
-            handler=_tool_workers_duplicates,
-        ),
-        LocalToolSpec(
-            name="workers.transfer",
-            description="Move project context from one managed worker to another, including SSH-backed remote tmux targets.",
-            arguments='{"source": "source worker", "target": "target worker", "runtime": "claude|codex|kimi|shell", "target_device": "optional device such as mbp2", "cwd": "optional project root", "stop_source": false}',
-            handler=_tool_workers_transfer,
-        ),
-        LocalToolSpec(
-            name="audit.list",
-            description="Show recent Bemine audit events such as worker transfers, dispatch calls, jobs, and credential gates.",
-            arguments='{"category": "optional category", "event_type": "optional event type", "project_id": "optional project id", "limit": 1-20}',
-            handler=_tool_audit_list,
-        ),
-        LocalToolSpec(
-            name="checklist.add",
-            description="Append an item to a named Obsidian checklist such as Shopping, Buy, Errands, or Routine.",
-            arguments='{"list": "Shopping", "item": "thing to add"}',
-            handler=_tool_checklist_add,
-        ),
-    )
-
-
-def _tool_config_show(args: Mapping[str, Any]) -> str:
-    toml = str(args.get("format") or "").lower() == "toml"
-    text = _config_text(toml=toml)
-    return f"```toml\n{text.rstrip()}\n```" if toml else text
-
-
-def _tool_config_update_dispatch(args: Mapping[str, Any]) -> str:
-    model = _normalize_model_id(str(args.get("model") or ""))
-    runtime = str(args.get("runtime") or "").strip().lower()
-    if not runtime:
-        runtime = _runtime_for_model(model)
-    if runtime not in {"codex", "kimi"}:
-        raise ValueError("Discord dispatch currently supports codex and kimi runtimes")
-    updates: dict[tuple[str, str], object] = {("dispatch", "runtime"): runtime}
-    if model:
-        updates[("kimi" if runtime == "kimi" else "codex", "model")] = model
-    path = update_bemine_config(updates)
-    dispatch = dispatch_status_payload(BemineSettings.load())
-    return (
-        f"Updated `{path}`.\n"
-        f"- runtime: {dispatch.get('runtime')}\n"
-        f"- model: {dispatch.get('model')}\n"
-        f"- source: {dispatch.get('model_source')}"
-    )
-
-
-def _tool_dispatch_status(_args: Mapping[str, Any]) -> str:
-    return render_dispatch_status(dispatch_status_payload(BemineSettings.load()))
-
-
-def _tool_status_show(args: Mapping[str, Any]) -> str:
-    limit = max(1, min(20, int(_float(args.get("limit"), default=8))))
-    settings = BemineSettings.load()
-    statuses, errors = collect_fleet_status(settings)
-    return render_status(statuses, errors, limit=limit)
-
-
-def _tool_workers_list(_args: Mapping[str, Any]) -> str:
-    return render_workers(WorkerController(BemineSettings.load()).list())
-
-
-def _tool_workers_duplicates(_args: Mapping[str, Any]) -> str:
-    return render_duplicate_heads(WorkerController(BemineSettings.load()).duplicate_heads())
-
-
-def _tool_workers_transfer(args: Mapping[str, Any]) -> str:
-    source = str(args.get("source") or args.get("source_name") or "").strip()
-    target = str(args.get("target") or args.get("target_name") or "").strip()
-    runtime = str(args.get("runtime") or args.get("target_runtime") or "").strip()
-    if not source:
-        raise ValueError("source worker is required")
-    if not target:
-        raise ValueError("target worker is required")
-    if not runtime:
-        raise ValueError("target runtime is required")
-    cwd = str(args.get("cwd") or "").strip()
-    command = str(args.get("command") or "").strip()
-    target_device = str(args.get("target_device") or args.get("device") or "").strip()
-    stop_source = _bool(args.get("stop_source"), default=False)
-    try:
-        result = WorkerController(BemineSettings.load()).transfer(
-            source_name=source,
-            target_name=target,
-            target_runtime=runtime,
-            cwd=Path(cwd) if cwd else None,
-            command=command,
-            target_device=target_device,
-            stop_source=stop_source,
-        )
-    except WorkerError as exc:
-        raise ValueError(str(exc)) from exc
-    return render_transfer(result)
-
-
-def _tool_audit_list(args: Mapping[str, Any]) -> str:
-    limit = max(1, min(20, int(_float(args.get("limit"), default=8))))
-    kernel = BemineKernel(BemineSettings.load())
-    rows = kernel.db.list_audit_events(
-        category=str(args.get("category") or "").strip(),
-        event_type=str(args.get("event_type") or args.get("event") or "").strip(),
-        project_id=str(args.get("project_id") or "").strip(),
-        limit=limit,
-    )
-    if _bool(args.get("json"), default=False):
-        return "```json\n" + json.dumps(audit_events_to_dicts(rows), indent=2) + "\n```"
-    return render_audit_events(rows)
-
-
-def _tool_checklist_add(args: Mapping[str, Any]) -> str:
-    item = str(args.get("item") or args.get("text") or "").strip()
-    if not item:
-        raise ValueError("checklist item is required")
-    title = str(args.get("list") or args.get("checklist") or "Shopping").strip()
-    if title.lower() in {"buy", "to buy", "shopping list"}:
-        title = "Shopping"
-    title = _checklist_title(title)
-    settings = BemineSettings.load()
-    path = settings.vault_dir / "Checklists" / f"{title}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        path.write_text(
-            f"# {title}\n\nBemine-managed checklist.\n\n",
-            encoding="utf-8",
-        )
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(f"- [ ] {item}\n")
-    return f"Added to **{title}**:\n- [ ] {item}\n\n`{path}`"
-
-
-def _checklist_title(value: str) -> str:
-    cleaned = " ".join(value.split()).strip() or "Shopping"
-    safe = "".join(ch if ch.isalnum() or ch in {" ", "-", "_"} else "" for ch in cleaned)
-    return safe.strip().title().replace(" ", "-") or "Shopping"
-
-
-def _runtime_for_model(model: str) -> str:
-    lowered = model.lower()
-    if "kimi" in lowered or lowered.startswith("k2") or "k2." in lowered:
-        return "kimi"
-    if "gpt" in lowered or "codex" in lowered or "openai" in lowered:
-        return "codex"
-    return resolve_dispatch_runtime()
-
-
-def _normalize_model_id(value: str) -> str:
-    value = re.sub(r"\bplease\b", "", value, flags=re.IGNORECASE)
-    value = value.strip(" .,!?:;`\"'")
-    return "-".join(value.replace("_", "-").split()).lower()
-
-
-def _float(value: object, *, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _bool(value: object, *, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _pending_permissions_text() -> str:
     kernel = BemineKernel(BemineSettings.load())
     rows = kernel.db.list_permission_requests(status="pending")
@@ -590,6 +175,53 @@ async def _best_effort_typing(channel: discord.abc.Messageable) -> AsyncIterator
             LOG.debug("could not stop Discord typing indicator: %s", exc)
 
 
+def run_bound_agent(
+    settings,
+    message,
+    normalized,
+    saved_attachments=None,
+    progress_callback=None,
+):
+    """Deterministic: resolve the session bound to this channel/thread, append the user
+    message, run Bemine's agent loop. No intent classification."""
+    from bemine.db import BemineDB
+    from bemine.agent.session import ensure_session
+    from bemine.agent.loop import AgentLoop
+    from bemine.agent.clients import build_client_for_runtime
+    from mayor_discord.dispatch import resolve_channel_binding
+
+    db = BemineDB(settings.db_path)
+    binding = resolve_channel_binding(settings, message)
+    channel = message.channel
+    is_dm = getattr(message, "guild", None) is None
+    chan_type = str(getattr(channel, "type", "")).lower()
+    chat_type = "dm" if is_dm else ("thread" if "thread" in chan_type else "channel")
+    channel_id = str(getattr(channel, "id", ""))
+    session_id = ensure_session(
+        db,
+        settings,
+        channel_id=channel_id,
+        chat_type=chat_type,
+        chat_id=channel_id,
+        thread_id=channel_id,
+        project_id=binding.project_id,
+        runtime=binding.runtime,
+        model=binding.model or binding.runtime,
+        cwd=binding.cwd,
+    )
+    client = build_client_for_runtime(settings, binding.runtime)
+    loop = AgentLoop(settings=settings, db=db, client=client)
+    result = loop.run(
+        session_id=session_id,
+        project_id=binding.project_id,
+        cwd=binding.cwd,
+        user_message=normalized,
+        system=binding.system,
+        progress_callback=progress_callback,
+    )
+    return result.final_text
+
+
 class MayorDiscordGateway:
     def __init__(self, settings: Settings) -> None:
         settings.require_token()
@@ -611,6 +243,8 @@ class MayorDiscordGateway:
                 replied_user=True,
             ),
         )
+        self._dispatch_tasks: dict[str, asyncio.Task[None]] = {}
+        self._dispatch_cancel_events: dict[str, threading.Event] = {}
         self._register_events()
 
     def _register_events(self) -> None:
@@ -641,7 +275,6 @@ class MayorDiscordGateway:
         saved_attachments = await self._record_message(message)
         normalized = message.content.strip()
         normalized_lower = normalized.lower()
-        conversation_context = self._conversation_context(message)
         responder = DiscordResponder(self.store, message)
 
         if normalized_lower in {"!mayor ping", "mayor ping"}:
@@ -749,81 +382,25 @@ class MayorDiscordGateway:
             await responder.send(f"Denied `{denial}`.")
             return
 
-        if normalized:
+        if normalized or saved_attachments:
+            await _acknowledge_message(message, emoji=WORKING_REACTION)
             try:
-                local_result = await asyncio.to_thread(
-                    _local_tool_response,
+                final_text = await asyncio.to_thread(
+                    run_bound_agent,
+                    BemineSettings.load(),
+                    message,
                     normalized,
-                    conversation_context=conversation_context,
+                    saved_attachments,
                 )
             except Exception as exc:
                 await _acknowledge_message(message, emoji=WARNING_REACTION)
-                await responder.send(f"`tool: local`\nLocal tool failed: {exc}")
+                await responder.send(f"Dispatch failed: {exc}")
                 return
-            if local_result:
-                await _acknowledge_message(message, emoji=SUCCESS_REACTION)
-                await responder.send_chunks(
-                    f"`tool: {local_result.tool}`\n{local_result.text}",
-                    limit=1900,
-                )
-                return
-
-        settings = BemineSettings.load()
-        route = _project_route_for_message(message, settings=settings)
-        if route and (normalized or saved_attachments):
-            if _needs_reference_clarification(
-                normalized,
-                conversation_context=conversation_context,
-                route_reason=route.reason,
-            ):
-                await responder.send(
-                    "I need the specific message, file, screenshot, or topic you mean by `this`. "
-                    "Reply to the bot message or name the project/topic, and I will "
-                    "inspect that directly."
-                )
-                return
-            await _acknowledge_message(message, emoji=WORKING_REACTION)
-            request = DispatchRequest(
-                channel_id=str(message.channel.id),
-                channel_name=_message_channel_name(message),
-                message_id=str(message.id),
-                author_name=getattr(message.author, "global_name", None)
-                or str(message.author),
-                content=normalized,
-                attachments=saved_attachments,
-                route_reason=route.reason,
-                conversation_context=conversation_context,
-            )
-            loop = asyncio.get_running_loop()
-
-            def publish_progress(progress: DispatchProgress) -> None:
-                future = asyncio.run_coroutine_threadsafe(
-                    _send_dispatch_progress(responder, progress),
-                    loop,
-                )
-                try:
-                    future.result(timeout=5)
-                except Exception as exc:
-                    LOG.debug("could not send dispatch progress: %s", exc)
-
-            result = await asyncio.to_thread(
-                ProjectDispatcher(settings).dispatch,
-                route.project,
-                request,
-                publish_progress,
-            )
-            await _acknowledge_message(
-                message,
-                emoji=SUCCESS_REACTION if result.ok else WARNING_REACTION,
-            )
-            for chunk in _discord_chunk(
-                _dispatch_response_text(result, route), limit=1900
-            ):
-                await responder.send(chunk)
+            await _acknowledge_message(message, emoji=SUCCESS_REACTION)
+            await responder.send_chunks(final_text or "(no output)", limit=1900)
             return
 
         await self.bot.process_commands(message)
-        await responder.send(self._default_reply(saved_attachments))
 
     def _is_allowed(self, author: discord.abc.User) -> bool:
         if self.settings.allow_all_users:
