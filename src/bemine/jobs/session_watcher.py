@@ -63,7 +63,7 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
     state = WatcherState.load(state_path)
     now = time.time()
     
-    statuses, errors = collect_fleet_status(settings, devices=["local"])
+    statuses, errors = collect_fleet_status(settings, devices=(settings.status_devices or ["local"]))
     current_sessions: dict[str, SessionStatus] = {}
     for status in statuses:
         key = _session_key(status)
