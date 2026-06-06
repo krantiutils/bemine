@@ -82,3 +82,32 @@ def test_deliver_events_empty_is_noop():
     from bemine.jobs.session_watcher import deliver_events
     from bemine.config import BemineSettings
     assert deliver_events(BemineSettings.load(), []) == ""
+
+
+def _status_age(session_id, age, *, asks_user=False):
+    return SessionStatus(
+        device_id="local", runtime="codex", session_id=session_id, cwd="/home/cdjk/bm",
+        source_path="", last_interaction_at=0.0, age_seconds=age, last_role="assistant",
+        asks_user=asks_user, ask_summary="", latest_summary="did the thing", model="", branch="")
+
+
+def test_done_fires_when_active_session_goes_idle(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    state_path = tmp_path / "state.json"
+    # Round 1: ACTIVE (age below the 300s idle threshold) -> observed active, no done yet
+    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("sx", 5)], []))
+    assert not any(e["type"] == "done" for e in sw.check_sessions(settings, state_path))
+    # Round 2: now IDLE (age past threshold) -> fires exactly one "done"
+    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("sx", 600)], []))
+    events = sw.check_sessions(settings, state_path)
+    assert sum(1 for e in events if e["type"] == "done" and e["session_id"] == "sx") == 1
+    # Round 3: still idle -> no duplicate
+    assert not any(e["type"] == "done" for e in sw.check_sessions(settings, state_path))
+
+
+def test_no_done_for_session_already_idle_when_first_seen(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    state_path = tmp_path / "state.json"
+    # First sight is already idle (never observed active) -> must NOT fire done (avoids spam)
+    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("old", 9000)], []))
+    assert not any(e["type"] == "done" for e in sw.check_sessions(settings, state_path))

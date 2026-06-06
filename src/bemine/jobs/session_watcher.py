@@ -73,11 +73,18 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
                 "age_seconds": old_data.get("age_seconds", 0),
             })
     
-    # Check for sessions needing input
+    # An idle threshold: a session whose last activity is older than this is "done
+    # working". Configurable via [jobs].session_idle_seconds.
+    from ..config import config_int
+    idle_threshold = max(60, config_int("jobs", "session_idle_seconds", 300))
+
+    # Check for sessions needing input and for sessions that just went idle ("done").
     for key_str, status in current_sessions.items():
         old_data = state.known_sessions.get(key_str, {})
         was_asking = old_data.get("asks_user", False)
-        
+        seen_active = old_data.get("seen_active", False)
+        notified_done = old_data.get("notified_done", False)
+
         if status.asks_user and not was_asking:
             events.append({
                 "type": "needs_input",
@@ -88,7 +95,28 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
                 "ask_summary": status.ask_summary,
                 "age_seconds": status.age_seconds,
             })
-        
+
+        # "Done" detection: we must have OBSERVED the session actively working (recent
+        # activity) before we'll announce it finished — this avoids spamming old idle
+        # sessions on first sight. When an observed-active session crosses the idle
+        # threshold (and isn't asking), fire one "done" event.
+        active_now = status.age_seconds < idle_threshold and not status.asks_user
+        if active_now:
+            seen_active = True
+            notified_done = False
+        if seen_active and not active_now and not status.asks_user and not notified_done:
+            events.append({
+                "type": "done",
+                "device_id": status.device_id,
+                "runtime": status.runtime,
+                "session_id": status.session_id,
+                "cwd": status.cwd,
+                "latest_summary": status.latest_summary,
+                "age_seconds": status.age_seconds,
+            })
+            notified_done = True
+            seen_active = False
+
         # Update state
         state.known_sessions[key_str] = {
             "device_id": status.device_id,
@@ -98,6 +126,8 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
             "asks_user": status.asks_user,
             "age_seconds": status.age_seconds,
             "last_seen": now,
+            "seen_active": seen_active,
+            "notified_done": notified_done,
         }
     
     # Clean up very old finished sessions (older than 24h)
@@ -119,7 +149,14 @@ def render_events(events: list[dict[str, Any]]) -> str:
     
     lines = ["**Session updates**"]
     for event in events:
-        if event["type"] == "finished":
+        if event["type"] == "done":
+            summary = str(event.get("latest_summary") or "").strip()
+            tail = ("\n  > " + summary) if summary else ""
+            lines.append(
+                "✅ **Done** — `" + str(event.get("runtime", "")) + "` finished working in `"
+                + str(event.get("cwd") or "unknown") + "` on " + str(event.get("device_id", "")) + tail
+            )
+        elif event["type"] == "finished":
             lines.append(
                 f"\u2705 **Finished** — `{event['session_id']}` on {event['device_id']} "
                 f"(`{event['cwd'] or 'unknown'}`)"
