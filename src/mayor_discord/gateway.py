@@ -14,6 +14,7 @@ import discord
 from discord.ext import commands
 
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
+from bemine.commands import run_command
 from bemine.config import BemineSettings, config_int
 from bemine.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
@@ -42,6 +43,77 @@ APPROVAL_CODE_RE = re.compile(
     r"\b((?:!?(?:mayor|bemine)\s+)?approve\s+\S+\s+)(\d{6,8})\b",
     re.IGNORECASE,
 )
+
+# ---------------------------------------------------------------------------
+# Slash command bridge — deterministic ops, no LLM in the path.
+# ---------------------------------------------------------------------------
+
+# Maps Discord slash command name -> registry command name.
+_SLASH_TO_COMMAND: dict[str, str] = {
+    "status": "status",
+    "rundown": "rundown",
+    "jobs": "jobs.list",
+    "usage": "usage",
+    "capabilities": "capabilities",
+}
+
+
+def slash_command_text(settings: BemineSettings, slash_name: str, args: dict) -> str:
+    """Resolve a slash command name to a registry command and run it.
+
+    Returns the plain-text result suitable for sending back to Discord.
+    No LLM is invoked; this is entirely deterministic.
+    """
+    command = _SLASH_TO_COMMAND.get(slash_name)
+    if not command:
+        return f"Unknown command: {slash_name}"
+    return run_command(command, settings, args).text
+
+
+def register_slash_commands(
+    tree: discord.app_commands.CommandTree,
+    *,
+    settings_loader,
+    is_allowed_check=None,
+) -> None:
+    """Register each slash command in _SLASH_TO_COMMAND on *tree*.
+
+    ``settings_loader`` is a zero-argument callable returning a
+    ``BemineSettings`` instance (allows dependency injection in tests).
+    ``is_allowed_check`` is an optional ``(discord.Interaction) -> bool``
+    predicate; when provided, commands silently return an "Access denied"
+    message for unauthorised users.
+    """
+
+    async def _run_slash(interaction: discord.Interaction, slash_name: str) -> None:
+        if is_allowed_check is not None and not is_allowed_check(interaction):
+            await interaction.response.send_message(
+                "Access denied.", ephemeral=True
+            )
+            return
+        settings = await asyncio.to_thread(settings_loader)
+        text = await asyncio.to_thread(slash_command_text, settings, slash_name, {})
+        chunks = _discord_chunk(text, limit=1900)
+        await interaction.response.send_message(chunks[0])
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk)
+
+    for slash_name in _SLASH_TO_COMMAND:
+        # Capture slash_name in a default argument to avoid closure-over-loop issues.
+        async def _handler(
+            interaction: discord.Interaction,
+            _name: str = slash_name,
+        ) -> None:
+            await _run_slash(interaction, _name)
+
+        _handler.__name__ = slash_name
+        cmd = discord.app_commands.Command(
+            name=slash_name,
+            description=f"Bemine: {slash_name}",
+            callback=_handler,
+        )
+        tree.add_command(cmd)
+
 
 class DiscordResponder:
     def __init__(self, store: Store, source_message: discord.Message) -> None:
@@ -248,11 +320,22 @@ class MayorDiscordGateway:
         self._register_events()
 
     def _register_events(self) -> None:
+        register_slash_commands(
+            self.bot.tree,
+            settings_loader=BemineSettings.load,
+            is_allowed_check=lambda interaction: self._is_allowed(interaction.user),
+        )
+
         @self.bot.event
         async def on_ready() -> None:
             LOG.info("connected as %s", self.bot.user)
             LOG.info("state db: %s", self.settings.db_path)
             LOG.info("inbox: %s", self.settings.inbox_dir)
+            try:
+                synced = await self.bot.tree.sync()
+                LOG.info("synced %d slash command(s) globally", len(synced))
+            except discord.DiscordException as exc:
+                LOG.warning("could not sync slash command tree: %s", exc)
 
         @self.bot.event
         async def on_message(message: discord.Message) -> None:
