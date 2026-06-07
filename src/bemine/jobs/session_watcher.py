@@ -247,22 +247,61 @@ def _is_project_cwd(cwd: str) -> bool:
     return base not in _CHANNEL_JUNK_BASENAMES and len(base) >= 3
 
 
-async def _first_guild_id(ds, session) -> str | None:
+async def _get_json(session, url, headers, *, attempts: int = 3):
+    """GET with small retries on transient failures (so a flaky Discord call doesn't drop
+    a notification). Returns parsed JSON or None."""
+    import asyncio
+
+    for i in range(attempts):
+        try:
+            async with session.get(url, headers=headers) as r:
+                if r.status == 200:
+                    return json.loads(await r.text())
+                if r.status in (429, 500, 502, 503):
+                    await asyncio.sleep(1 + i)
+                    continue
+                return None
+        except Exception:
+            await asyncio.sleep(1 + i)
+    return None
+
+
+async def _resolve_guild_and_channels(ds, session) -> tuple[str | None, dict[str, str]]:
+    """Primary guild id + {lowercase channel name -> id}, fetched together with retries so
+    they're always consistent (no 'channels known but guild unknown' drop)."""
     headers = {"Authorization": f"Bot {ds.token}"}
-    async with session.get("https://discord.com/api/v10/users/@me/guilds", headers=headers) as r:
-        guilds = json.loads(await r.text())
-    return str(guilds[0]["id"]) if isinstance(guilds, list) and guilds else None
+    guilds = await _get_json(session, "https://discord.com/api/v10/users/@me/guilds", headers)
+    if not isinstance(guilds, list) or not guilds:
+        return None, {}
+    guild_id = str(guilds[0]["id"])
+    name_to_id: dict[str, str] = {}
+    for guild in guilds:
+        chans = await _get_json(
+            session, f"https://discord.com/api/v10/guilds/{guild['id']}/channels", headers
+        )
+        for c in chans or []:
+            if c.get("type") == 0:
+                name_to_id.setdefault(str(c["name"]).lower(), str(c["id"]))
+    return guild_id, name_to_id
 
 
 async def _create_channel(ds, session, guild_id: str, name: str) -> str | None:
+    import asyncio
+
     headers = {"Authorization": f"Bot {ds.token}", "Content-Type": "application/json"}
-    async with session.post(
-        f"https://discord.com/api/v10/guilds/{guild_id}/channels",
-        headers=headers, json={"name": name, "type": 0},
-    ) as r:
-        if r.status >= 400:
-            return None
-        return str(json.loads(await r.text())["id"])
+    url = f"https://discord.com/api/v10/guilds/{guild_id}/channels"
+    for i in range(3):
+        try:
+            async with session.post(url, headers=headers, json={"name": name, "type": 0}) as r:
+                if r.status in (200, 201):
+                    return str(json.loads(await r.text())["id"])
+                if r.status == 429:  # rate limited -> back off and retry
+                    await asyncio.sleep(1 + i)
+                    continue
+                return None
+        except Exception:
+            await asyncio.sleep(1 + i)
+    return None
 
 
 def _resolve_channel_id(cwd: str, cwd_map: dict[str, str], name_to_id: dict[str, str]) -> str | None:
@@ -302,8 +341,7 @@ async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str
     unrouted: list[dict[str, Any]] = []
 
     async with aiohttp.ClientSession() as session:
-        name_to_id = await _resolve_guild_channels(ds, session)
-        guild_id = await _first_guild_id(ds, session)
+        guild_id, name_to_id = await _resolve_guild_and_channels(ds, session)
 
         async def _channel_for(cwd: str) -> str | None:
             cid = _resolve_channel_id(cwd, cwd_map, name_to_id)
