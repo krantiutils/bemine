@@ -63,30 +63,22 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
     state = WatcherState.load(state_path)
     now = time.time()
     
+    from ..config import config_int
+    # Only consider RECENTLY-active sessions — ignore ones last active long ago (e.g. days).
+    recent_cutoff = max(300, config_int("jobs", "session_recent_seconds", 7200))
+    idle_threshold = max(60, config_int("jobs", "session_idle_seconds", 300))
+
     statuses, errors = collect_fleet_status(settings, devices=(settings.status_devices or ["local"]))
     current_sessions: dict[str, SessionStatus] = {}
     for status in statuses:
-        key = _session_key(status)
-        current_sessions[key] = status
-    
+        if status.age_seconds >= recent_cutoff:
+            continue  # stale: last activity too long ago to care about
+        current_sessions[_session_key(status)] = status
+
     events: list[dict[str, Any]] = []
-    
-    # Check for finished sessions (were known, now gone)
-    for key_str, old_data in list(state.known_sessions.items()):
-        if key_str not in current_sessions:
-            events.append({
-                "type": "finished",
-                "device_id": old_data.get("device_id", ""),
-                "runtime": old_data.get("runtime", ""),
-                "session_id": old_data.get("session_id", ""),
-                "cwd": old_data.get("cwd", ""),
-                "age_seconds": old_data.get("age_seconds", 0),
-            })
-    
-    # An idle threshold: a session whose last activity is older than this is "done
-    # working". Configurable via [jobs].session_idle_seconds.
-    from ..config import config_int
-    idle_threshold = max(60, config_int("jobs", "session_idle_seconds", 300))
+
+    # (No "disappeared" event: a session aging out of the recent window is not a real
+    # "finished processing" signal. The "done" idle-transition below is the true one.)
 
     # Check for sessions needing input and for sessions that just went idle ("done").
     for key_str, status in current_sessions.items():
@@ -235,6 +227,24 @@ async def _resolve_guild_channels(settings, session) -> dict[str, str]:
     return name_to_id
 
 
+def _resolve_channel_id(cwd: str, cwd_map: dict[str, str], name_to_id: dict[str, str]) -> str | None:
+    """Pick a Discord channel id for a session cwd: first an exact/prefix match against
+    configured local project channels, then the cwd's BASENAME matched against any guild
+    channel (so remote sessions like ~/github/alpen/vertex-core route to #vertex-core)."""
+    import os
+
+    cwd = (cwd or "").rstrip("/")
+    name = _match_channel_name(cwd, cwd_map)
+    if name and name_to_id.get(name.lower()):
+        return name_to_id[name.lower()]
+    if cwd:
+        base = os.path.basename(cwd).lower()
+        for cand in (base, base.replace("_", "-"), base.replace(" ", "-")):
+            if cand and cand in name_to_id:
+                return name_to_id[cand]
+    return None
+
+
 async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str | None) -> str:
     import aiohttp
 
@@ -249,8 +259,7 @@ async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str
     async with aiohttp.ClientSession() as session:
         name_to_id = await _resolve_guild_channels(ds, session)
         for event in events:
-            channel_name = _match_channel_name(str(event.get("cwd", "")), cwd_map)
-            channel_id = name_to_id.get((channel_name or "").lower()) if channel_name else None
+            channel_id = _resolve_channel_id(str(event.get("cwd", "")), cwd_map, name_to_id)
             if channel_id:
                 by_channel.setdefault(channel_id, []).append(event)
             else:

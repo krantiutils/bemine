@@ -13,7 +13,7 @@ def _status(session_id, *, asks_user=False, ask_summary=""):
     )
 
 
-def test_check_sessions_detects_needs_input_then_finished(tmp_path, monkeypatch):
+def test_check_sessions_needs_input_dedup_and_no_disappear_event(tmp_path, monkeypatch):
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     state_path = tmp_path / "state.json"
 
@@ -23,14 +23,35 @@ def test_check_sessions_detects_needs_input_then_finished(tmp_path, monkeypatch)
     events = sw.check_sessions(settings, state_path)
     assert any(e["type"] == "needs_input" and e["session_id"] == "s1" for e in events)
 
-    # Round 2: same asking session present again -> no NEW needs_input event (already known).
+    # Round 2: same asking session present again -> no NEW needs_input event (notify once).
     events2 = sw.check_sessions(settings, state_path)
     assert not any(e["type"] == "needs_input" for e in events2)
 
-    # Round 3: session gone -> a "finished" event.
+    # Round 3: session gone -> NO event (a session aging out is not "finished processing").
     monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([], []))
-    events3 = sw.check_sessions(settings, state_path)
-    assert any(e["type"] == "finished" and e["session_id"] == "s1" for e in events3)
+    assert sw.check_sessions(settings, state_path) == []
+
+
+def test_stale_sessions_are_ignored(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    state_path = tmp_path / "state.json"
+    # A session whose last activity is way past the recent window (e.g. days ago) is ignored
+    # entirely — it never enters state, so it can never produce a notification.
+    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("ancient", 400000)], []))
+    assert sw.check_sessions(settings, state_path) == []
+    import json as _json
+    assert _json.loads(state_path.read_text())["known_sessions"] == {}
+
+
+def test_resolve_channel_id_by_basename():
+    from bemine.jobs.session_watcher import _resolve_channel_id
+    name_to_id = {"vertex-core": "111", "neptts-bench": "222"}
+    # remote-style cwd with no local project mapping -> matched by basename
+    assert _resolve_channel_id("/Users/cdjk/github/alpen/vertex-core", {}, name_to_id) == "111"
+    # underscore normalized to hyphen
+    assert _resolve_channel_id("/x/neptts_bench", {}, name_to_id) == "222"
+    # no matching channel -> None (DM fallback)
+    assert _resolve_channel_id("/x/unknown-proj", {}, name_to_id) is None
 
 
 def test_render_events_formats_and_empty():
