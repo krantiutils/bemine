@@ -132,3 +132,14 @@ def test_no_done_for_session_already_idle_when_first_seen(tmp_path, monkeypatch)
     # First sight is already idle (never observed active) -> must NOT fire done (avoids spam)
     monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("old", 9000)], []))
     assert not any(e["type"] == "done" for e in sw.check_sessions(settings, state_path))
+
+
+def test_channel_name_and_project_cwd_guards():
+    from bemine.jobs.session_watcher import _channel_name_for, _is_project_cwd
+    assert _channel_name_for("/home/cdjk/github/alpen/vertex-core") == "vertex-core"
+    assert _channel_name_for("/x/Neptts_Bench") == "neptts-bench"
+    # junk / non-project dirs are not given channels
+    assert _is_project_cwd("/home/cdjk/github/neptts-bench") is True
+    assert _is_project_cwd("/tmp/whatever") is False
+    assert _is_project_cwd("/") is False
+    assert _is_project_cwd("/x/src") is False

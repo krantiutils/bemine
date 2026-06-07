@@ -227,6 +227,47 @@ async def _resolve_guild_channels(settings, session) -> dict[str, str]:
     return name_to_id
 
 
+_CHANNEL_JUNK_BASENAMES = {"", "tmp", "root", "home", "bin", "src", "node_modules", "dist", "build"}
+
+
+def _channel_name_for(cwd: str) -> str:
+    """A valid Discord channel name (lowercase, hyphens) from a cwd's basename."""
+    import os
+    import re
+
+    base = os.path.basename((cwd or "").rstrip("/")).lower()
+    return re.sub(r"[^a-z0-9-]+", "-", base).strip("-")[:90]
+
+
+def _is_project_cwd(cwd: str) -> bool:
+    """Heuristic: is this cwd a real project worth its own channel (not /tmp, /, junk)?"""
+    import os
+
+    cwd = (cwd or "").rstrip("/")
+    if not cwd or cwd == "/" or cwd.startswith("/tmp"):
+        return False
+    base = os.path.basename(cwd).lower()
+    return base not in _CHANNEL_JUNK_BASENAMES and len(base) >= 3
+
+
+async def _first_guild_id(ds, session) -> str | None:
+    headers = {"Authorization": f"Bot {ds.token}"}
+    async with session.get("https://discord.com/api/v10/users/@me/guilds", headers=headers) as r:
+        guilds = json.loads(await r.text())
+    return str(guilds[0]["id"]) if isinstance(guilds, list) and guilds else None
+
+
+async def _create_channel(ds, session, guild_id: str, name: str) -> str | None:
+    headers = {"Authorization": f"Bot {ds.token}", "Content-Type": "application/json"}
+    async with session.post(
+        f"https://discord.com/api/v10/guilds/{guild_id}/channels",
+        headers=headers, json={"name": name, "type": 0},
+    ) as r:
+        if r.status >= 400:
+            return None
+        return str(json.loads(await r.text())["id"])
+
+
 def _resolve_channel_id(cwd: str, cwd_map: dict[str, str], name_to_id: dict[str, str]) -> str | None:
     """Pick a Discord channel id for a session cwd: first an exact/prefix match against
     configured local project channels, then the cwd's BASENAME matched against any guild
@@ -256,10 +297,21 @@ async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str
     by_channel: dict[str, list[dict[str, Any]]] = {}
     dm_events: list[dict[str, Any]] = []
 
+    from bemine.config import config_bool
+    auto_create = config_bool("jobs", "session_auto_create_channels", True)
     async with aiohttp.ClientSession() as session:
         name_to_id = await _resolve_guild_channels(ds, session)
+        guild_id = await _first_guild_id(ds, session) if auto_create else None
         for event in events:
-            channel_id = _resolve_channel_id(str(event.get("cwd", "")), cwd_map, name_to_id)
+            cwd = str(event.get("cwd", ""))
+            channel_id = _resolve_channel_id(cwd, cwd_map, name_to_id)
+            # No channel yet -> create one for this project so it never lands in the main DM.
+            if not channel_id and auto_create and guild_id and _is_project_cwd(cwd):
+                name = _channel_name_for(cwd)
+                if name:
+                    channel_id = name_to_id.get(name) or await _create_channel(ds, session, guild_id, name)
+                    if channel_id:
+                        name_to_id[name] = channel_id
             if channel_id:
                 by_channel.setdefault(channel_id, []).append(event)
             else:
