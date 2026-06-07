@@ -361,11 +361,11 @@ def generate_session_watcher_report(settings: BemineSettings, config: Mapping[st
     events = check_sessions(settings, state_path)
     if not events:
         return "" if config.get("only_when_events", True) else "No session changes detected."
-    # Self-delivers per-project (channel matched by cwd) with a DM fallback. Returns a
-    # delivery summary recorded as job output; the job has notify_discord disabled so
-    # run_job_row does not also send.
+    # Self-delivers to a channel per project (auto-created); undelivered events are
+    # re-armed via state_path so the next poll retries them (at-least-once). The job has
+    # notify_discord disabled so run_job_row does not also send.
     return "Session watcher delivered — " + deliver_events(
-        settings, events, dm_user_id=str(config.get("dm_user_id") or "") or None
+        settings, events, state_path=state_path
     )
 
 def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:

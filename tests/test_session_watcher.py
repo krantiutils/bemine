@@ -155,3 +155,17 @@ def test_channel_name_and_project_cwd_guards():
     assert _is_project_cwd("/tmp/whatever") is False
     assert _is_project_cwd("/") is False
     assert _is_project_cwd("/x/src") is False
+
+
+def test_undelivered_event_is_rearmed_for_retry(tmp_path):
+    import json
+    from bemine.jobs.session_watcher import _rearm_undelivered, WatcherState
+    state_path = tmp_path / "state.json"
+    key = json.dumps({"d": "mbp", "r": "claude", "s": "sX"}, sort_keys=True)
+    WatcherState(known_sessions={key: {"notified_done": True, "asks_user": True}},
+                 last_check=0).save(state_path)
+    # A "done" event that failed delivery must reset notified_done so the next poll retries.
+    _rearm_undelivered(state_path, [{"type": "done", "device_id": "mbp",
+                                     "runtime": "claude", "session_id": "sX"}])
+    saved = json.loads(state_path.read_text())["known_sessions"][key]
+    assert saved["notified_done"] is False

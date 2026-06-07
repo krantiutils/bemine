@@ -364,23 +364,51 @@ async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str
                 unrouted.append(event)
 
         summary: list[str] = []
+        undelivered: list[dict[str, Any]] = list(unrouted)
         for channel_id, evs in by_channel.items():
-            await send_message(settings=ds, channel_id=channel_id, text=render_events(evs), files=[])
-            summary.append(f"channel {channel_id}: {len(evs)}")
+            try:
+                await send_message(settings=ds, channel_id=channel_id, text=render_events(evs), files=[])
+                summary.append(f"channel {channel_id}: {len(evs)}")
+            except Exception as exc:  # send failed -> these events must retry next poll
+                undelivered.extend(evs)
+                summary.append(f"channel {channel_id}: SEND FAILED ({exc})")
         if unrouted:
             summary.append(f"unrouted (no guild/channel): {len(unrouted)}")
-    return "; ".join(summary) or "no events delivered"
+    return ("; ".join(summary) or "no events delivered"), undelivered
+
+
+def _rearm_undelivered(state_path: Path, undelivered: list[dict[str, Any]]) -> None:
+    """Reset the dedup flags for events that failed to deliver, so the next poll re-fires
+    them — delivery is at-least-once, never silently dropped."""
+    if not undelivered:
+        return
+    state = WatcherState.load(state_path)
+    for ev in undelivered:
+        key = json.dumps({"d": ev.get("device_id"), "r": ev.get("runtime"),
+                          "s": ev.get("session_id")}, sort_keys=True)
+        entry = state.known_sessions.get(key)
+        if not entry:
+            continue
+        if ev.get("type") == "done":
+            entry["notified_done"] = False
+        elif ev.get("type") == "needs_input":
+            entry["asks_user"] = False
+    state.save(state_path)
 
 
 def deliver_events(settings: BemineSettings, events: list[dict[str, Any]],
-                   *, dm_user_id: str | None = None) -> str:
-    """Route each session event to its project's Discord channel (matched by cwd), with a
-    DM fallback for sessions that don't map to a channel. Returns a delivery summary."""
+                   *, dm_user_id: str | None = None, state_path: Path | None = None) -> str:
+    """Route each session event to a Discord channel (project channel matched by cwd, or a
+    catch-all, both auto-created). Returns a delivery summary. Undelivered events are
+    re-armed (via state_path) so the next poll retries them."""
     import asyncio
 
     if not events:
         return ""
-    return asyncio.run(_deliver_async(settings, events, dm_user_id))
+    summary, undelivered = asyncio.run(_deliver_async(settings, events, dm_user_id))
+    if state_path is not None:
+        _rearm_undelivered(state_path, undelivered)
+    return summary
 
 
 if __name__ == "__main__":
