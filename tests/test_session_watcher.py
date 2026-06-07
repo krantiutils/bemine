@@ -126,11 +126,23 @@ def test_done_fires_when_active_session_goes_idle(tmp_path, monkeypatch):
     assert not any(e["type"] == "done" for e in sw.check_sessions(settings, state_path))
 
 
-def test_no_done_for_session_already_idle_when_first_seen(tmp_path, monkeypatch):
+def test_recent_idle_session_notifies_on_first_sight(tmp_path, monkeypatch):
+    # THE bug fix: a recently-active session found already idle (e.g. the watcher only
+    # started seeing it after it stopped) MUST still notify — no "was it active first" gate.
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     state_path = tmp_path / "state.json"
-    # First sight is already idle (never observed active) -> must NOT fire done (avoids spam)
-    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("old", 9000)], []))
+    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("idle1", 600)], []))
+    events = sw.check_sessions(settings, state_path)
+    assert sum(1 for e in events if e["type"] == "done" and e["session_id"] == "idle1") == 1
+    # And it does NOT re-notify on the next poll while it stays idle.
+    assert not any(e["type"] == "done" for e in sw.check_sessions(settings, state_path))
+
+
+def test_stale_idle_session_does_not_notify(tmp_path, monkeypatch):
+    # Past the recency window (e.g. days idle) -> ignored entirely, no notification.
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(sw, "collect_fleet_status", lambda *a, **k: ([_status_age("old", 400000)], []))
     assert not any(e["type"] == "done" for e in sw.check_sessions(settings, state_path))
 
 

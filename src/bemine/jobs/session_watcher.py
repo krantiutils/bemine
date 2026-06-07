@@ -84,7 +84,6 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
     for key_str, status in current_sessions.items():
         old_data = state.known_sessions.get(key_str, {})
         was_asking = old_data.get("asks_user", False)
-        seen_active = old_data.get("seen_active", False)
         notified_done = old_data.get("notified_done", False)
 
         if status.asks_user and not was_asking:
@@ -99,15 +98,15 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
                 "output_tail": _output_tail(status),
             })
 
-        # "Done" detection: we must have OBSERVED the session actively working (recent
-        # activity) before we'll announce it finished — this avoids spamming old idle
-        # sessions on first sight. When an observed-active session crosses the idle
-        # threshold (and isn't asking), fire one "done" event.
-        active_now = status.age_seconds < idle_threshold and not status.asks_user
-        if active_now:
-            seen_active = True
+        # "Done"/idle detection: a RECENT session (already filtered to the recent window)
+        # that is idle past the threshold and not asking has STOPPED WORKING — notify once.
+        # No "was it active first" gate: a session we only start seeing once it's already
+        # idle still counts (that's the case that was silently dropped before). It re-arms
+        # when the session works again, so the next stop notifies too.
+        is_idle = status.age_seconds >= idle_threshold and not status.asks_user
+        if not is_idle:
             notified_done = False
-        if seen_active and not active_now and not status.asks_user and not notified_done:
+        if is_idle and not notified_done:
             events.append({
                 "type": "done",
                 "device_id": status.device_id,
@@ -119,7 +118,6 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
                 "output_tail": _output_tail(status),
             })
             notified_done = True
-            seen_active = False
 
         # Update state
         state.known_sessions[key_str] = {
@@ -130,7 +128,6 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
             "asks_user": status.asks_user,
             "age_seconds": status.age_seconds,
             "last_seen": now,
-            "seen_active": seen_active,
             "notified_done": notified_done,
         }
     
