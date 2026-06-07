@@ -283,47 +283,54 @@ def _resolve_channel_id(cwd: str, cwd_map: dict[str, str], name_to_id: dict[str,
     return None
 
 
-async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str | None) -> str:
+async def _deliver_async(settings, events: list[dict[str, Any]], dm_user_id: str | None = None) -> str:
+    """Deliver every event to a CHANNEL — never a DM. Project sessions go to their own
+    channel (matched by cwd/basename, created if missing); anything else goes to a single
+    catch-all channel ([jobs].session_fallback_channel). All channels are auto-created."""
     import aiohttp
 
     from bemine.discord.config import Settings
-    from bemine.discord.send import send_message, open_dm_channel
+    from bemine.discord.send import send_message
+    from bemine.config import config_bool, config_string
 
     ds = Settings.load()
     cwd_map = _project_channel_map(settings)
-    by_channel: dict[str, list[dict[str, Any]]] = {}
-    dm_events: list[dict[str, Any]] = []
-
-    from bemine.config import config_bool
+    fallback_name = (config_string("jobs", "session_fallback_channel", "session-updates")
+                     or "session-updates").lower()
     auto_create = config_bool("jobs", "session_auto_create_channels", True)
+    by_channel: dict[str, list[dict[str, Any]]] = {}
+    unrouted: list[dict[str, Any]] = []
+
     async with aiohttp.ClientSession() as session:
         name_to_id = await _resolve_guild_channels(ds, session)
-        guild_id = await _first_guild_id(ds, session) if auto_create else None
+        guild_id = await _first_guild_id(ds, session)
+
+        async def _channel_for(cwd: str) -> str | None:
+            cid = _resolve_channel_id(cwd, cwd_map, name_to_id)
+            if cid or not (auto_create and guild_id):
+                return cid
+            # Real project -> its own channel; otherwise the catch-all channel.
+            name = (_channel_name_for(cwd) if _is_project_cwd(cwd) else fallback_name) or fallback_name
+            cid = name_to_id.get(name)
+            if not cid:
+                cid = await _create_channel(ds, session, guild_id, name)
+                if cid:
+                    name_to_id[name] = cid
+            return cid
+
         for event in events:
-            cwd = str(event.get("cwd", ""))
-            channel_id = _resolve_channel_id(cwd, cwd_map, name_to_id)
-            # No channel yet -> create one for this project so it never lands in the main DM.
-            if not channel_id and auto_create and guild_id and _is_project_cwd(cwd):
-                name = _channel_name_for(cwd)
-                if name:
-                    channel_id = name_to_id.get(name) or await _create_channel(ds, session, guild_id, name)
-                    if channel_id:
-                        name_to_id[name] = channel_id
-            if channel_id:
-                by_channel.setdefault(channel_id, []).append(event)
+            cid = await _channel_for(str(event.get("cwd", "")))
+            if cid:
+                by_channel.setdefault(cid, []).append(event)
             else:
-                dm_events.append(event)
+                unrouted.append(event)
 
         summary: list[str] = []
         for channel_id, evs in by_channel.items():
             await send_message(settings=ds, channel_id=channel_id, text=render_events(evs), files=[])
             summary.append(f"channel {channel_id}: {len(evs)}")
-        if dm_events and dm_user_id:
-            dm_id = await open_dm_channel(ds, str(dm_user_id))
-            await send_message(settings=ds, channel_id=dm_id, text=render_events(dm_events), files=[])
-            summary.append(f"DM: {len(dm_events)}")
-        elif dm_events:
-            summary.append(f"unrouted (no DM target): {len(dm_events)}")
+        if unrouted:
+            summary.append(f"unrouted (no guild/channel): {len(unrouted)}")
     return "; ".join(summary) or "no events delivered"
 
 

@@ -103,9 +103,11 @@ session_idle_seconds = 180
 # Only watch sessions whose last activity is within this window (ignore stale ones,
 # e.g. sessions last active days ago). 7200 = 2 hours.
 session_recent_seconds = 7200
-# Auto-create a project channel when a session's project has none (so updates go to a
-# channel, never the main DM). Set false to fall back to DM instead.
+# Auto-create a project channel when a session's project has none (updates always go to
+# a channel, never a DM).
 session_auto_create_channels = true
+# Catch-all channel for sessions that aren't a real project (created if missing).
+session_fallback_channel = "session-updates"
 
 [policy]
 # How much the Discord agent's shell_run tool can do:
