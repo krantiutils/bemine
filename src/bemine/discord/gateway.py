@@ -398,14 +398,19 @@ def run_bound_agent(
 
 def maybe_consume_watcher_reply(settings, db, *, channel_id: str, text: str) -> bool:
     """If a watcher in this channel is awaiting a human reply, relay `text` into its
-    session and resume the watcher. Returns True if the message was consumed."""
+    session and resume the watcher. Returns True only if the reply was delivered (and
+    thus consumed). On relay failure, pause the watcher and return False so the message
+    falls through to normal handling."""
     if not text:
         return False
     watcher = db.get_project_watcher_by_channel(channel_id)
     if not watcher or not int(watcher.get("awaiting_reply", 0)):
         return False
     from bemine.jobs.project_watcher import relay_user_reply, default_deps
-    relay_user_reply(settings, db, watcher, text, default_deps(settings))
+    delivered = relay_user_reply(settings, db, watcher, text, default_deps(settings))
+    if not delivered:
+        db.update_project_watcher(watcher["project_id"], awaiting_reply=0, status="paused")
+        return False
     return True
 
 
