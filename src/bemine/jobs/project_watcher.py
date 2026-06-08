@@ -4,7 +4,11 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable
 
+from bemine.config import BemineSettings
+from bemine.db import BemineDB
 from bemine.discord.config import Settings as DiscordSettings
 from bemine.discord.send import send_message
 from bemine.index.status import SessionStatus
@@ -129,3 +133,107 @@ def echo_to_channel(channel_id: str, text: str) -> None:
         asyncio.run(_go())
     except Exception:
         pass
+
+
+_MAX_EMPTY_TICKS = 3
+
+
+@dataclass
+class WatcherDeps:
+    get_statuses: Callable           # (settings) -> list[SessionStatus]
+    tmux: object                     # RemoteTmux-like
+    decide: Callable                 # (**kwargs) -> Decision
+    echo: Callable                   # (channel_id, text) -> None
+    transcript_tail: Callable        # (SessionStatus) -> str
+
+
+def default_deps(settings: BemineSettings) -> WatcherDeps:
+    from bemine.index.status import collect_fleet_status, session_transcript_tail
+    from bemine.jobs.remote_tmux import RemoteTmux
+
+    def _statuses(s):
+        statuses, _errors = collect_fleet_status(s)
+        return statuses
+
+    def _tail(status):
+        if not status.source_path:
+            return ""
+        try:
+            return session_transcript_tail(Path(status.source_path), status.runtime)
+        except Exception:
+            return ""
+
+    return WatcherDeps(
+        get_statuses=_statuses,
+        tmux=RemoteTmux(gateway_device=settings.device_id),
+        decide=decide,
+        echo=echo_to_channel,
+        transcript_tail=_tail,
+    )
+
+
+def tick_watcher(settings: BemineSettings, db: BemineDB, watcher: dict,
+                 deps: WatcherDeps, *, now: float) -> None:
+    project_id = watcher["project_id"]
+    channel_id = watcher["channel_id"]
+    project_name = project_id.split(":")[-1]  # "channel:<name>" or a plain name
+    db.update_project_watcher(project_id, last_tick_at=now)
+
+    statuses = deps.get_statuses(settings)
+    session = resolve_project_session(statuses, project_name)
+    if session is None:
+        empty = int(watcher.get("empty_ticks", 0)) + 1
+        db.update_project_watcher(project_id, empty_ticks=empty)
+        if empty >= _MAX_EMPTY_TICKS:
+            db.update_project_watcher(project_id, status="paused")
+            deps.echo(channel_id,
+                      f"⏸ Watcher for `{project_name}` paused — no live session found.")
+        return
+    db.update_project_watcher(project_id, empty_ticks=0)
+
+    if not session.asks_user:
+        return  # actively working; nothing to do
+
+    pane = resolve_pane(deps.tmux, session.device_id, session.cwd)
+    if pane is None:
+        db.update_project_watcher(project_id, awaiting_reply=1)
+        deps.echo(channel_id,
+                  f"⚠ Watcher for `{project_name}`: session is waiting but I can't find "
+                  f"its tmux pane on `{session.device_id}`. Resolve it and I'll resume.")
+        return
+
+    decision = deps.decide(
+        client=_decision_client(settings, session.runtime),
+        model=_decision_model(session.runtime),
+        brief=watcher["brief"],
+        pane_capture=deps.tmux.capture(session.device_id, pane),
+        transcript_tail=deps.transcript_tail(session),
+        ask_summary=session.ask_summary,
+        channel_context="",
+    )
+
+    if decision.kind == "send_text":
+        deps.tmux.send_text(session.device_id, pane, decision.text)
+        deps.echo(channel_id, f"▶ `{project_name}` sent: {decision.text}")
+    elif decision.kind == "send_keys":
+        deps.tmux.send_keys(session.device_id, pane, decision.keys)
+        deps.echo(channel_id, f"▶ `{project_name}` sent keys: {' '.join(decision.keys)}")
+    elif decision.kind == "escalate":
+        db.update_project_watcher(project_id, awaiting_reply=1)
+        deps.echo(channel_id, f"\U0001f64b `{project_name}` needs you: {decision.question}")
+    elif decision.kind == "done":
+        db.update_project_watcher(project_id, status="done")
+        deps.echo(channel_id, f"✅ `{project_name}` watcher done: {decision.rationale}")
+    # "wait" -> no action
+
+
+def _decision_client(settings: BemineSettings, runtime: str):
+    from bemine.agent.clients import build_client_for_runtime
+    return build_client_for_runtime(settings, runtime or "kimi")
+
+
+def _decision_model(runtime: str) -> str:
+    from bemine.config import config_string
+    from bemine.discord.dispatch import _DEFAULT_MODELS
+    rt = (runtime or "kimi").lower()
+    return config_string(rt, "model", "") or _DEFAULT_MODELS.get(rt, "kimi-k2.6")
