@@ -221,9 +221,10 @@ def tick_watcher(settings: BemineSettings, db: BemineDB, watcher: dict,
         )
 
     if decision.kind == "send_text":
-        deps.tmux.send_text(session.device_id, pane, decision.text)
-        deps.echo(channel_id, f"▶ `{project_name}` sent: {decision.text}")
-        _audit("send", decision.text)
+        if decision.text.strip():
+            deps.tmux.send_text(session.device_id, pane, decision.text)
+            deps.echo(channel_id, f"▶ `{project_name}` sent: {decision.text}")
+            _audit("send", decision.text)
     elif decision.kind == "send_keys":
         deps.tmux.send_keys(session.device_id, pane, decision.keys)
         deps.echo(channel_id, f"▶ `{project_name}` sent keys: {' '.join(decision.keys)}")

@@ -139,3 +139,11 @@ def test_tick_writes_audit_event_on_escalate(tmp_path):
                  Decision(kind="escalate", question="Which account?"), tmux, echoes)
     tick_watcher(settings, db, db.get_project_watcher("rai-speech-toolkit"), deps, now=100.0)
     assert _audit_count(db, "escalate") == 1
+
+
+def test_tick_ignores_empty_send_text(tmp_path):
+    settings, db = _setup(tmp_path)
+    tmux, echoes = _Tmux(), []
+    deps = _deps([_status(asks_user=True)], Decision(kind="send_text", text="   "), tmux, echoes)
+    tick_watcher(settings, db, db.get_project_watcher("rai-speech-toolkit"), deps, now=100.0)
+    assert tmux.sent_text == []  # nothing injected for empty text
