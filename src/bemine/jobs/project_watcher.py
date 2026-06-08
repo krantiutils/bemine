@@ -238,3 +238,43 @@ def _decision_model(runtime: str) -> str:
     from bemine.discord.dispatch import _DEFAULT_MODELS
     rt = (runtime or "kimi").lower()
     return config_string(rt, "model", "") or _DEFAULT_MODELS.get(rt, "kimi-k2.6")
+
+
+def relay_user_reply(settings: BemineSettings, db: BemineDB, watcher: dict,
+                     text: str, deps: WatcherDeps) -> bool:
+    """Feed a human's channel reply into the watched session, then resume ticking.
+    Returns True if the reply was delivered into a pane."""
+    project_id = watcher["project_id"]
+    project_name = project_id.split(":")[-1]
+    session = resolve_project_session(deps.get_statuses(settings), project_name)
+    if session is None:
+        return False
+    pane = resolve_pane(deps.tmux, session.device_id, session.cwd)
+    if pane is None:
+        return False
+    deps.tmux.send_text(session.device_id, pane, text)
+    db.update_project_watcher(project_id, awaiting_reply=0, status="active", last_tick_at=0)
+    return True
+
+
+def tick_all_watchers(settings: BemineSettings, db: BemineDB, *,
+                      deps: WatcherDeps | None = None, now: float | None = None,
+                      tick: Callable | None = None) -> int:
+    """Fire every active, non-awaiting watcher whose interval has elapsed. Returns the
+    number fired. `deps`/`tick` are injectable for tests."""
+    import time as _time
+    now = _time.time() if now is None else now
+    deps = deps or default_deps(settings)
+    tick = tick or tick_watcher
+    fired = 0
+    for watcher in db.list_active_project_watchers():
+        if int(watcher.get("awaiting_reply", 0)):
+            continue
+        if now - float(watcher.get("last_tick_at", 0)) < int(watcher["interval_secs"]):
+            continue
+        try:
+            tick(settings, db, watcher, deps, now=now)
+            fired += 1
+        except Exception:
+            continue
+    return fired
