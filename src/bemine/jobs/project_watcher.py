@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
 
+from bemine.discord.config import Settings as DiscordSettings
+from bemine.discord.send import send_message
 from bemine.index.status import SessionStatus
 
 # tmux pane commands that indicate an interactive agent session.
@@ -111,3 +114,18 @@ def decide(client, *, model: str, brief: str, pane_capture: str,
         tools=[], model=model, system=system,
     )
     return _parse_decision(getattr(resp, "content", None))
+
+
+def echo_to_channel(channel_id: str, text: str) -> None:
+    """Best-effort post to a Discord channel from sync (daemon) code."""
+    if not channel_id or not text:
+        return
+    ds = DiscordSettings.load()
+
+    async def _go():
+        await send_message(settings=ds, channel_id=channel_id, text=text, files=[])
+
+    try:
+        asyncio.run(_go())
+    except Exception:
+        pass
