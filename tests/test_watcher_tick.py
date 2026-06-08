@@ -113,3 +113,29 @@ def test_tick_pauses_with_stale_watcher_dict(tmp_path):
     for _ in range(3):
         tick_watcher(settings, db, stale, deps, now=100.0)
     assert db.get_project_watcher("rai-speech-toolkit")["status"] == "paused"
+
+
+def _audit_count(db, event_type):
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM audit_events WHERE category='watcher' "
+            "AND event_type=?", (event_type,)
+        ).fetchone()
+    return row["n"]
+
+
+def test_tick_writes_audit_event_on_send(tmp_path):
+    settings, db = _setup(tmp_path)
+    tmux, echoes = _Tmux(), []
+    deps = _deps([_status(asks_user=True)], Decision(kind="send_text", text="y"), tmux, echoes)
+    tick_watcher(settings, db, db.get_project_watcher("rai-speech-toolkit"), deps, now=100.0)
+    assert _audit_count(db, "send") == 1
+
+
+def test_tick_writes_audit_event_on_escalate(tmp_path):
+    settings, db = _setup(tmp_path)
+    tmux, echoes = _Tmux(), []
+    deps = _deps([_status(asks_user=True)],
+                 Decision(kind="escalate", question="Which account?"), tmux, echoes)
+    tick_watcher(settings, db, db.get_project_watcher("rai-speech-toolkit"), deps, now=100.0)
+    assert _audit_count(db, "escalate") == 1

@@ -213,18 +213,29 @@ def tick_watcher(settings: BemineSettings, db: BemineDB, watcher: dict,
         channel_context="",
     )
 
+    def _audit(event_type: str, detail: str) -> None:
+        db.record_audit_event(
+            category="watcher", event_type=event_type, actor="watcher",
+            device_id=settings.device_id, project_id=project_id,
+            payload_json=json.dumps({"project": project_name, "detail": detail}),
+        )
+
     if decision.kind == "send_text":
         deps.tmux.send_text(session.device_id, pane, decision.text)
         deps.echo(channel_id, f"▶ `{project_name}` sent: {decision.text}")
+        _audit("send", decision.text)
     elif decision.kind == "send_keys":
         deps.tmux.send_keys(session.device_id, pane, decision.keys)
         deps.echo(channel_id, f"▶ `{project_name}` sent keys: {' '.join(decision.keys)}")
+        _audit("send", " ".join(decision.keys))
     elif decision.kind == "escalate":
         db.update_project_watcher(project_id, awaiting_reply=1)
         deps.echo(channel_id, f"\U0001f64b `{project_name}` needs you: {decision.question}")
+        _audit("escalate", decision.question)
     elif decision.kind == "done":
         db.update_project_watcher(project_id, status="done")
         deps.echo(channel_id, f"✅ `{project_name}` watcher done: {decision.rationale}")
+        _audit("done", decision.rationale)
     # "wait" -> no action
 
 
