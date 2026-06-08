@@ -101,3 +101,15 @@ def test_tick_send_keys_for_menu(tmp_path):
                  Decision(kind="send_keys", keys=["Down", "Enter"]), tmux, echoes)
     tick_watcher(settings, db, db.get_project_watcher("rai-speech-toolkit"), deps, now=100.0)
     assert tmux.sent_keys == [("mbp", "%2", ["Down", "Enter"])]
+
+
+def test_tick_pauses_with_stale_watcher_dict(tmp_path):
+    # Even if the caller passes the SAME (stale) watcher dict each time, empty_ticks
+    # must accumulate via the DB and reach the pause threshold.
+    settings, db = _setup(tmp_path)
+    tmux, echoes = _Tmux(), []
+    deps = _deps([], Decision(kind="wait"), tmux, echoes)  # no live session
+    stale = db.get_project_watcher("rai-speech-toolkit")
+    for _ in range(3):
+        tick_watcher(settings, db, stale, deps, now=100.0)
+    assert db.get_project_watcher("rai-speech-toolkit")["status"] == "paused"

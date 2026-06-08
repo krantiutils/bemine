@@ -182,7 +182,8 @@ def tick_watcher(settings: BemineSettings, db: BemineDB, watcher: dict,
     statuses = deps.get_statuses(settings)
     session = resolve_project_session(statuses, project_name)
     if session is None:
-        empty = int(watcher.get("empty_ticks", 0)) + 1
+        current = db.get_project_watcher(project_id) or watcher
+        empty = int(current.get("empty_ticks", 0)) + 1
         db.update_project_watcher(project_id, empty_ticks=empty)
         if empty >= _MAX_EMPTY_TICKS:
             db.update_project_watcher(project_id, status="paused")
