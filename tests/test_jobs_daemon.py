@@ -174,3 +174,16 @@ def test_systemd_units_run_gateway_and_daemon_from_repo(tmp_path: Path) -> None:
     assert "ExecStart=/usr/bin/uv run bemine-daemon" in rendered["bemine-daemon.service"]
     assert "ExecStart=/usr/bin/uv run mayor-discord-gateway" in rendered["mayor-discord-gateway.service"]
     assert "Environment=BEMINE_HOME=" + str(tmp_path / "repo" / ".bemine") in rendered["bemine-daemon.service"]
+
+
+def test_run_once_ticks_watchers(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.project_watcher as pw
+
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    called = {"n": 0}
+    monkeypatch.setattr(pw, "tick_all_watchers",
+                        lambda s, db: called.__setitem__("n", called["n"] + 1))
+    BemineDaemon(settings).run_once()
+    assert called["n"] == 1

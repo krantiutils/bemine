@@ -894,6 +894,18 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_disable = jobs_sub.add_parser("disable", help="Disable a job.")
     jobs_disable.add_argument("job_id", help="Job id.")
 
+    watch = sub.add_parser("watch", help="Manage per-project watchers.")
+    watch_sub = watch.add_subparsers(dest="watch_command", required=True)
+    w_start = watch_sub.add_parser("start", help="Start/replace a watcher for a project.")
+    w_start.add_argument("--project", required=True, help="project id (e.g. channel:<name>)")
+    w_start.add_argument("--brief", required=True, help="context brief / goal")
+    w_start.add_argument("--interval", type=int, default=300, help="poll interval seconds")
+    w_stop = watch_sub.add_parser("stop", help="Stop a watcher.")
+    w_stop.add_argument("--project", required=True)
+    w_status = watch_sub.add_parser("status", help="Show a watcher.")
+    w_status.add_argument("--project", required=True)
+    watch_sub.add_parser("list", help="List all watchers.")
+
     daemon = sub.add_parser(
         "daemon",
         help="Run the Bemine scheduler daemon.",
@@ -1491,6 +1503,28 @@ def main(argv: list[str] | None = None) -> None:
         elif args.jobs_command == "disable":
             kernel.db.set_job_enabled(args.job_id, enabled=False)
             print(json.dumps({"job_id": args.job_id, "enabled": False}, sort_keys=True))
+    elif args.command == "watch":
+        from bemine.db import BemineDB
+        settings = _settings_from_args(args)
+        db = BemineDB(settings.db_path)
+        if args.watch_command == "start":
+            channel_id = db.get_channel_id_for_project(args.project) or ""
+            db.upsert_project_watcher(
+                project_id=args.project, channel_id=channel_id,
+                brief=args.brief, interval_secs=args.interval,
+            )
+            print(f"watcher active for {args.project} (every {args.interval}s, "
+                  f"channel={channel_id or 'unknown'})")
+        elif args.watch_command == "stop":
+            db.update_project_watcher(args.project, status="stopped")
+            print(f"watcher stopped for {args.project}")
+        elif args.watch_command == "status":
+            row = db.get_project_watcher(args.project)
+            print(json.dumps(row, indent=2) if row else "no watcher")
+        elif args.watch_command == "list":
+            for row in db.list_active_project_watchers():
+                print(f"{row['project_id']}\t{row['status']}\t"
+                      f"every {row['interval_secs']}s\tchannel={row['channel_id']}")
     elif args.command == "daemon":
         daemon = BemineDaemon(settings, poll_seconds=args.poll_seconds)
         if args.once:

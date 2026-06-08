@@ -189,6 +189,28 @@ def default_tools() -> list[BemineTool]:
             handler=_tmux_capture,
         ),
         BemineTool(
+            name="watch_control",
+            description=(
+                "Start, stop, or report a per-project WATCHER for THIS channel's project. "
+                "A watcher polls the project's agent session and, when it is waiting on "
+                "input, drives it toward the brief (sending keystrokes), escalating here "
+                "only when blocked. Use action='start' with the user's full context as "
+                "`brief` and `interval_secs` (convert phrases like 'every 10m' -> 600; "
+                "default 300). Use action='stop' to disable, action='status' to report."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["start", "stop", "status"]},
+                    "brief": {"type": "string"},
+                    "interval_secs": {"type": "integer", "minimum": 30, "maximum": 86400},
+                },
+                "required": ["action"],
+            },
+            handler=_watch_control,
+            policy="project-write",
+        ),
+        BemineTool(
             name="file_read",
             description="Read a UTF-8 text file inside the project root.",
             input_schema={
@@ -374,6 +396,36 @@ def _tmux_capture(args: Mapping[str, Any], context: ToolContext) -> Mapping[str,
     if proc.returncode != 0:
         raise ToolExecutionError(f"tmux capture-pane failed: {proc.stderr.strip()}")
     return {"target": target, "output": _redact(proc.stdout[-6000:])}
+
+
+def _watch_control(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    action = str(args.get("action") or "status")
+    project_id = context.project_id
+    session = context.db.get_bemine_session(context.session_id) or {}
+    channel_id = str(session.get("channel_id") or "")
+    project_name = project_id.split(":")[-1]
+
+    if action == "start":
+        brief = str(args.get("brief") or "").strip()
+        if not brief:
+            return {"ok": False, "error": "a context brief is required to start a watcher"}
+        interval = int(args.get("interval_secs") or 300)
+        context.db.upsert_project_watcher(
+            project_id=project_id, channel_id=channel_id, brief=brief, interval_secs=interval,
+        )
+        return {"ok": True, "status": "active", "project": project_name,
+                "interval_secs": interval}
+
+    if action == "stop":
+        context.db.update_project_watcher(project_id, status="stopped")
+        return {"ok": True, "status": "stopped", "project": project_name}
+
+    watcher = context.db.get_project_watcher(project_id)
+    if not watcher:
+        return {"ok": True, "status": "none", "project": project_name}
+    return {"ok": True, "status": watcher["status"], "project": project_name,
+            "interval_secs": watcher["interval_secs"],
+            "awaiting_reply": bool(watcher["awaiting_reply"])}
 
 
 def _file_read(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
