@@ -141,6 +141,15 @@ uv run bemine systemd install --now
 systemctl --user status bemine-daemon mayor-discord-gateway
 ```
 
+### Watcher mode
+
+Enable a watcher from a project's Discord channel: "watch this, goal: <your full
+context>, check every 10m". When the project's session is waiting on input, Bemine
+drives it toward your brief (sending keystrokes over SSH for remote devices) and only
+messages you when blocked — your reply in the channel is relayed straight back in.
+Every action is echoed to the channel. Stop with "stop watching"; inspect with
+`bemine watch list`.
+
 ## Configuration
 
 Bemine's human-facing config lives in `bemine.toml`. Use `BEMINE_CONFIG` or

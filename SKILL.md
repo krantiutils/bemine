@@ -65,6 +65,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - Credential inventory and gates: `src/bemine/security/credentials.py`,
   `src/bemine/security/proxy.py`, `src/bemine/security/totp.py`
 - Jobs and daemon: `src/bemine/jobs/core.py`, `src/bemine/jobs/daemon.py`
+- Project watcher: `src/bemine/jobs/project_watcher.py` drives a tmux-hosted session
+  toward a per-project brief; `src/bemine/jobs/remote_tmux.py` runs tmux locally or over
+  SSH. Control via the `watch_control` channel tool or `bemine watch`.
 - Obsidian vault sync: `src/bemine/index/vault.py`
 - Managed workers: `src/bemine/workers/workers.py`, `src/bemine/workers/tmux_adapter.py`
 - Harness identity: `SOUL.md`
