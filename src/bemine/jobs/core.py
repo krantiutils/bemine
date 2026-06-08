@@ -331,14 +331,25 @@ class BemineDaemon:
         self.poll_seconds = poll_seconds
 
     def run_once(self) -> list[JobRunResult]:
-        return run_due_jobs(self.settings)
+        results = run_due_jobs(self.settings)
+        self._tick_watchers()
+        return results
 
     def run_forever(self) -> None:
         db = BemineDB(self.settings.db_path)
         seed_default_jobs(db)
         while True:
             run_due_jobs(self.settings)
+            self._tick_watchers()
             time.sleep(self.poll_seconds)
+
+    def _tick_watchers(self) -> None:
+        from .project_watcher import tick_all_watchers
+        try:
+            db = BemineDB(self.settings.db_path)
+            tick_all_watchers(self.settings, db)
+        except Exception:
+            pass
 
 
 def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, Any]) -> str:
