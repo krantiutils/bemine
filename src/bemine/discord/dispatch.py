@@ -1749,12 +1749,61 @@ def _shell_capability_lines() -> list[str]:
     ]
 
 
+# Guild channels whose name is NOT a project (the session-watcher catch-all and the
+# usual chit-chat channels). Every OTHER named guild channel is treated as a per-project
+# channel, since Bemine auto-creates one channel per project (named after the project).
+_NON_PROJECT_CHANNELS = {"general", "session-updates", "bemine", "mayor"}
+
+
+def _non_project_channel_names() -> set[str]:
+    names = {_channel_key(n) for n in _NON_PROJECT_CHANNELS}
+    fallback = config_string("jobs", "session_fallback_channel", "session-updates")
+    if fallback:
+        names.add(_channel_key(fallback))
+    return names
+
+
+def _project_channel_block(project: ProjectChannel, *, local: bool) -> list[str]:
+    """Strong, deterministic instructions so the agent always knows this channel IS a
+    specific project and never asks the user which project/session they mean."""
+    name = project.channel_name or project.project_name
+    block = [
+        "",
+        f"CHANNEL BINDING (authoritative): this Discord channel is dedicated to the "
+        f"project `{name}`.",
+        f"- Every message in this channel is about `{name}`. Never ask the user which "
+        "project or which session they mean — it is always this one.",
+        f'- A bare "status", "it", "its", or "the session" refers to the `{name}` '
+        "project's agent session, NOT your own runtime/model/config. Only call "
+        "`bemine_config` (and report your own runtime/model) when the user explicitly "
+        "asks what model or runtime YOU are.",
+        f"- To answer about `{name}` or act on it, first call `status_show` and pick the "
+        f"session whose working directory's last path segment is `{name}` (it may be "
+        "running on another device). That session is what this channel controls; report "
+        "its device, last activity, and whether it is waiting for input.",
+    ]
+    if local:
+        block.append(
+            f"- To relay a message into a waiting local session for `{name}`, use "
+            "`tmux_list` then `tmux_send` to the pane whose path matches it."
+        )
+    else:
+        block.append(
+            f"- `{name}` has no checkout on this device; it runs on the device shown by "
+            "`status_show`. To relay a message/command into its session, use your shell "
+            "to reach that device (e.g. ssh + tmux send-keys). If you cannot reach it, "
+            "say exactly what is blocking instead of asking which session."
+        )
+    return block
+
+
 def _build_channel_system_prompt(
     settings: BemineSettings,
     project: ProjectChannel | None,
     *,
     runtime: str = "",
     model: str = "",
+    local_project: bool = True,
 ) -> str:
     """Faithful reuse of the existing native-worker system prompt content. Concatenates
     the redacted harness + operator context the same way build_kimi_native_system_prompt
@@ -1779,12 +1828,16 @@ def _build_channel_system_prompt(
         f"`{model or 'unknown'}`.",
         "",
     ]
+    channel_block = (
+        _project_channel_block(project, local=local_project) if project else []
+    )
     return _redact(
         "\n".join(
             [
                 "You are Bemine's native worker for a Discord-routed task.",
                 "You run inside Bemine's own harness and use only the tools Bemine provides.",
                 project_line,
+                *channel_block,
                 "",
                 *identity,
                 "",
@@ -1821,19 +1874,49 @@ def resolve_channel_binding(settings: BemineSettings, message: Any) -> ChannelBi
     channel_name = getattr(channel, "name", "") or ""
     category = getattr(channel, "category", None)
     category_name = getattr(category, "name", "") if category else ""
+    is_dm = getattr(message, "guild", None) is None
     project = resolve_project_channel(
         channel_name=channel_name,
         category_name=category_name,
         state_dir=settings.state_dir,
         repo_dir=None,
     )
+    # Bemine auto-creates one channel per project (named after the project) with NO
+    # Discord category, so resolve_project_channel — which gates on the project category —
+    # misses them. Bind the channel by NAME instead so the agent always knows which
+    # project/session it controls, instead of falling back to the generic coordination
+    # surface and asking the user which session they mean.
+    local_project = project is not None
+    if (
+        project is None
+        and not is_dm
+        and channel_name
+        and _channel_key(channel_name) not in _non_project_channel_names()
+    ):
+        # A project with a local checkout (config or defaults) -> real cwd, local tools.
+        local_match = load_project_channels(settings.state_dir).get(
+            _channel_key(channel_name)
+        )
+        if local_match is not None:
+            project = local_match
+            local_project = True
+        else:
+            # Otherwise it lives on another device: bind a remote project identity.
+            project = ProjectChannel(
+                channel_name=channel_name,
+                cwd=Path(settings.state_dir).parent,
+                project_id=f"channel:{_channel_key(channel_name)}",
+                project_name=channel_name,
+            )
     runtime = resolve_dispatch_runtime(project.runtime if project else None)
     model = config_string(runtime, "model", "") or _DEFAULT_MODELS.get(runtime, "")
-    cwd = Path(project.cwd) if project else Path(settings.state_dir).parent
+    cwd = Path(project.cwd) if local_project else Path(settings.state_dir).parent
     project_id = (
         (project.project_id or project.channel_name) if project else "bemine"
     )
-    system = _build_channel_system_prompt(settings, project, runtime=runtime, model=model)
+    system = _build_channel_system_prompt(
+        settings, project, runtime=runtime, model=model, local_project=local_project
+    )
     return ChannelBinding(
         project_id=project_id,
         runtime=runtime,
