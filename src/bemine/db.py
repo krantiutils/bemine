@@ -191,6 +191,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
     summary,
     tokenize='unicode61'
 );
+
+CREATE TABLE IF NOT EXISTS project_watchers (
+    project_id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    brief TEXT NOT NULL,
+    interval_secs INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    last_tick_at REAL NOT NULL DEFAULT 0,
+    awaiting_reply INTEGER NOT NULL DEFAULT 0,
+    empty_ticks INTEGER NOT NULL DEFAULT 0,
+    started_at REAL NOT NULL,
+    created_at REAL NOT NULL
+);
 """
 
 
@@ -974,6 +987,72 @@ class BemineDB:
                 (channel_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    def upsert_project_watcher(self, *, project_id: str, channel_id: str,
+                               brief: str, interval_secs: int) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO project_watchers(
+                    project_id, channel_id, brief, interval_secs, status,
+                    last_tick_at, awaiting_reply, empty_ticks, started_at, created_at
+                ) VALUES(?, ?, ?, ?, 'active', 0, 0, 0, ?, ?)
+                ON CONFLICT(project_id) DO UPDATE SET
+                    channel_id=excluded.channel_id,
+                    brief=excluded.brief,
+                    interval_secs=excluded.interval_secs,
+                    status='active',
+                    awaiting_reply=0,
+                    empty_ticks=0,
+                    started_at=excluded.started_at
+                """,
+                (project_id, channel_id, brief, int(interval_secs), now, now),
+            )
+
+    def get_project_watcher(self, project_id: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM project_watchers WHERE project_id = ?", (project_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_project_watcher_by_channel(self, channel_id: str) -> dict | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM project_watchers WHERE channel_id = ?", (channel_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_active_project_watchers(self) -> list[dict]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM project_watchers WHERE status = 'active' "
+                "ORDER BY last_tick_at ASC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_project_watcher(self, project_id: str, **fields) -> None:
+        allowed = {"channel_id", "brief", "interval_secs", "status",
+                   "last_tick_at", "awaiting_reply", "empty_ticks"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return
+        assignments = ", ".join(f"{k} = ?" for k in sets)
+        with self.connect() as conn:
+            conn.execute(
+                f"UPDATE project_watchers SET {assignments} WHERE project_id = ?",
+                (*sets.values(), project_id),
+            )
+
+    def get_channel_id_for_project(self, project_id: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT channel_id FROM bemine_sessions WHERE project_id = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        return str(row["channel_id"]) if row else None
 
     def list_bemine_session_messages(
         self,
