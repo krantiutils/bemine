@@ -396,6 +396,19 @@ def run_bound_agent(
     return result.final_text
 
 
+def maybe_consume_watcher_reply(settings, db, *, channel_id: str, text: str) -> bool:
+    """If a watcher in this channel is awaiting a human reply, relay `text` into its
+    session and resume the watcher. Returns True if the message was consumed."""
+    if not text:
+        return False
+    watcher = db.get_project_watcher_by_channel(channel_id)
+    if not watcher or not int(watcher.get("awaiting_reply", 0)):
+        return False
+    from bemine.jobs.project_watcher import relay_user_reply, default_deps
+    relay_user_reply(settings, db, watcher, text, default_deps(settings))
+    return True
+
+
 class MayorDiscordGateway:
     def __init__(self, settings: Settings) -> None:
         settings.require_token()
@@ -569,6 +582,14 @@ class MayorDiscordGateway:
 
         if normalized or saved_attachments:
             channel_key = str(message.channel.id)
+            from bemine.db import BemineDB as _BemineDB
+            _wdb = _BemineDB(self.settings.db_path)
+            if await asyncio.to_thread(
+                maybe_consume_watcher_reply, BemineSettings.load(), _wdb,
+                channel_id=channel_key, text=normalized,
+            ):
+                await responder.send("↪ Relayed your reply into the watched session.")
+                return
             # If a dispatch is already running in this channel, interrupt it and fold in
             # the newer message (signal the worker to stop, cancel the awaiting task).
             prev_task = self._dispatch_tasks.get(channel_key)
