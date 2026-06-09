@@ -200,6 +200,10 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
 
 
 def _handle_rate_limit(deps, pane, device, pid, rec, now, base_backoff, max_attempts) -> dict:
+    if rec.get("escalated"):
+        # Already pinged the human for this episode — hold silently, no more resends.
+        rec["next_retry_at"] = now + _ESCALATED_HOLD
+        return rec
     attempts = int(rec.get("rl_attempts", 0)) + 1
     deps.tmux.send_keys(device, pid, ["Up", "Enter"])  # recall + resend previous message
     deps.audit("resubmit", "rate_limit", pane)

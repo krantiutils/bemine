@@ -153,3 +153,14 @@ def test_tick_isolates_failing_pane(tmp_path):
     deps = _deps([_pane()], _Boom(), clock=clock, escalations=esc, audits=aud)
     tick_recovery(s, deps, now=2000.0)  # must not raise
     assert load_recovery_state(recovery_state_path(s)) == {}
+
+
+def test_no_resend_after_escalation(tmp_path):
+    s = _settings(tmp_path)
+    tmux = _Tmux(["Rate limited"])  # always rate-limited
+    clock, esc, aud = _clock(), [], []
+    deps = _deps([_pane()], tmux, clock=clock, escalations=esc, audits=aud)
+    for i in range(12):
+        tick_recovery(s, deps, now=2000.0 + i * 100000)  # each tick past the hold window
+    assert len(esc) == 1               # escalated exactly once
+    assert len(tmux.sent_keys) <= 5    # stops resending at max_attempts, doesn't grow to 12
