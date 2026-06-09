@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -121,6 +122,7 @@ class RecoveryDeps:
     now: Callable
     sleep: Callable
     audit: Callable
+    decide: Callable = None   # (pane, pane_text) -> Decision|None ; None disables the LLM tier
 
 
 def _escalation_event(pane: dict, kind: str, pane_after: str) -> dict:
@@ -139,77 +141,95 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
     sigs = _cfg_signatures()
     max_age = _cfg_max_age()
     max_attempts = _cfg_max_attempts()
-    verify_delay = _cfg_verify_delay()
     base_backoff = _cfg_backoff()
     path = recovery_state_path(settings)
     state = load_recovery_state(path)
-    live_keys = set()
+    live = set()
 
     for pane in deps.get_panes(settings):
         try:
             key = recovery_key(pane)
-            live_keys.add(key)
+            live.add(key)
             activity = int(pane.get("activity") or 0)
             if activity and (now - activity) > max_age:
                 continue
-            rec = state.get(key)
-            if rec and now < float(rec.get("next_retry_at", 0)):
+            rec = state.get(key) or {}
+            if rec.get("next_retry_at") and now < float(rec["next_retry_at"]):
+                state[key] = rec
                 continue
             device = pane["device"]
             pid = pane["pane_id"]
             before = deps.tmux.capture(device, pid)
             kind = classify(before, signatures=sigs)
-            if kind == "healthy":
-                state.pop(key, None)
-                continue
 
-            if not _act(kind, deps, pane, before):
-                continue
-
-            deps.sleep(verify_delay)
-            after = deps.tmux.capture(device, pid)
             if kind == "rate_limit":
-                advanced = not any(sig in _recent(after).lower() for sig in sigs)
-            else:
-                advanced = after != before
+                state[key] = _handle_rate_limit(deps, pane, device, pid, rec, now,
+                                                base_backoff, max_attempts)
+                continue
 
-            rec = state.get(key) or {"attempts": 0, "backoff": base_backoff}
-            if advanced:
-                deps.audit("recovered", kind, pane)
+            # No longer rate-limited: if we were mid rate-limit episode, it cleared.
+            if rec.get("rl_attempts"):
+                if not rec.get("escalated"):
+                    deps.audit("recovered", "rate_limit", pane)
                 state.pop(key, None)
+                continue
+
+            if kind == "trivial_confirm":
+                deps.tmux.send_text(device, pid, "yes")
+                deps.audit("auto_yes", "trivial_confirm", pane)
+                state.pop(key, None)  # a later tick confirms it advanced
+                continue
+
+            # Otherwise: maybe stuck on a question. Idle-gated, deduped LLM tier.
+            h = hashlib.sha1(_recent(before).encode("utf-8", "ignore")).hexdigest()
+            if rec.get("seen_hash") == h:
+                if rec.get("llm_done"):
+                    state[key] = {"seen_hash": h, "llm_done": True}
+                    continue
+                _handle_question(deps, pane, device, pid, before)
+                state[key] = {"seen_hash": h, "llm_done": True}
             else:
-                rec["attempts"] = int(rec.get("attempts", 0)) + 1
-                rec["backoff"] = min(int(rec.get("backoff", base_backoff)) * 2, _BACKOFF_CAP)
-                rec["next_retry_at"] = now + rec["backoff"]
-                if rec["attempts"] >= max_attempts and not rec.get("escalated"):
-                    deps.escalate(_escalation_event(pane, kind, after))
-                    deps.audit("escalated", kind, pane)
-                    rec["escalated"] = True
-                if rec["attempts"] >= max_attempts:
-                    rec["next_retry_at"] = now + _ESCALATED_HOLD
-                state[key] = rec
+                state[key] = {"seen_hash": h, "llm_done": False}
         except Exception:
             continue
 
-    for key in list(state.keys()):
-        if key not in live_keys:
-            state.pop(key, None)
+    for k in list(state.keys()):
+        if k not in live:
+            state.pop(k, None)
     save_recovery_state(path, state)
 
 
-def _act(kind: str, deps: "RecoveryDeps", pane: dict, before: str) -> bool:
-    device = pane["device"]
-    pid = pane["pane_id"]
-    if kind == "rate_limit":
-        # Resend the previously-sent message: Up recalls it into the composer, Enter sends.
-        deps.tmux.send_keys(device, pid, ["Up", "Enter"])
-        deps.audit("resubmit", kind, pane)
-        return True
-    if kind == "trivial_confirm":
-        deps.tmux.send_text(device, pid, "yes")
-        deps.audit("auto_yes", kind, pane)
-        return True
-    return False
+def _handle_rate_limit(deps, pane, device, pid, rec, now, base_backoff, max_attempts) -> dict:
+    attempts = int(rec.get("rl_attempts", 0)) + 1
+    deps.tmux.send_keys(device, pid, ["Up", "Enter"])  # recall + resend previous message
+    deps.audit("resubmit", "rate_limit", pane)
+    backoff = min(int(rec.get("backoff", base_backoff)) * 2, _BACKOFF_CAP)
+    new = {"rl_attempts": attempts, "backoff": backoff,
+           "next_retry_at": now + backoff, "escalated": bool(rec.get("escalated"))}
+    if attempts >= max_attempts and not new["escalated"]:
+        deps.escalate(_escalation_event(pane, "rate_limit", ""))
+        deps.audit("escalated", "rate_limit", pane)
+        new["escalated"] = True
+    if attempts >= max_attempts:
+        new["next_retry_at"] = now + _ESCALATED_HOLD
+    return new
+
+
+def _handle_question(deps, pane, device, pid, before) -> None:
+    decision = deps.decide(pane, before) if deps.decide else None
+    if decision is None:
+        return
+    kind = getattr(decision, "kind", "wait")
+    if kind == "send_text" and getattr(decision, "text", "").strip():
+        deps.tmux.send_text(device, pid, decision.text)
+        deps.audit("llm_send_text", "question", pane)
+    elif kind == "send_keys" and getattr(decision, "keys", None):
+        deps.tmux.send_keys(device, pid, list(decision.keys))
+        deps.audit("llm_send_keys", "question", pane)
+    elif kind == "escalate":
+        deps.escalate(_escalation_event(pane, "question", before))
+        deps.audit("llm_escalate", "question", pane)
+    # "wait"/None -> do nothing
 
 
 def default_recovery_deps(settings) -> RecoveryDeps:
@@ -252,5 +272,33 @@ def default_recovery_deps(settings) -> RecoveryDeps:
         except Exception:
             pass
 
+    from bemine.jobs.project_watcher import decide as _watcher_decide
+    from bemine.discord.dispatch import _DEFAULT_MODELS
+    from bemine.agent.clients import build_client_for_runtime
+
+    _BRIEF = ("A terminal agent session is paused waiting on input. If it is asking a "
+              "question, answer it concisely to let the work continue SAFELY. Never take "
+              "destructive/irreversible actions or use gated credentials — escalate instead. "
+              "If it is not actually waiting on a question (idle/done), choose wait.")
+
+    def _runtime_for(cmd: str) -> str:
+        c = (cmd or "").lower()
+        if "codex" in c:
+            return "codex"
+        if "kimi" in c:
+            return "kimi"
+        return "claude"  # claude/node/default
+
+    def _decide(pane, pane_text):
+        try:
+            rt = _runtime_for(pane.get("command", ""))
+            client = build_client_for_runtime(settings, rt)
+            model = config_string(rt, "model", "") or _DEFAULT_MODELS.get(rt, "kimi-k2.6")
+            return _watcher_decide(client, model=model, brief=_BRIEF,
+                                   pane_capture=pane_text, transcript_tail="",
+                                   ask_summary="", channel_context="")
+        except Exception:
+            return None
+
     return RecoveryDeps(get_panes=_panes, tmux=tmux, escalate=_escalate,
-                        now=time.time, sleep=time.sleep, audit=_audit)
+                        now=time.time, sleep=time.sleep, audit=_audit, decide=_decide)
