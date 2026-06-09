@@ -221,3 +221,17 @@ def test_run_once_publishes_daemon_heartbeat_and_confirms(tmp_path, monkeypatch)
     BemineDaemon(settings).run_once()
     assert read_heartbeat(settings, "daemon")["sha"] == "dsha"
     assert called["confirm"] == 1
+
+
+def test_run_once_ticks_recovery(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
+
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    called = {"n": 0}
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: True)
+    monkeypatch.setattr(ar, "tick_recovery",
+                        lambda s, deps, *, now: called.__setitem__("n", called["n"] + 1))
+    BemineDaemon(settings).run_once()
+    assert called["n"] == 1

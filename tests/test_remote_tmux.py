@@ -52,3 +52,13 @@ def test_capture_returns_stdout():
     rt = RemoteTmux(gateway_device="cdjk", runner=runner)
     assert rt.capture("cdjk", "%1") == "pane contents\n"
     assert runner.calls[-1] == ["tmux", "capture-pane", "-p", "-t", "%1"]
+
+
+def test_send_text_pauses_between_text_and_enter():
+    pauses = []
+    runner = _FakeRunner()
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: pauses.append(s))
+    rt.send_text("cdjk", "%1", "hello")
+    assert runner.calls[-2] == ["tmux", "send-keys", "-t", "%1", "-l", "hello"]
+    assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Enter"]
+    assert pauses and pauses[0] > 0
