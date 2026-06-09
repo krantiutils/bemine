@@ -114,3 +114,27 @@ def test_escalates_only_once_even_after_hold(tmp_path):
         clock["box"]["t"] = 1000.0 + i * 200000.0  # > _ESCALATED_HOLD (86400) each step
         tick_recovery(s, deps, now=clock["box"]["t"])
     assert len(esc) == 1  # escalated exactly once for this stuck episode
+
+
+class _ExplodingTmux:
+    def list_panes(self, device):
+        raise RuntimeError("ssh: command not found: tmux")
+
+    def capture(self, device, pane):
+        raise RuntimeError("boom")
+
+    def send_keys(self, device, pane, keys):
+        pass
+
+    def send_text(self, device, pane, text):
+        pass
+
+
+def test_tick_isolates_failing_session(tmp_path):
+    from bemine.jobs.auto_recovery import recovery_state_path, load_recovery_state
+    s = _settings(tmp_path)
+    clock, esc, aud = _clock(), [], []
+    deps = _deps([_status()], _ExplodingTmux(), clock=clock, escalations=esc, audits=aud)
+    # Must not raise; must still complete the tick and write state (even if empty).
+    tick_recovery(s, deps, now=1000.0)
+    assert load_recovery_state(recovery_state_path(s)) == {}
