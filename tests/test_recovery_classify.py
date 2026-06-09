@@ -30,6 +30,22 @@ def test_classify_healthy():
                     signatures=RATE_LIMIT_DEFAULTS) == "healthy"
 
 
+def test_classify_destructive_confirm_is_ambiguous_not_trivial():
+    for pane in [
+        "Delete all branches? (y/n)",
+        "Force push to main? (y/n)",
+        "Run rm -rf /tmp/x and continue? (y/n)",
+        "Reset --hard to origin? (y/n)",
+        "Drop table users? (y/n)",
+    ]:
+        assert classify(pane, asks_user=True, signatures=RATE_LIMIT_DEFAULTS) == "ambiguous", pane
+
+
+def test_classify_benign_confirm_still_trivial():
+    for pane in ["Proceed? (y/n)", "Continue? (y/n)", "Do you want to continue? (y/n)"]:
+        assert classify(pane, asks_user=True, signatures=RATE_LIMIT_DEFAULTS) == "trivial_confirm", pane
+
+
 def test_state_roundtrip_and_key(tmp_path):
     s = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     p = recovery_state_path(s)

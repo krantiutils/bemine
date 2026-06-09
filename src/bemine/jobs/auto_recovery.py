@@ -27,13 +27,21 @@ _TRIVIAL_CONFIRM = re.compile(
     re.IGNORECASE,
 )
 
+# A confirm prompt mentioning any of these is NOT safe to auto-yes — route to the LLM tier.
+_DESTRUCTIVE = re.compile(
+    r"\b(delete|deletes|deleting|remove|removes|removing|\brm\b|force[- ]?push|"
+    r"reset\s+--hard|drop\s|overwrite|destroy|terminate|wipe|truncate|format\s|"
+    r"revoke|uninstall|tear\s?down|purge|prune)\b",
+    re.IGNORECASE,
+)
+
 
 def classify(pane_text: str, asks_user: bool, *, signatures: list[str]) -> str:
     low = (pane_text or "").lower()
     if any(sig in low for sig in signatures):
         return "rate_limit"
     if asks_user:
-        if _TRIVIAL_CONFIRM.search(pane_text or ""):
+        if _TRIVIAL_CONFIRM.search(pane_text or "") and not _DESTRUCTIVE.search(pane_text or ""):
             return "trivial_confirm"
         return "ambiguous"
     return "healthy"
