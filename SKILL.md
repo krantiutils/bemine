@@ -68,6 +68,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - Project watcher: `src/bemine/jobs/project_watcher.py` drives a tmux-hosted session
   toward a per-project brief; `src/bemine/jobs/remote_tmux.py` runs tmux locally or over
   SSH. Control via the `watch_control` channel tool or `bemine watch`.
+- Self-deploy: `src/bemine/deploy/` (heartbeat, state, pipeline). Triggered via the
+  `deploy_control` channel tool or `bemine deploy`; executed by the daemon, test-gated,
+  with heartbeat health checks and auto-rollback (daemon boot-guard self-heals crash-loops).
 - Obsidian vault sync: `src/bemine/index/vault.py`
 - Managed workers: `src/bemine/workers/workers.py`, `src/bemine/workers/tmux_adapter.py`
 - Harness identity: `SOUL.md`

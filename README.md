@@ -150,6 +150,14 @@ messages you when blocked — your reply in the channel is relayed straight back
 Every action is echoed to the channel. Stop with "stop watching"; inspect with
 `bemine watch list`.
 
+### Self-deploy
+
+Ship Bemine from Discord: say "deploy bemine" in a channel (or run `bemine deploy`). The
+daemon runs the full test suite, and only if it's green restarts the gateway and verifies a
+fresh heartbeat on the new commit — auto-rolling back if it doesn't come up. The daemon then
+refreshes itself, guarded against crash-loops. `bemine deploy status` shows the current
+phase. The working tree must be clean (commit first).
+
 ## Configuration
 
 Bemine's human-facing config lives in `bemine.toml`. Use `BEMINE_CONFIG` or
