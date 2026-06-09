@@ -42,6 +42,7 @@ from .workers.workers import (
     render_transfer,
     render_workers,
 )
+from .deploy.pipeline import run_deploy
 
 
 HELP_FORMATTER = argparse.RawDescriptionHelpFormatter
@@ -894,6 +895,10 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_disable = jobs_sub.add_parser("disable", help="Disable a job.")
     jobs_disable.add_argument("job_id", help="Job id.")
 
+    deploy = sub.add_parser("deploy", help="Deploy Bemine's committed code (test-gated, auto-rollback).")
+    deploy_sub = deploy.add_subparsers(dest="deploy_command", required=False)
+    deploy_sub.add_parser("status", help="Show the current deploy state.")
+
     watch = sub.add_parser("watch", help="Manage per-project watchers.")
     watch_sub = watch.add_subparsers(dest="watch_command", required=True)
     w_start = watch_sub.add_parser("start", help="Start/replace a watcher for a project.")
@@ -1503,6 +1508,15 @@ def main(argv: list[str] | None = None) -> None:
         elif args.jobs_command == "disable":
             kernel.db.set_job_enabled(args.job_id, enabled=False)
             print(json.dumps({"job_id": args.job_id, "enabled": False}, sort_keys=True))
+    elif args.command == "deploy":
+        from bemine.deploy.state import DeployState, state_path
+        settings = _settings_from_args(args)
+        if getattr(args, "deploy_command", None) == "status":
+            st = DeployState.load(state_path(settings))
+            print(f"phase={st.phase} target={st.target_sha[:8]} rollback={st.rollback_sha[:8]}")
+        else:
+            st = run_deploy(settings, self_restart_daemon=False)
+            print(f"deploy {st.phase} (target={st.target_sha[:8]})")
     elif args.command == "watch":
         from bemine.db import BemineDB
         settings = _settings_from_args(args)
