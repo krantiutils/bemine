@@ -123,7 +123,7 @@ allow_external_paths = true           # let file_read/file_search reach outside 
 [recovery]
 # Auto-recovery watches recent active sessions and unsticks them.
 enabled = true
-max_session_age_secs = 1800   # ignore sessions idle longer than this (no reviving old ones)
+max_session_age_secs = 14400  # 4h window — recover sessions stuck within this; ignore older
 backoff_secs = 30             # initial retry backoff; doubles per failed attempt
 max_attempts = 5              # failed verifications before escalating to Discord
 verify_delay_secs = 4         # wait before re-capturing to confirm an action worked
