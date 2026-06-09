@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -131,8 +132,46 @@ def run_deploy(settings, *, channel_id: str = "", deps: DeployDeps | None = None
     return st
 
 
-def default_deps(settings) -> DeployDeps:  # pragma: no cover - replaced in a later task
-    raise NotImplementedError("default_deps is implemented in a later task")
+_UNIT = {GATEWAY: "mayor-discord-gateway.service", DAEMON: "bemine-daemon.service"}
+
+
+def default_deps(settings) -> DeployDeps:
+    from .heartbeat import read_heartbeat, current_head_sha, repo_dir
+    from bemine.jobs.project_watcher import echo_to_channel
+
+    root = repo_dir()
+
+    def run_tests() -> tuple[bool, str]:
+        proc = subprocess.run(
+            ["uv", "run", "pytest", "-q"], cwd=str(root), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False, timeout=900,
+        )
+        return proc.returncode == 0, proc.stdout or ""
+
+    def restart(service: str) -> None:
+        subprocess.run(["systemctl", "--user", "restart", _UNIT[service]], check=False)
+
+    def git_reset_hard(sha: str) -> None:
+        subprocess.run(["git", "-C", str(root), "reset", "--hard", sha], check=False)
+
+    def is_clean() -> bool:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"], text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        return not (proc.stdout or "").strip()
+
+    return DeployDeps(
+        run_tests=run_tests,
+        restart=restart,
+        git_reset_hard=git_reset_hard,
+        read_hb=lambda service: read_heartbeat(settings, service),
+        now=time.time,
+        sleep=time.sleep,
+        echo=echo_to_channel,
+        head_sha=lambda: current_head_sha(root),
+        is_clean=is_clean,
+    )
 
 
 def boot_guard(settings, *, deps: DeployDeps | None = None) -> None:
