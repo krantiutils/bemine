@@ -33,7 +33,9 @@ def _deps(*, clock, tests_ok=True, head="newsha", clean=True, hb_script=None):
             return None
         i = min(hb_idx[service], len(seq) - 1)
         hb_idx[service] += 1
-        return seq[i]
+        hb = dict(seq[i])
+        hb["ts"] = clock.now()
+        return hb
 
     deps = P.DeployDeps(
         run_tests=run_tests,
