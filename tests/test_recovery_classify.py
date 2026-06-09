@@ -67,8 +67,4 @@ def test_state_roundtrip_and_key(tmp_path):
     assert load_recovery_state(p) == {"k": {"attempts": 2}}
     assert load_recovery_state(tmp_path / "missing.json") == {}
 
-    class _St:
-        device_id = "mbp"
-        runtime = "claude"
-        session_id = "s1"
-    assert recovery_key(_St()) == "mbp:claude:s1"
+    assert recovery_key({"device": "mbp", "pane_id": "%2"}) == "mbp:%2"

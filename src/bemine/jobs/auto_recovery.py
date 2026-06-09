@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Callable
 
 from bemine.config import config_bool, config_int, config_string
-from bemine.jobs.project_watcher import resolve_pane
 
 RATE_LIMIT_DEFAULTS = [
     "server is temporarily limiting requests",
@@ -66,8 +65,8 @@ def save_recovery_state(path: Path, state: dict) -> None:
     Path(path).write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def recovery_key(status) -> str:
-    return f"{status.device_id}:{status.runtime}:{status.session_id}"
+def recovery_key(pane: dict) -> str:
+    return f"{pane['device']}:{pane['pane_id']}"
 
 
 _BACKOFF_CAP = 1800
@@ -101,30 +100,36 @@ def _cfg_signatures() -> list[str]:
     return RATE_LIMIT_DEFAULTS
 
 
+def _cfg_agent_commands() -> list[str]:
+    raw = config_string("recovery", "agent_commands", "")
+    if raw.strip():
+        return [c.strip().lower() for c in raw.split(",") if c.strip()]
+    return ["claude", "codex", "kimi", "node", "python"]
+
+
 @dataclass
 class RecoveryDeps:
-    get_statuses: Callable
+    get_panes: Callable      # (settings) -> list[dict]; each {device,pane_id,path,command,activity}
     tmux: object
-    decide: Callable
     escalate: Callable
     now: Callable
     sleep: Callable
     audit: Callable
 
 
-def _escalation_event(status, kind: str, pane_after: str) -> dict:
+def _escalation_event(pane: dict, kind: str, pane_after: str) -> dict:
     return {
         "type": "needs_input",
-        "session_id": status.session_id,
-        "device_id": status.device_id,
-        "runtime": status.runtime,
-        "cwd": status.cwd,
+        "session_id": pane.get("pane_id", ""),
+        "device_id": pane.get("device", ""),
+        "runtime": pane.get("command", ""),
+        "cwd": pane.get("path", ""),
         "ask_summary": f"auto-recovery could not clear a `{kind}` state — needs you",
         "output_tail": (pane_after or "")[-1500:],
     }
 
 
-def tick_recovery(settings, deps: RecoveryDeps, *, now: float) -> None:
+def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
     sigs = _cfg_signatures()
     max_age = _cfg_max_age()
     max_attempts = _cfg_max_attempts()
@@ -134,30 +139,29 @@ def tick_recovery(settings, deps: RecoveryDeps, *, now: float) -> None:
     state = load_recovery_state(path)
     live_keys = set()
 
-    for status in deps.get_statuses(settings):
-        if status.age_seconds > max_age:
-            continue
-        key = recovery_key(status)
-        live_keys.add(key)
-        rec = state.get(key)
-        if rec and now < float(rec.get("next_retry_at", 0)):
-            continue
+    for pane in deps.get_panes(settings):
         try:
-            pane = resolve_pane(deps.tmux, status.device_id, status.cwd)
-            if not pane:
+            key = recovery_key(pane)
+            live_keys.add(key)
+            activity = int(pane.get("activity") or 0)
+            if activity and (now - activity) > max_age:
                 continue
-            before = deps.tmux.capture(status.device_id, pane)
-            kind = classify(before, status.asks_user, signatures=sigs)
+            rec = state.get(key)
+            if rec and now < float(rec.get("next_retry_at", 0)):
+                continue
+            device = pane["device"]
+            pid = pane["pane_id"]
+            before = deps.tmux.capture(device, pid)
+            kind = classify(before, signatures=sigs)
             if kind == "healthy":
                 state.pop(key, None)
                 continue
 
-            acted = _act(kind, deps, status, pane, before)
-            if not acted:
+            if not _act(kind, deps, pane, before):
                 continue
 
             deps.sleep(verify_delay)
-            after = deps.tmux.capture(status.device_id, pane)
+            after = deps.tmux.capture(device, pid)
             if kind == "rate_limit":
                 advanced = not any(sig in after.lower() for sig in sigs)
             else:
@@ -165,17 +169,17 @@ def tick_recovery(settings, deps: RecoveryDeps, *, now: float) -> None:
 
             rec = state.get(key) or {"attempts": 0, "backoff": base_backoff}
             if advanced:
-                deps.audit("recovered", kind, status)
+                deps.audit("recovered", kind, pane)
                 state.pop(key, None)
             else:
                 rec["attempts"] = int(rec.get("attempts", 0)) + 1
                 rec["backoff"] = min(int(rec.get("backoff", base_backoff)) * 2, _BACKOFF_CAP)
                 rec["next_retry_at"] = now + rec["backoff"]
+                if rec["attempts"] >= max_attempts and not rec.get("escalated"):
+                    deps.escalate(_escalation_event(pane, kind, after))
+                    deps.audit("escalated", kind, pane)
+                    rec["escalated"] = True
                 if rec["attempts"] >= max_attempts:
-                    if not rec.get("escalated"):
-                        deps.escalate(_escalation_event(status, kind, after))
-                        deps.audit("escalated", kind, status)
-                        rec["escalated"] = True
                     rec["next_retry_at"] = now + _ESCALATED_HOLD
                 state[key] = rec
         except Exception:
@@ -187,73 +191,42 @@ def tick_recovery(settings, deps: RecoveryDeps, *, now: float) -> None:
     save_recovery_state(path, state)
 
 
-def _act(kind: str, deps: RecoveryDeps, status, pane: str, before: str) -> bool:
-    """Perform the recovery action. Returns True if an action was issued that should be
-    verified, False if nothing actionable was done (ambiguous tier deferred/escalated)."""
+def _act(kind: str, deps: "RecoveryDeps", pane: dict, before: str) -> bool:
+    device = pane["device"]
+    pid = pane["pane_id"]
     if kind == "rate_limit":
-        deps.tmux.send_keys(status.device_id, pane, ["Enter"])
-        deps.audit("resubmit", kind, status)
+        deps.tmux.send_keys(device, pid, ["Enter"])
+        deps.audit("resubmit", kind, pane)
         return True
     if kind == "trivial_confirm":
-        deps.tmux.send_text(status.device_id, pane, "yes")
-        deps.audit("auto_yes", kind, status)
+        deps.tmux.send_text(device, pid, "yes")
+        deps.audit("auto_yes", kind, pane)
         return True
-    decision = deps.decide(status, before)
-    if decision is None:
-        return False
-    dkind = getattr(decision, "kind", "wait")
-    if dkind == "send_text":
-        deps.tmux.send_text(status.device_id, pane, getattr(decision, "text", ""))
-        deps.audit("llm_send_text", kind, status)
-        return True
-    if dkind == "send_keys":
-        deps.tmux.send_keys(status.device_id, pane, list(getattr(decision, "keys", [])))
-        deps.audit("llm_send_keys", kind, status)
-        return True
-    if dkind == "escalate":
-        deps.escalate(_escalation_event(status, kind, before))
-        deps.audit("llm_escalate", kind, status)
-        return False
     return False
 
 
 def default_recovery_deps(settings) -> RecoveryDeps:
     import time
-    from bemine.index.status import collect_fleet_status, session_transcript_tail
     from bemine.jobs.remote_tmux import RemoteTmux
-    from bemine.jobs.project_watcher import decide as _watcher_decide
     from bemine.jobs.session_watcher import deliver_events
-    from bemine.discord.dispatch import _DEFAULT_MODELS
-    from bemine.agent.clients import build_client_for_runtime
     from bemine.db import BemineDB
+    from bemine.index.status import DEFAULT_STATUS_DEVICES
 
-    _GENERIC_BRIEF = (
-        "Keep this terminal agent session unstuck. Answer only what is needed to let it "
-        "continue safely. NEVER take destructive/irreversible actions or use gated "
-        "credentials — escalate instead."
-    )
+    tmux = RemoteTmux(gateway_device=settings.device_id)
+    agent_cmds = _cfg_agent_commands()
 
-    def _statuses(s):
-        statuses, _errors = collect_fleet_status(s)
-        return statuses
-
-    def _decide(status, pane_text):
-        try:
-            client = build_client_for_runtime(settings, status.runtime or "kimi")
-            rt = (status.runtime or "kimi").lower()
-            model = config_string(rt, "model", "") or _DEFAULT_MODELS.get(rt, "kimi-k2.6")
-            tail = ""
-            if status.source_path:
-                try:
-                    tail = session_transcript_tail(Path(status.source_path), status.runtime)
-                except Exception:
-                    tail = ""
-            return _watcher_decide(
-                client, model=model, brief=_GENERIC_BRIEF, pane_capture=pane_text,
-                transcript_tail=tail, ask_summary=status.ask_summary, channel_context="",
-            )
-        except Exception:
-            return None
+    def _panes(s):
+        devices = list(s.status_devices) if s.status_devices else list(DEFAULT_STATUS_DEVICES)
+        out = []
+        for dev in devices:
+            try:
+                for p in tmux.list_panes(dev):
+                    cmd = (p.get("command") or "").lower()
+                    if any(a in cmd for a in agent_cmds):
+                        out.append({**p, "device": dev})
+            except Exception:
+                continue
+        return out
 
     def _escalate(event):
         try:
@@ -261,23 +234,16 @@ def default_recovery_deps(settings) -> RecoveryDeps:
         except Exception:
             pass
 
-    def _audit(event_type, detail, status):
+    def _audit(event_type, kind, pane):
         try:
             BemineDB(settings.db_path).record_audit_event(
                 category="recovery", event_type=event_type, actor="auto_recovery",
-                device_id=status.device_id,
-                payload_json=json.dumps({"detail": detail, "session": status.session_id,
-                                         "cwd": status.cwd}),
+                device_id=pane.get("device"),
+                payload_json=json.dumps({"kind": kind, "pane": pane.get("pane_id"),
+                                         "cwd": pane.get("path"), "command": pane.get("command")}),
             )
         except Exception:
             pass
 
-    return RecoveryDeps(
-        get_statuses=_statuses,
-        tmux=RemoteTmux(gateway_device=settings.device_id),
-        decide=_decide,
-        escalate=_escalate,
-        now=time.time,
-        sleep=time.sleep,
-        audit=_audit,
-    )
+    return RecoveryDeps(get_panes=_panes, tmux=tmux, escalate=_escalate,
+                        now=time.time, sleep=time.sleep, audit=_audit)
