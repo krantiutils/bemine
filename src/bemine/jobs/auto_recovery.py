@@ -200,3 +200,69 @@ def _act(kind: str, deps: RecoveryDeps, status, pane: str, before: str) -> bool:
         deps.audit("llm_escalate", kind, status)
         return False
     return False
+
+
+def default_recovery_deps(settings) -> RecoveryDeps:
+    import time
+    from bemine.index.status import collect_fleet_status, session_transcript_tail
+    from bemine.jobs.remote_tmux import RemoteTmux
+    from bemine.jobs.project_watcher import decide as _watcher_decide
+    from bemine.jobs.session_watcher import deliver_events
+    from bemine.discord.dispatch import _DEFAULT_MODELS
+    from bemine.agent.clients import build_client_for_runtime
+    from bemine.db import BemineDB
+
+    _GENERIC_BRIEF = (
+        "Keep this terminal agent session unstuck. Answer only what is needed to let it "
+        "continue safely. NEVER take destructive/irreversible actions or use gated "
+        "credentials — escalate instead."
+    )
+
+    def _statuses(s):
+        statuses, _errors = collect_fleet_status(s)
+        return statuses
+
+    def _decide(status, pane_text):
+        try:
+            client = build_client_for_runtime(settings, status.runtime or "kimi")
+            rt = (status.runtime or "kimi").lower()
+            model = config_string(rt, "model", "") or _DEFAULT_MODELS.get(rt, "kimi-k2.6")
+            tail = ""
+            if status.source_path:
+                try:
+                    tail = session_transcript_tail(Path(status.source_path), status.runtime)
+                except Exception:
+                    tail = ""
+            return _watcher_decide(
+                client, model=model, brief=_GENERIC_BRIEF, pane_capture=pane_text,
+                transcript_tail=tail, ask_summary=status.ask_summary, channel_context="",
+            )
+        except Exception:
+            return None
+
+    def _escalate(event):
+        try:
+            deliver_events(settings, [event])
+        except Exception:
+            pass
+
+    def _audit(event_type, detail, status):
+        try:
+            BemineDB(settings.db_path).record_audit_event(
+                category="recovery", event_type=event_type, actor="auto_recovery",
+                device_id=status.device_id,
+                payload_json=json.dumps({"detail": detail, "session": status.session_id,
+                                         "cwd": status.cwd}),
+            )
+        except Exception:
+            pass
+
+    return RecoveryDeps(
+        get_statuses=_statuses,
+        tmux=RemoteTmux(gateway_device=settings.device_id),
+        decide=_decide,
+        escalate=_escalate,
+        now=time.time,
+        sleep=time.sleep,
+        audit=_audit,
+    )

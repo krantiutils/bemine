@@ -335,6 +335,7 @@ class BemineDaemon:
         self._deploy_tick()
         results = run_due_jobs(self.settings)
         self._tick_watchers()
+        self._recovery_tick()
         return results
 
     def run_forever(self) -> None:
@@ -344,6 +345,7 @@ class BemineDaemon:
             self._deploy_tick()
             run_due_jobs(self.settings)
             self._tick_watchers()
+            self._recovery_tick()
             time.sleep(self.poll_seconds)
 
     def _deploy_tick(self) -> None:
@@ -369,6 +371,17 @@ class BemineDaemon:
         try:
             db = BemineDB(self.settings.db_path)
             tick_all_watchers(self.settings, db)
+        except Exception:
+            pass
+
+    def _recovery_tick(self) -> None:
+        import time as _time
+        from bemine.jobs import auto_recovery as ar
+        try:
+            if not ar.recovery_enabled():
+                return
+            ar.tick_recovery(self.settings, ar.default_recovery_deps(self.settings),
+                             now=_time.time())
         except Exception:
             pass
 
