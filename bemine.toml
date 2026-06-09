@@ -120,5 +120,14 @@ session_fallback_channel = "session-updates"
 shell = "unrestricted"
 allow_external_paths = true           # let file_read/file_search reach outside the project
 
+[recovery]
+# Auto-recovery watches recent active sessions and unsticks them.
+enabled = true
+max_session_age_secs = 1800   # ignore sessions idle longer than this (no reviving old ones)
+backoff_secs = 30             # initial retry backoff; doubles per failed attempt
+max_attempts = 5              # failed verifications before escalating to Discord
+verify_delay_secs = 4         # wait before re-capturing to confirm an action worked
+# rate_limit_signatures = "rate limited,server is temporarily limiting requests,overloaded"
+
 [security]
 totp_secret_env = "BEMINE_TOTP_SECRET"

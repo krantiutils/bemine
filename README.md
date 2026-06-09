@@ -158,6 +158,14 @@ fresh heartbeat on the new commit — auto-rolling back if it doesn't come up. T
 refreshes itself, guarded against crash-loops. `bemine deploy status` shows the current
 phase. The working tree must be clean (commit first).
 
+### Auto-recovery
+
+Bemine watches your recent active sessions and unsticks them automatically: transient
+provider rate-limits are backed-off and resubmitted in place, obvious yes/continue prompts
+are auto-confirmed, and anything ambiguous is judged by a sub-agent — every action is
+verified by re-reading the pane, and it only pings you if recovery keeps failing. Tune it
+under `[recovery]` (e.g. `max_session_age_secs` so it never touches long-idle sessions).
+
 ## Configuration
 
 Bemine's human-facing config lives in `bemine.toml`. Use `BEMINE_CONFIG` or

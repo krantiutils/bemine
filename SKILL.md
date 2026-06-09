@@ -73,6 +73,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
   with heartbeat health checks and auto-rollback (daemon boot-guard self-heals crash-loops).
 - Obsidian vault sync: `src/bemine/index/vault.py`
 - Managed workers: `src/bemine/workers/workers.py`, `src/bemine/workers/tmux_adapter.py`
+- Auto-recovery: `src/bemine/jobs/auto_recovery.py` unsticks recent active sessions
+  (rate-limit back-off+resubmit, trivial-confirm auto-yes, LLM for ambiguous), verifies every
+  action, escalates on repeated failure. Tunable via `[recovery]`.
 - Harness identity: `SOUL.md`
 
 ## Self Improvement Loop
