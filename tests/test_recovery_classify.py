@@ -60,6 +60,20 @@ def test_classify_healthy_pane_without_asks_user():
     assert classify("writing code...", signatures=RATE_LIMIT_DEFAULTS) == "healthy"
 
 
+def test_classify_ignores_stale_rate_limit_in_scrollback():
+    # An OLD rate-limit high in the scrollback, but the session has since moved on and the
+    # bottom is healthy -> must NOT classify as rate_limit.
+    old_error = "API Error: Rate limited\n"
+    healthy_tail = "\n".join(["working on file %d" % i for i in range(40)])
+    pane = old_error + healthy_tail
+    assert classify(pane, signatures=RATE_LIMIT_DEFAULTS) == "healthy"
+
+
+def test_classify_rate_limit_when_error_is_at_bottom():
+    pane = "\n".join(["did stuff"] * 40) + "\nAPI Error: Server is temporarily limiting requests · Rate limited"
+    assert classify(pane, signatures=RATE_LIMIT_DEFAULTS) == "rate_limit"
+
+
 def test_state_roundtrip_and_key(tmp_path):
     s = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     p = recovery_state_path(s)
