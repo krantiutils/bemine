@@ -14,6 +14,7 @@ CONFIRM_WINDOW = 60
 HEALTH_TIMEOUT = 90
 HEALTH_POLL = 3
 HB_FRESH = 45
+STALE_DEPLOY_SECS = 1800
 
 _IN_FLIGHT = {"deploying", "daemon_refresh"}
 
@@ -206,3 +207,19 @@ def maybe_confirm_deploy(settings, *, deps: DeployDeps | None = None) -> None:
         st.updated_at = deps.now()
         st.save(path)
         deps.echo(st.channel_id, f"✅ Deploy complete on `{st.target_sha[:8]}`.")
+
+
+def reap_stale_deploy(settings, *, deps: DeployDeps | None = None) -> None:
+    """Reset a deploy that got wedged in 'deploying' (e.g. the daemon died mid-deploy)
+    back to 'failed', so future deploys aren't permanently blocked."""
+    deps = deps or default_deps(settings)
+    path = state_path(settings)
+    st = DeployState.load(path)
+    if st.phase != "deploying":
+        return
+    if deps.now() - float(st.updated_at) >= STALE_DEPLOY_SECS:
+        st.phase = "failed"
+        st.updated_at = deps.now()
+        st.save(path)
+        deps.echo(st.channel_id,
+                  "⚠ Deploy appears stuck (stale) — reset to failed. Re-run when ready.")

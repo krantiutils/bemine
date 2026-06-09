@@ -347,7 +347,7 @@ class BemineDaemon:
             time.sleep(self.poll_seconds)
 
     def _deploy_tick(self) -> None:
-        from bemine.deploy.pipeline import run_deploy, maybe_confirm_deploy
+        from bemine.deploy.pipeline import run_deploy, maybe_confirm_deploy, reap_stale_deploy
         from bemine.deploy.state import DeployState, state_path
         try:
             write_heartbeat(self.settings, "daemon", current_head_sha())
@@ -357,6 +357,8 @@ class BemineDaemon:
             st = DeployState.load(state_path(self.settings))
             if st.phase == "requested":
                 run_deploy(self.settings, channel_id=st.channel_id, self_restart_daemon=True)
+            elif st.phase == "deploying":
+                reap_stale_deploy(self.settings)
             else:
                 maybe_confirm_deploy(self.settings)
         except Exception:
