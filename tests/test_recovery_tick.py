@@ -52,7 +52,7 @@ def test_rate_limit_resubmits_and_recovers(tmp_path):
     clock, esc, aud = _clock(), [], []
     deps = _deps([_pane()], tmux, clock=clock, escalations=esc, audits=aud)
     tick_recovery(s, deps, now=clock["box"]["t"])
-    assert tmux.sent_keys == [["Enter"]]
+    assert tmux.sent_keys == [["Up", "Enter"]]
     assert esc == []
     assert load_recovery_state(recovery_state_path(s)) == {}
 

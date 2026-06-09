@@ -34,9 +34,15 @@ _DESTRUCTIVE = re.compile(
     re.IGNORECASE,
 )
 
+_RECENT_LINES = 30
+
+
+def _recent(text: str) -> str:
+    return "\n".join((text or "").splitlines()[-_RECENT_LINES:])
+
 
 def classify(pane_text: str, asks_user: bool = False, *, signatures: list[str]) -> str:
-    text = pane_text or ""
+    text = _recent(pane_text)
     low = text.lower()
     if any(sig in low for sig in signatures):
         return "rate_limit"
@@ -163,7 +169,7 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
             deps.sleep(verify_delay)
             after = deps.tmux.capture(device, pid)
             if kind == "rate_limit":
-                advanced = not any(sig in after.lower() for sig in sigs)
+                advanced = not any(sig in _recent(after).lower() for sig in sigs)
             else:
                 advanced = after != before
 
@@ -195,7 +201,8 @@ def _act(kind: str, deps: "RecoveryDeps", pane: dict, before: str) -> bool:
     device = pane["device"]
     pid = pane["pane_id"]
     if kind == "rate_limit":
-        deps.tmux.send_keys(device, pid, ["Enter"])
+        # Resend the previously-sent message: Up recalls it into the composer, Enter sends.
+        deps.tmux.send_keys(device, pid, ["Up", "Enter"])
         deps.audit("resubmit", kind, pane)
         return True
     if kind == "trivial_confirm":
