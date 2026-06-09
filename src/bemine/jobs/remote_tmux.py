@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from typing import Callable
 
 Runner = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -17,10 +18,11 @@ class RemoteTmux:
     """
 
     def __init__(self, *, gateway_device: str, runner: Runner | None = None,
-                 timeout: int = 15) -> None:
+                 timeout: int = 15, pause=None) -> None:
         self.gateway_device = gateway_device
         self._runner = runner or self._default_runner
         self.timeout = timeout
+        self._pause = pause or time.sleep
 
     def _default_runner(self, argv, **kwargs):
         return subprocess.run(
@@ -62,6 +64,7 @@ class RemoteTmux:
         self._run(device, ["send-keys", "-t", pane_id, *keys])
 
     def send_text(self, device: str, pane_id: str, text: str) -> None:
-        # -l sends text literally (no key-name interpretation), then a separate Enter.
+        # -l sends text literally; pause so the TUI absorbs it before Enter submits.
         self._run(device, ["send-keys", "-t", pane_id, "-l", text])
+        self._pause(0.2)
         self._run(device, ["send-keys", "-t", pane_id, "Enter"])
