@@ -201,6 +201,7 @@ CREATE TABLE IF NOT EXISTS project_watchers (
     last_tick_at REAL NOT NULL DEFAULT 0,
     awaiting_reply INTEGER NOT NULL DEFAULT 0,
     empty_ticks INTEGER NOT NULL DEFAULT 0,
+    unchanged_sends INTEGER NOT NULL DEFAULT 0,
     started_at REAL NOT NULL,
     created_at REAL NOT NULL
 );
@@ -223,6 +224,16 @@ class BemineDB:
     def init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    def _migrate(self, conn) -> None:
+        # Idempotent column adds for tables that predate a column (CREATE TABLE IF NOT
+        # EXISTS does not alter existing tables).
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(project_watchers)")}
+        if "unchanged_sends" not in cols:
+            conn.execute(
+                "ALTER TABLE project_watchers ADD COLUMN unchanged_sends INTEGER NOT NULL DEFAULT 0"
+            )
 
     def upsert_device(self, device_id: str, alias: str | None = None) -> None:
         now = time.time()
@@ -1034,7 +1045,7 @@ class BemineDB:
 
     def update_project_watcher(self, project_id: str, **fields) -> None:
         allowed = {"channel_id", "brief", "interval_secs", "status",
-                   "last_tick_at", "awaiting_reply", "empty_ticks"}
+                   "last_tick_at", "awaiting_reply", "empty_ticks", "unchanged_sends"}
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return

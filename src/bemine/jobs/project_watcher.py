@@ -136,6 +136,7 @@ def echo_to_channel(channel_id: str, text: str) -> None:
 
 
 _MAX_EMPTY_TICKS = 3
+_MAX_UNCHANGED_SENDS = 2
 
 
 @dataclass
@@ -220,15 +221,26 @@ def tick_watcher(settings: BemineSettings, db: BemineDB, watcher: dict,
             payload_json=json.dumps({"project": project_name, "detail": detail}),
         )
 
-    if decision.kind == "send_text":
-        if decision.text.strip():
+    if decision.kind == "send_text" and not decision.text.strip():
+        pass  # empty text -> no-op (like wait)
+    elif decision.kind in ("send_text", "send_keys"):
+        before = deps.tmux.capture(session.device_id, pane)
+        if decision.kind == "send_text":
             deps.tmux.send_text(session.device_id, pane, decision.text)
             deps.echo(channel_id, f"▶ `{project_name}` sent: {decision.text}")
             _audit("send", decision.text)
-    elif decision.kind == "send_keys":
-        deps.tmux.send_keys(session.device_id, pane, decision.keys)
-        deps.echo(channel_id, f"▶ `{project_name}` sent keys: {' '.join(decision.keys)}")
-        _audit("send", " ".join(decision.keys))
+        else:
+            deps.tmux.send_keys(session.device_id, pane, decision.keys)
+            deps.echo(channel_id, f"▶ `{project_name}` sent keys: {' '.join(decision.keys)}")
+            _audit("send", " ".join(decision.keys))
+        after = deps.tmux.capture(session.device_id, pane)
+        unchanged = int(watcher.get("unchanged_sends", 0)) + 1 if after == before else 0
+        db.update_project_watcher(project_id, unchanged_sends=unchanged)
+        if unchanged >= _MAX_UNCHANGED_SENDS:
+            db.update_project_watcher(project_id, awaiting_reply=1, unchanged_sends=0)
+            deps.echo(channel_id, f"⚠ `{project_name}` is not responding to input "
+                                  f"({unchanged} sends with no change) — paused, your reply "
+                                  "will resume it.")
     elif decision.kind == "escalate":
         db.update_project_watcher(project_id, awaiting_reply=1)
         deps.echo(channel_id, f"\U0001f64b `{project_name}` needs you: {decision.question}")
