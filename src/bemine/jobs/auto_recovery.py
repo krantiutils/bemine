@@ -298,17 +298,21 @@ def default_recovery_deps(settings) -> RecoveryDeps:
     from bemine.agent.clients import build_client_for_runtime
 
     _BRIEF = (
-        "A terminal AGENT session (claude/codex/kimi) is paused or stuck. Read the screen "
-        "and choose ONE action to get it moving again, SAFELY:\n"
-        "- If it is asking a question you can answer to continue the work, answer it "
-        "(reply with the text to send).\n"
-        "- If it hit a transient/retryable error (rate limit, overloaded, server busy, "
-        "'temporarily limiting requests'), resend the previous message: reply with keys "
-        "[\"Up\",\"Enter\"].\n"
-        "- If it says the selected model is at capacity / unavailable / 'try a different "
-        "model', or it needs a real human decision, a credential, a model switch, or any "
-        "destructive/irreversible action — do NOT guess: escalate with a short question.\n"
-        "- If it is just idle/working/done and not actually stuck, choose wait.\n"
+        "A terminal AGENT session (claude/codex/kimi) is shown. The error/message may be a "
+        "few lines ABOVE the input box (the box + hints render below it) — scan the whole "
+        "screen, not just the last line. Choose ONE action to get it moving again, SAFELY:\n"
+        "- TRANSIENT API/SERVER ERROR — if anywhere on screen you see 'API Error', 'rate "
+        "limited', 'temporarily limiting requests', 'overloaded', 'server busy', 5xx, etc., "
+        "AND the agent is now sitting idle at its input prompt, the turn FAILED: resend the "
+        "previous message with keys [\"Up\",\"Enter\"]. An idle prompt right after such an "
+        "error is NOT 'done' — do NOT choose wait; resend it.\n"
+        "- QUESTION — if it is asking something you can answer to continue, reply with the "
+        "text to send.\n"
+        "- NEEDS A HUMAN — model 'at capacity'/'try a different model'/unavailable, or it "
+        "needs a real decision, a credential, a model switch, or any destructive/irreversible "
+        "action: do NOT guess, escalate with a short question.\n"
+        "- Only choose wait if it is genuinely still working/generating, or truly finished "
+        "with no error and no pending question.\n"
         "Never run destructive or irreversible commands."
     )
 
