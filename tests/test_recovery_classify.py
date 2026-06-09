@@ -46,6 +46,20 @@ def test_classify_benign_confirm_still_trivial():
         assert classify(pane, asks_user=True, signatures=RATE_LIMIT_DEFAULTS) == "trivial_confirm", pane
 
 
+def test_classify_trivial_confirm_from_pane_without_asks_user():
+    # pane-mode: no asks_user signal, but the pane clearly shows a y/n confirm
+    assert classify("Proceed? (y/n)", signatures=RATE_LIMIT_DEFAULTS) == "trivial_confirm"
+
+
+def test_classify_destructive_confirm_from_pane_is_not_trivial():
+    # destructive confirm without asks_user must NOT auto-yes -> healthy (no trivial, no asks_user)
+    assert classify("Delete all branches? (y/n)", signatures=RATE_LIMIT_DEFAULTS) == "healthy"
+
+
+def test_classify_healthy_pane_without_asks_user():
+    assert classify("writing code...", signatures=RATE_LIMIT_DEFAULTS) == "healthy"
+
+
 def test_state_roundtrip_and_key(tmp_path):
     s = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     p = recovery_state_path(s)

@@ -36,13 +36,14 @@ _DESTRUCTIVE = re.compile(
 )
 
 
-def classify(pane_text: str, asks_user: bool, *, signatures: list[str]) -> str:
-    low = (pane_text or "").lower()
+def classify(pane_text: str, asks_user: bool = False, *, signatures: list[str]) -> str:
+    text = pane_text or ""
+    low = text.lower()
     if any(sig in low for sig in signatures):
         return "rate_limit"
+    if _TRIVIAL_CONFIRM.search(text) and not _DESTRUCTIVE.search(text):
+        return "trivial_confirm"
     if asks_user:
-        if _TRIVIAL_CONFIRM.search(pane_text or "") and not _DESTRUCTIVE.search(pane_text or ""):
-            return "trivial_confirm"
         return "ambiguous"
     return "healthy"
 
