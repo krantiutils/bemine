@@ -133,3 +133,37 @@ def run_deploy(settings, *, channel_id: str = "", deps: DeployDeps | None = None
 
 def default_deps(settings) -> DeployDeps:  # pragma: no cover - replaced in a later task
     raise NotImplementedError("default_deps is implemented in a later task")
+
+
+def boot_guard(settings, *, deps: DeployDeps | None = None) -> None:
+    deps = deps or default_deps(settings)
+    path = state_path(settings)
+    st = DeployState.load(path)
+    if st.phase != "daemon_refresh":
+        return
+    st.boot_attempts += 1
+    st.updated_at = deps.now()
+    st.save(path)  # persist immediately so a crash still counts this boot
+    if st.boot_attempts > BOOT_ATTEMPT_LIMIT:
+        deps.git_reset_hard(st.rollback_sha)
+        deps.restart(GATEWAY)
+        st.phase = "rolled_back"
+        st.updated_at = deps.now()
+        st.save(path)
+        deps.echo(st.channel_id,
+                  f"↩ Daemon unhealthy — rolled back to `{st.rollback_sha[:8]}`.")
+        deps.restart(DAEMON)
+
+
+def maybe_confirm_deploy(settings, *, deps: DeployDeps | None = None) -> None:
+    deps = deps or default_deps(settings)
+    path = state_path(settings)
+    st = DeployState.load(path)
+    if st.phase != "daemon_refresh":
+        return
+    if deps.now() - float(st.boot_ts) >= CONFIRM_WINDOW:
+        st.phase = "confirmed"
+        st.boot_attempts = 0
+        st.updated_at = deps.now()
+        st.save(path)
+        deps.echo(st.channel_id, f"✅ Deploy complete on `{st.target_sha[:8]}`.")
