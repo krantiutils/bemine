@@ -6,6 +6,10 @@ import json
 from ..config import BemineSettings
 from .core import BemineDaemon
 
+# Captured at import time so tests can monkeypatch BemineSettings.load on the class
+# without triggering the recursive classmethod descriptor problem.
+_load_settings = BemineSettings.load
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bemine-daemon", description="Bemine background daemon.")
@@ -17,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
-    settings = BemineSettings.load()
+    settings = _load_settings()
     daemon = BemineDaemon(settings, poll_seconds=args.poll_seconds)
     if args.once:
         results = daemon.run_once()
@@ -30,6 +34,8 @@ def main(argv: list[str] | None = None) -> None:
             for result in results:
                 print(f"{result.job_id}: {result.status} notified={result.notified}")
         return
+    from bemine.deploy.pipeline import boot_guard
+    boot_guard(settings)
     daemon.run_forever()
 
 

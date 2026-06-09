@@ -11,6 +11,7 @@ from typing import Any
 
 from ..config import BemineSettings
 from ..db import BemineDB
+from ..deploy.heartbeat import write_heartbeat, current_head_sha
 from ..kernel import BemineKernel
 from ..index.status import _redact, collect_fleet_status, render_status
 from .session_watcher import check_sessions, render_events
@@ -331,6 +332,7 @@ class BemineDaemon:
         self.poll_seconds = poll_seconds
 
     def run_once(self) -> list[JobRunResult]:
+        self._deploy_tick()
         results = run_due_jobs(self.settings)
         self._tick_watchers()
         return results
@@ -339,9 +341,26 @@ class BemineDaemon:
         db = BemineDB(self.settings.db_path)
         seed_default_jobs(db)
         while True:
+            self._deploy_tick()
             run_due_jobs(self.settings)
             self._tick_watchers()
             time.sleep(self.poll_seconds)
+
+    def _deploy_tick(self) -> None:
+        from bemine.deploy.pipeline import run_deploy, maybe_confirm_deploy
+        from bemine.deploy.state import DeployState, state_path
+        try:
+            write_heartbeat(self.settings, "daemon", current_head_sha())
+        except Exception:
+            pass
+        try:
+            st = DeployState.load(state_path(self.settings))
+            if st.phase == "requested":
+                run_deploy(self.settings, channel_id=st.channel_id, self_restart_daemon=True)
+            else:
+                maybe_confirm_deploy(self.settings)
+        except Exception:
+            pass
 
     def _tick_watchers(self) -> None:
         from .project_watcher import tick_all_watchers
