@@ -280,10 +280,20 @@ def default_recovery_deps(settings) -> RecoveryDeps:
     from bemine.discord.dispatch import _DEFAULT_MODELS
     from bemine.agent.clients import build_client_for_runtime
 
-    _BRIEF = ("A terminal agent session is paused waiting on input. If it is asking a "
-              "question, answer it concisely to let the work continue SAFELY. Never take "
-              "destructive/irreversible actions or use gated credentials — escalate instead. "
-              "If it is not actually waiting on a question (idle/done), choose wait.")
+    _BRIEF = (
+        "A terminal AGENT session (claude/codex/kimi) is paused or stuck. Read the screen "
+        "and choose ONE action to get it moving again, SAFELY:\n"
+        "- If it is asking a question you can answer to continue the work, answer it "
+        "(reply with the text to send).\n"
+        "- If it hit a transient/retryable error (rate limit, overloaded, server busy, "
+        "'temporarily limiting requests'), resend the previous message: reply with keys "
+        "[\"Up\",\"Enter\"].\n"
+        "- If it says the selected model is at capacity / unavailable / 'try a different "
+        "model', or it needs a real human decision, a credential, a model switch, or any "
+        "destructive/irreversible action — do NOT guess: escalate with a short question.\n"
+        "- If it is just idle/working/done and not actually stuck, choose wait.\n"
+        "Never run destructive or irreversible commands."
+    )
 
     def _runtime_for(cmd: str) -> str:
         c = (cmd or "").lower()
