@@ -6,7 +6,6 @@ import json
 from ..config import BemineSettings
 from .core import BemineDaemon
 
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="bemine-daemon", description="Bemine background daemon.")
     parser.add_argument("--once", action="store_true", help="Run one scheduler pass and exit.")
@@ -30,6 +29,8 @@ def main(argv: list[str] | None = None) -> None:
             for result in results:
                 print(f"{result.job_id}: {result.status} notified={result.notified}")
         return
+    from bemine.deploy.pipeline import boot_guard
+    boot_guard(settings)
     daemon.run_forever()
 
 

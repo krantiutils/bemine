@@ -211,6 +211,23 @@ def default_tools() -> list[BemineTool]:
             policy="project-write",
         ),
         BemineTool(
+            name="deploy_control",
+            description=(
+                "Deploy Bemine's own current committed code (HEAD). action='request' runs "
+                "the test-gated, auto-rollback deploy (restarts the gateway + daemon, reverts "
+                "if unhealthy). Use this when the user says to deploy/ship Bemine. "
+                "action='status' reports the current deploy phase. The working tree must be "
+                "clean (changes committed) first."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"action": {"type": "string", "enum": ["request", "status"]}},
+                "required": ["action"],
+            },
+            handler=_deploy_control,
+            policy="project-write",
+        ),
+        BemineTool(
             name="file_read",
             description="Read a UTF-8 text file inside the project root.",
             input_schema={
@@ -426,6 +443,24 @@ def _watch_control(args: Mapping[str, Any], context: ToolContext) -> Mapping[str
     return {"ok": True, "status": watcher["status"], "project": project_name,
             "interval_secs": watcher["interval_secs"],
             "awaiting_reply": bool(watcher["awaiting_reply"])}
+
+
+def _deploy_control(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    from bemine.deploy.pipeline import request_deploy
+    from bemine.deploy.state import DeployState, state_path
+
+    action = str(args.get("action") or "status")
+    session = context.db.get_bemine_session(context.session_id) or {}
+    channel_id = str(session.get("channel_id") or "")
+
+    if action == "request":
+        ok, msg = request_deploy(context.settings, channel_id=channel_id,
+                                 requested_by=context.session_id)
+        return {"ok": ok, "message": msg}
+
+    st = DeployState.load(state_path(context.settings))
+    return {"ok": True, "phase": st.phase, "target_sha": st.target_sha[:8],
+            "rollback_sha": st.rollback_sha[:8]}
 
 
 def _file_read(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

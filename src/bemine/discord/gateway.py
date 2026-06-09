@@ -20,6 +20,7 @@ from bemine.security.credentials import CredentialInventory, PermissionGate
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
 from bemine.index.status import _redact, collect_fleet_status, render_status
+from bemine.deploy.heartbeat import write_heartbeat, current_head_sha
 
 from .config import Settings
 from .dispatch import (
@@ -303,6 +304,14 @@ async def _best_effort_typing(channel: discord.abc.Messageable) -> AsyncIterator
             LOG.debug("could not stop Discord typing indicator: %s", exc)
 
 
+def publish_gateway_heartbeat(settings) -> None:
+    """Write the gateway heartbeat (best-effort)."""
+    try:
+        write_heartbeat(settings, "gateway", current_head_sha())
+    except Exception:
+        pass
+
+
 def run_bound_agent(
     settings,
     message,
@@ -451,6 +460,8 @@ class MayorDiscordGateway:
             LOG.info("connected as %s", self.bot.user)
             LOG.info("state db: %s", self.settings.db_path)
             LOG.info("inbox: %s", self.settings.inbox_dir)
+            publish_gateway_heartbeat(self.settings)
+            asyncio.create_task(self._heartbeat_loop())
             try:
                 synced = await self.bot.tree.sync()
                 LOG.info("synced %d slash command(s) globally", len(synced))
@@ -473,6 +484,11 @@ class MayorDiscordGateway:
             await _acknowledge_message(message)
             async with _best_effort_typing(message.channel):
                 await self._handle_allowed_message(message)
+
+    async def _heartbeat_loop(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            await asyncio.to_thread(publish_gateway_heartbeat, self.settings)
 
     async def _handle_allowed_message(self, message: discord.Message) -> None:
         saved_attachments = await self._record_message(message)

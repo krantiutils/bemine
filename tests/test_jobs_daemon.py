@@ -187,3 +187,37 @@ def test_run_once_ticks_watchers(tmp_path, monkeypatch):
                         lambda s, db: called.__setitem__("n", called["n"] + 1))
     BemineDaemon(settings).run_once()
     assert called["n"] == 1
+
+
+def test_daemon_main_calls_boot_guard_before_run(tmp_path, monkeypatch):
+    import bemine.jobs.daemon as d
+    import bemine.deploy.pipeline as P
+    from bemine.config import BemineSettings
+
+    base = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    monkeypatch.setattr(BemineSettings, "load", classmethod(lambda cls, *a, **k: base))
+    order = []
+    monkeypatch.setattr(P, "boot_guard", lambda s: order.append("boot_guard"))
+
+    class _FakeDaemon:
+        def __init__(self, *a, **k): pass
+        def run_forever(self): order.append("run_forever")
+    monkeypatch.setattr(d, "BemineDaemon", _FakeDaemon)
+    d.main([])
+    assert order == ["boot_guard", "run_forever"]
+
+
+def test_run_once_publishes_daemon_heartbeat_and_confirms(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.core as core
+    import bemine.deploy.pipeline as P
+    from bemine.deploy.heartbeat import read_heartbeat
+
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    monkeypatch.setattr(core, "current_head_sha", lambda *a, **k: "dsha")
+    called = {"confirm": 0}
+    monkeypatch.setattr(P, "maybe_confirm_deploy", lambda s: called.__setitem__("confirm", 1))
+    BemineDaemon(settings).run_once()
+    assert read_heartbeat(settings, "daemon")["sha"] == "dsha"
+    assert called["confirm"] == 1
