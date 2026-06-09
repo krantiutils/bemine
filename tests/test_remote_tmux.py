@@ -44,17 +44,28 @@ def test_send_text_is_literal_then_enter():
     assert runner.calls[-1][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
 
 
-def test_list_panes_parses_tab_separated_output():
-    out = "%1\t/Users/cdjk/github/llm/rai-speech-toolkit\tclaude\n%2\t/home/cdjk\tbash\n"
+def test_list_panes_parses_with_activity():
+    out = ("%1\t/Users/cdjk/github/llm/rai-speech-toolkit\tclaude\t1780000000\n"
+           "%2\t/home/cdjk\tbash\t1780000050\n")
     runner = _FakeRunner(stdout=out)
     rt = RemoteTmux(gateway_device="cdjk", runner=runner)
     panes = rt.list_panes("mbp")
     assert panes[0] == {"pane_id": "%1",
                         "path": "/Users/cdjk/github/llm/rai-speech-toolkit",
-                        "command": "claude"}
+                        "command": "claude", "activity": 1780000000}
     argv = runner.calls[-1]
     assert argv[0] == "ssh" and "mbp" in argv
-    assert "list-panes" in argv[-1]  # tmux command is inside the quoted remote string
+    assert "list-panes" in argv[-1]
+    assert "window_activity" in argv[-1]
+
+
+def test_list_panes_tolerates_missing_activity():
+    # Older tmux may not emit window_activity -> activity defaults to 0, line still parsed.
+    out = "%1\t/home/cdjk\tbash\t\n"
+    runner = _FakeRunner(stdout=out)
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner)
+    panes = rt.list_panes("cdjk")
+    assert panes[0]["activity"] == 0
 
 
 def test_local_device_still_runs_tmux_directly():
@@ -68,7 +79,20 @@ def test_capture_returns_stdout():
     runner = _FakeRunner(stdout="pane contents\n")
     rt = RemoteTmux(gateway_device="cdjk", runner=runner)
     assert rt.capture("cdjk", "%1") == "pane contents\n"
-    assert runner.calls[-1] == ["tmux", "capture-pane", "-p", "-t", "%1"]
+    argv = runner.calls[-1]
+    assert argv[:3] == ["tmux", "capture-pane", "-p"]
+    assert "-S" in argv
+    assert "%1" in argv
+
+
+def test_capture_reads_scrollback():
+    runner = _FakeRunner(stdout="pane text")
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner)
+    rt.capture("cdjk", "%1")
+    argv = runner.calls[-1]
+    # local device -> direct tmux; must request scrollback with -S
+    assert argv[:3] == ["tmux", "capture-pane", "-p"]
+    assert "-S" in argv
 
 
 def test_send_text_pauses_between_text_and_enter():

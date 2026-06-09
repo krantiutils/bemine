@@ -160,11 +160,13 @@ phase. The working tree must be clean (commit first).
 
 ### Auto-recovery
 
-Bemine watches your recent active sessions and unsticks them automatically: transient
+Bemine enumerates the live agent tmux panes across your devices (not the recency-ranked
+status list, which would hide a stuck session) and unsticks them automatically: transient
 provider rate-limits are backed-off and resubmitted in place, obvious yes/continue prompts
-are auto-confirmed, and anything ambiguous is judged by a sub-agent — every action is
-verified by re-reading the pane, and it only pings you if recovery keeps failing. Tune it
-under `[recovery]` (e.g. `max_session_age_secs` so it never touches long-idle sessions).
+are auto-confirmed (never destructive ones) — every action is verified by re-reading the
+pane, and it only pings you if recovery keeps failing. Tune it under `[recovery]`:
+`max_session_age_secs` (window for how stale a pane can be, default 4h) and
+`agent_commands` (which pane commands count as agent sessions).
 
 ## Configuration
 

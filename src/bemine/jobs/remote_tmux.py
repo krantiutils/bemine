@@ -50,18 +50,24 @@ class RemoteTmux:
     def list_panes(self, device: str) -> list[dict]:
         out = self._run(device, [
             "list-panes", "-a", "-F",
-            "#{pane_id}\t#{pane_current_path}\t#{pane_current_command}",
+            "#{pane_id}\t#{pane_current_path}\t#{pane_current_command}\t#{window_activity}",
         ])
         panes: list[dict] = []
         for line in out.splitlines():
             parts = line.split("\t")
-            if len(parts) != 3:
+            if len(parts) < 3:
                 continue
-            panes.append({"pane_id": parts[0], "path": parts[1], "command": parts[2]})
+            activity_raw = parts[3] if len(parts) > 3 else ""
+            try:
+                activity = int(activity_raw)
+            except (ValueError, TypeError):
+                activity = 0
+            panes.append({"pane_id": parts[0], "path": parts[1],
+                          "command": parts[2], "activity": activity})
         return panes
 
-    def capture(self, device: str, pane_id: str) -> str:
-        return self._run(device, ["capture-pane", "-p", "-t", pane_id])
+    def capture(self, device: str, pane_id: str, lines: int = 200) -> str:
+        return self._run(device, ["capture-pane", "-p", "-S", f"-{lines}", "-t", pane_id])
 
     def send_keys(self, device: str, pane_id: str, keys: list[str]) -> None:
         self._run(device, ["send-keys", "-t", pane_id, *keys])
