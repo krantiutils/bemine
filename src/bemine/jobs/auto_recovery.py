@@ -108,6 +108,7 @@ def _escalation_event(status, kind: str, pane_after: str) -> dict:
         "type": "needs_input",
         "session_id": status.session_id,
         "device_id": status.device_id,
+        "runtime": status.runtime,
         "cwd": status.cwd,
         "ask_summary": f"auto-recovery could not clear a `{kind}` state — needs you",
         "output_tail": (pane_after or "")[-1500:],
@@ -161,8 +162,10 @@ def tick_recovery(settings, deps: RecoveryDeps, *, now: float) -> None:
             rec["backoff"] = min(int(rec.get("backoff", base_backoff)) * 2, _BACKOFF_CAP)
             rec["next_retry_at"] = now + rec["backoff"]
             if rec["attempts"] >= max_attempts:
-                deps.escalate(_escalation_event(status, kind, after))
-                deps.audit("escalated", kind, status)
+                if not rec.get("escalated"):
+                    deps.escalate(_escalation_event(status, kind, after))
+                    deps.audit("escalated", kind, status)
+                    rec["escalated"] = True
                 rec["next_retry_at"] = now + _ESCALATED_HOLD
             state[key] = rec
 

@@ -101,3 +101,16 @@ def test_healthy_session_no_action(tmp_path):
     deps = _deps([_status()], tmux, clock=clock, escalations=esc, audits=aud)
     tick_recovery(s, deps, now=1000.0)
     assert tmux.sent_keys == [] and tmux.sent_text == []
+
+
+def test_escalates_only_once_even_after_hold(tmp_path):
+    s = _settings(tmp_path)
+    tmux = _Tmux("Rate limited", "Rate limited")  # never advances
+    clock, esc, aud = _clock(), [], []
+    deps = _deps([_status()], tmux, clock=clock, escalations=esc, audits=aud)
+    # Run many ticks, each well past any backoff/hold window, so a re-escalation bug
+    # would fire multiple times.
+    for i in range(8):
+        clock["box"]["t"] = 1000.0 + i * 200000.0  # > _ESCALATED_HOLD (86400) each step
+        tick_recovery(s, deps, now=clock["box"]["t"])
+    assert len(esc) == 1  # escalated exactly once for this stuck episode
