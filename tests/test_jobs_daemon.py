@@ -194,9 +194,8 @@ def test_daemon_main_calls_boot_guard_before_run(tmp_path, monkeypatch):
     import bemine.deploy.pipeline as P
     from bemine.config import BemineSettings
 
-    monkeypatch.setattr(BemineSettings, "load",
-                        classmethod(lambda cls: BemineSettings.load(
-                            state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")))
+    base = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    monkeypatch.setattr(BemineSettings, "load", classmethod(lambda cls, *a, **k: base))
     order = []
     monkeypatch.setattr(P, "boot_guard", lambda s: order.append("boot_guard"))
 
