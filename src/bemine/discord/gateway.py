@@ -304,7 +304,7 @@ async def _best_effort_typing(channel: discord.abc.Messageable) -> AsyncIterator
             LOG.debug("could not stop Discord typing indicator: %s", exc)
 
 
-def publish_gateway_heartbeat(settings=None) -> None:
+def publish_gateway_heartbeat(settings=None, sha: str | None = None) -> None:
     """Write the gateway heartbeat to the canonical Bemine state dir (best-effort).
 
     The deploy pipeline reads heartbeats via ``BemineSettings.state_dir``, so the heartbeat
@@ -316,7 +316,7 @@ def publish_gateway_heartbeat(settings=None) -> None:
     try:
         if settings is None or not hasattr(settings, "state_dir"):
             settings = BemineSettings.load()
-        write_heartbeat(settings, "gateway", current_head_sha())
+        write_heartbeat(settings, "gateway", sha or current_head_sha())
     except Exception:
         pass
 
@@ -437,6 +437,10 @@ class MayorDiscordGateway:
         settings.require_token()
         self.settings = settings
         self.store = Store(settings.db_path)
+        try:
+            self._boot_sha = current_head_sha()
+        except Exception:
+            self._boot_sha = ""
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -469,7 +473,7 @@ class MayorDiscordGateway:
             LOG.info("connected as %s", self.bot.user)
             LOG.info("state db: %s", self.settings.db_path)
             LOG.info("inbox: %s", self.settings.inbox_dir)
-            publish_gateway_heartbeat()
+            publish_gateway_heartbeat(sha=self._boot_sha)
             asyncio.create_task(self._heartbeat_loop())
             try:
                 synced = await self.bot.tree.sync()
@@ -497,7 +501,7 @@ class MayorDiscordGateway:
     async def _heartbeat_loop(self) -> None:
         while True:
             await asyncio.sleep(30)
-            await asyncio.to_thread(publish_gateway_heartbeat)
+            await asyncio.to_thread(publish_gateway_heartbeat, None, self._boot_sha)
 
     async def _handle_allowed_message(self, message: discord.Message) -> None:
         saved_attachments = await self._record_message(message)

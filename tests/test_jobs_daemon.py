@@ -235,3 +235,17 @@ def test_run_once_ticks_recovery(tmp_path, monkeypatch):
                         lambda s, deps, *, now: called.__setitem__("n", called["n"] + 1))
     BemineDaemon(settings).run_once()
     assert called["n"] == 1
+
+
+def test_daemon_heartbeat_is_frozen_at_boot(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.core as core
+    from bemine.deploy.heartbeat import read_heartbeat
+
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    monkeypatch.setattr(core, "current_head_sha", lambda *a, **k: "boot-sha")
+    daemon = BemineDaemon(settings)            # captures boot sha now
+    monkeypatch.setattr(core, "current_head_sha", lambda *a, **k: "later-sha")
+    daemon.run_once()
+    assert read_heartbeat(settings, "daemon")["sha"] == "boot-sha"   # frozen, not 'later-sha'
