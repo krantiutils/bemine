@@ -304,9 +304,18 @@ async def _best_effort_typing(channel: discord.abc.Messageable) -> AsyncIterator
             LOG.debug("could not stop Discord typing indicator: %s", exc)
 
 
-def publish_gateway_heartbeat(settings) -> None:
-    """Write the gateway heartbeat (best-effort)."""
+def publish_gateway_heartbeat(settings=None) -> None:
+    """Write the gateway heartbeat to the canonical Bemine state dir (best-effort).
+
+    The deploy pipeline reads heartbeats via ``BemineSettings.state_dir``, so the heartbeat
+    MUST land there. The gateway's own ``self.settings`` is the Discord ``Settings`` dataclass,
+    which has ``db_path``/``inbox_dir`` but no ``state_dir`` — passing it would raise. So we
+    fall back to ``BemineSettings.load()`` whenever we're not handed something with a
+    ``state_dir``.
+    """
     try:
+        if settings is None or not hasattr(settings, "state_dir"):
+            settings = BemineSettings.load()
         write_heartbeat(settings, "gateway", current_head_sha())
     except Exception:
         pass
@@ -460,7 +469,7 @@ class MayorDiscordGateway:
             LOG.info("connected as %s", self.bot.user)
             LOG.info("state db: %s", self.settings.db_path)
             LOG.info("inbox: %s", self.settings.inbox_dir)
-            publish_gateway_heartbeat(self.settings)
+            publish_gateway_heartbeat()
             asyncio.create_task(self._heartbeat_loop())
             try:
                 synced = await self.bot.tree.sync()
@@ -488,7 +497,7 @@ class MayorDiscordGateway:
     async def _heartbeat_loop(self) -> None:
         while True:
             await asyncio.sleep(30)
-            await asyncio.to_thread(publish_gateway_heartbeat, self.settings)
+            await asyncio.to_thread(publish_gateway_heartbeat)
 
     async def _handle_allowed_message(self, message: discord.Message) -> None:
         saved_attachments = await self._record_message(message)
