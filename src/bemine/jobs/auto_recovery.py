@@ -141,41 +141,44 @@ def tick_recovery(settings, deps: RecoveryDeps, *, now: float) -> None:
         rec = state.get(key)
         if rec and now < float(rec.get("next_retry_at", 0)):
             continue
-        pane = resolve_pane(deps.tmux, status.device_id, status.cwd)
-        if not pane:
-            continue
-        before = deps.tmux.capture(status.device_id, pane)
-        kind = classify(before, status.asks_user, signatures=sigs)
-        if kind == "healthy":
-            state.pop(key, None)
-            continue
+        try:
+            pane = resolve_pane(deps.tmux, status.device_id, status.cwd)
+            if not pane:
+                continue
+            before = deps.tmux.capture(status.device_id, pane)
+            kind = classify(before, status.asks_user, signatures=sigs)
+            if kind == "healthy":
+                state.pop(key, None)
+                continue
 
-        acted = _act(kind, deps, status, pane, before)
-        if not acted:
+            acted = _act(kind, deps, status, pane, before)
+            if not acted:
+                continue
+
+            deps.sleep(verify_delay)
+            after = deps.tmux.capture(status.device_id, pane)
+            if kind == "rate_limit":
+                advanced = not any(sig in after.lower() for sig in sigs)
+            else:
+                advanced = after != before
+
+            rec = state.get(key) or {"attempts": 0, "backoff": base_backoff}
+            if advanced:
+                deps.audit("recovered", kind, status)
+                state.pop(key, None)
+            else:
+                rec["attempts"] = int(rec.get("attempts", 0)) + 1
+                rec["backoff"] = min(int(rec.get("backoff", base_backoff)) * 2, _BACKOFF_CAP)
+                rec["next_retry_at"] = now + rec["backoff"]
+                if rec["attempts"] >= max_attempts:
+                    if not rec.get("escalated"):
+                        deps.escalate(_escalation_event(status, kind, after))
+                        deps.audit("escalated", kind, status)
+                        rec["escalated"] = True
+                    rec["next_retry_at"] = now + _ESCALATED_HOLD
+                state[key] = rec
+        except Exception:
             continue
-
-        deps.sleep(verify_delay)
-        after = deps.tmux.capture(status.device_id, pane)
-        if kind == "rate_limit":
-            advanced = not any(sig in after.lower() for sig in sigs)
-        else:
-            advanced = after != before
-
-        rec = state.get(key) or {"attempts": 0, "backoff": base_backoff}
-        if advanced:
-            deps.audit("recovered", kind, status)
-            state.pop(key, None)
-        else:
-            rec["attempts"] = int(rec.get("attempts", 0)) + 1
-            rec["backoff"] = min(int(rec.get("backoff", base_backoff)) * 2, _BACKOFF_CAP)
-            rec["next_retry_at"] = now + rec["backoff"]
-            if rec["attempts"] >= max_attempts:
-                if not rec.get("escalated"):
-                    deps.escalate(_escalation_event(status, kind, after))
-                    deps.audit("escalated", kind, status)
-                    rec["escalated"] = True
-                rec["next_retry_at"] = now + _ESCALATED_HOLD
-            state[key] = rec
 
     for key in list(state.keys()):
         if key not in live_keys:
