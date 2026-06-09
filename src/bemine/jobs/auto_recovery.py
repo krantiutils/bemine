@@ -107,11 +107,30 @@ def _cfg_signatures() -> list[str]:
     return RATE_LIMIT_DEFAULTS
 
 
-def _cfg_agent_commands() -> list[str]:
-    raw = config_string("recovery", "agent_commands", "")
+# Pane commands that are NOT agent sessions (shells/editors/pagers/VCS/etc.). Every OTHER
+# pane command is treated as a potential agent session — an allowlist of names fails because
+# Claude Code reports its VERSION (e.g. "2.1.168") as the pane's current command, and codex
+# shows "codex-aarch64-a". classify() gates action, so capturing a non-agent pane is harmless.
+_NON_AGENT_COMMANDS = {
+    "bash", "-bash", "zsh", "-zsh", "sh", "-sh", "fish", "-fish", "tmux", "vim", "nvim",
+    "vi", "emacs", "nano", "less", "more", "man", "ssh", "mosh", "tail", "head", "cat",
+    "grep", "rg", "htop", "top", "btop", "watch", "git", "fzf", "make", "lazygit", "gitui",
+}
+
+
+def _cfg_non_agent_commands() -> set[str]:
+    raw = config_string("recovery", "non_agent_commands", "")
     if raw.strip():
-        return [c.strip().lower() for c in raw.split(",") if c.strip()]
-    return ["claude", "codex", "kimi", "node", "python"]
+        return {c.strip().lower() for c in raw.split(",") if c.strip()}
+    return _NON_AGENT_COMMANDS
+
+
+def _is_agent_pane(command: str) -> bool:
+    """True if a tmux pane's current command looks like an agent session (not a shell/editor)."""
+    cmd = (command or "").strip().lower()
+    if not cmd or cmd.startswith("-"):  # empty or a login shell
+        return False
+    return cmd not in _cfg_non_agent_commands()
 
 
 @dataclass
@@ -244,7 +263,6 @@ def default_recovery_deps(settings) -> RecoveryDeps:
     from bemine.index.status import DEFAULT_STATUS_DEVICES
 
     tmux = RemoteTmux(gateway_device=settings.device_id)
-    agent_cmds = _cfg_agent_commands()
 
     def _panes(s):
         devices = list(s.status_devices) if s.status_devices else list(DEFAULT_STATUS_DEVICES)
@@ -252,8 +270,7 @@ def default_recovery_deps(settings) -> RecoveryDeps:
         for dev in devices:
             try:
                 for p in tmux.list_panes(dev):
-                    cmd = (p.get("command") or "").lower()
-                    if any(a in cmd for a in agent_cmds):
+                    if _is_agent_pane(p.get("command")):
                         out.append({**p, "device": dev})
             except Exception:
                 continue
