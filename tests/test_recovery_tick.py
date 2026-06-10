@@ -164,3 +164,40 @@ def test_no_resend_after_escalation(tmp_path):
         tick_recovery(s, deps, now=2000.0 + i * 100000)  # each tick past the hold window
     assert len(esc) == 1               # escalated exactly once
     assert len(tmux.sent_keys) <= 5    # stops resending at max_attempts, doesn't grow to 12
+
+
+def test_usage_limit_waits_until_reset_then_nudges_continue(tmp_path):
+    import time as _t
+    s = _settings(tmp_path)
+    limit_pane = "You've hit your usage limit. Try again at 3:47am."
+    tmux = _Tmux([limit_pane])
+    clock, esc, aud = _clock(), [], []
+    deps = _deps([_pane(command="codex-aarch64-a")], tmux, clock=clock,
+                 escalations=esc, audits=aud)
+    # Tick at 01:00 local: must NOT send anything; must schedule the wait until ~03:47.
+    now1 = _t.mktime((2026, 6, 11, 1, 0, 0, 0, 0, -1))
+    tick_recovery(s, deps, now=now1)
+    assert tmux.sent_text == [] and tmux.sent_keys == []
+    assert ("limit_wait", "usage_limit") in aud
+    st = load_recovery_state(recovery_state_path(s))
+    rec = list(st.values())[0]
+    reset = _t.localtime(float(rec["limit_wait_until"]))
+    assert (reset.tm_hour, reset.tm_min) == (3, 47)
+    # Tick after reset: nudge "continue" once.
+    now2 = _t.mktime((2026, 6, 11, 3, 50, 0, 0, 0, -1))
+    tick_recovery(s, deps, now=now2)
+    assert tmux.sent_text == ["continue"]
+    assert ("limit_continue", "usage_limit") in aud
+
+
+def test_usage_limit_within_backoff_does_not_renudge(tmp_path):
+    import time as _t
+    s = _settings(tmp_path)
+    tmux = _Tmux(["usage limit reached. try again at 3:47am"])
+    clock, esc, aud = _clock(), [], []
+    deps = _deps([_pane(command="codex-aarch64-a")], tmux, clock=clock,
+                 escalations=esc, audits=aud)
+    t0 = _t.mktime((2026, 6, 11, 3, 50, 0, 0, 0, -1))
+    tick_recovery(s, deps, now=t0)        # waits (parse -> tomorrow? no: stored wait)
+    tick_recovery(s, deps, now=t0 + 60)   # still inside scheduled window -> no spam
+    assert tmux.sent_text.count("continue") <= 1
