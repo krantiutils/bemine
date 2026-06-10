@@ -27,6 +27,7 @@ from .jobs import (
     upsert_reminder_job,
 )
 from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, start_goal
+from .health import collect_health, render_health
 from .dreams import render_dream, run_dream
 from .briefs import render_brief, run_brief
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
@@ -74,6 +75,7 @@ Core concepts:
   prime         startup packet for a worker/session
   handoff       shutdown packet persisted to vault + audit log
   status        recent sessions by last interaction and ask-state
+  health        deploy/services/jobs/watchers health packet
   rundown       project summaries from SQLite/Obsidian
   capabilities  safe credential/capability manifest for workers
   subagents     configured PA/SMM/profile Markdown injected into workers
@@ -552,6 +554,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only inspect local histories; skip SSH devices.",
     )
+
+    health = sub.add_parser(
+        "health",
+        help="Summarize Bemine deploy, services, jobs, and watchers.",
+        description="Summarize Bemine deploy, systemd services, heartbeats, jobs, and active watchers.",
+        epilog="Examples:\n  uv run bemine health\n  uv run bemine health --json",
+        formatter_class=HELP_FORMATTER,
+    )
+    health.add_argument("--json", action="store_true", help="Emit JSON.")
 
     capabilities = sub.add_parser(
         "capabilities",
@@ -1572,6 +1583,12 @@ def main(argv: list[str] | None = None) -> None:
             )
         else:
             print(render_status(statuses, errors, limit=args.limit), end="")
+    elif args.command == "health":
+        payload = collect_health(settings, db=kernel.db)
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(render_health(payload), end="")
     elif args.command == "capabilities":
         inventory = CredentialInventory(
             kernel.db,
