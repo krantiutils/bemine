@@ -100,6 +100,11 @@ def _cfg_verify_delay() -> int:
     return config_int("recovery", "verify_delay_secs", 4)
 
 
+def _cfg_poll_interval() -> int:
+    """How often the daemon runs a recovery pass (it polls more often than this)."""
+    return config_int("recovery", "poll_interval_secs", 300)
+
+
 def _cfg_signatures() -> list[str]:
     raw = config_string("recovery", "rate_limit_signatures", "")
     if raw.strip():
