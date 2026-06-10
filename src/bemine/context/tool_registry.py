@@ -11,6 +11,8 @@ from ..config import BemineSettings, config_bool, config_string
 from ..backlog import add_backlog_item, default_backlog_owner, list_backlog_items
 from ..briefs import run_brief
 from ..db import BemineDB
+from ..discord.store import Store as DiscordStore
+from ..discord.transcript import redact_message_rows
 from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
@@ -213,6 +215,45 @@ def default_tools() -> list[BemineTool]:
                 "properties": {"query": {"type": "string"}},
             },
             handler=_goal_status,
+        ),
+        BemineTool(
+            name="discord_threads",
+            description=(
+                "List locally stored Discord channels/threads by recent activity. Use "
+                "this to discover relevant project/history channels before reading a "
+                "transcript; searches local indexed Discord history only."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search channel id/name/category/author/content.",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+            },
+            handler=_discord_threads,
+        ),
+        BemineTool(
+            name="discord_transcript",
+            description=(
+                "Read recent locally stored Discord transcript messages. Use query for "
+                "global local search, or channel_id for an exact channel/thread id. "
+                "Defaults to this session's Discord channel when both are omitted."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "channel_id": {"type": "string"},
+                    "query": {
+                        "type": "string",
+                        "description": "Search channel id/name/category/author/content.",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+            },
+            handler=_discord_transcript,
         ),
         BemineTool(
             name="audit_list",
@@ -497,6 +538,31 @@ def _goal_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, 
     query = str(args.get("query") or "").strip()
     sessions = list_goal_sessions(context.settings, status=query, db=context.db)
     return {"ok": True, "sessions": [session.to_dict() for session in sessions]}
+
+
+def _discord_threads(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    query = str(args.get("query") or "").strip()
+    limit = _int(args.get("limit"), default=12, minimum=1, maximum=50)
+    rows = DiscordStore(context.settings.db_path).channel_summaries(
+        limit=limit,
+        query=query,
+    )
+    return {"ok": True, "threads": redact_message_rows(rows)}
+
+
+def _discord_transcript(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    query = str(args.get("query") or "").strip()
+    channel_id = str(args.get("channel_id") or "").strip()
+    if not channel_id and not query:
+        session = context.db.get_bemine_session(context.session_id) or {}
+        channel_id = str(session.get("channel_id") or "")
+    limit = _int(args.get("limit"), default=30, minimum=1, maximum=100)
+    rows = DiscordStore(context.settings.db_path).transcript_messages(
+        channel_id=channel_id,
+        query=query,
+        limit=limit,
+    )
+    return {"ok": True, "messages": redact_message_rows(rows)}
 
 
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

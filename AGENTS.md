@@ -61,6 +61,7 @@ preference (specific tool > shell):
 | `tmux_list` / `tmux_capture` / `tmux_send` | find, read, and drive live tmux agent sessions |
 | `watch_control` | start/stop/status a per-project WATCHER (drives a session toward a brief) |
 | `goal_start` / `goal_status` | start or inspect managed goal workers plus watchers |
+| `discord_threads` / `discord_transcript` | search local Discord channels/threads and read redacted transcripts |
 | `deploy_control` | request/status the self-deploy of Bemine's own committed code |
 | `file_read` / `file_search` | read/ripgrep files |
 

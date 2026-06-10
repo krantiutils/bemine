@@ -220,6 +220,46 @@ def test_goal_status_tool_lists_goal_sessions(tmp_path, monkeypatch):
     assert calls["db"] is db
 
 
+def test_discord_history_tools_read_local_redacted_store(tmp_path):
+    from bemine.discord.store import Store
+
+    settings, db, ctx = _ctx(tmp_path)
+    store = Store(settings.db_path)
+    store.record_inbound_message(
+        message_id="m1",
+        channel_id="c1",
+        channel_name="voidash",
+        category_name="Projects",
+        guild_id="guild-1",
+        author_id="user-1",
+        author_name="voidash",
+        content="Rai goal update with SSHPASS='letmein'",
+        is_dm=False,
+        created_at="2026-06-10T10:01:00+05:45",
+    )
+    store.record_outbound(
+        discord_message_id="b1",
+        channel_id="c1",
+        content="Started goal worker goal-rai.",
+        files=[],
+    )
+
+    reg = BemineToolRegistry()
+    threads = reg.execute("discord_threads", {"query": "SSHPASS"}, ctx)
+    assert threads["ok"] is True
+    assert threads["threads"][0]["channel_id"] == "c1"
+    assert threads["threads"][0]["channel_name"] == "voidash"
+    assert "letmein" not in threads["threads"][0]["latest_content"]
+    assert "SSHPASS='<secret>'" in threads["threads"][0]["latest_content"]
+
+    transcript = reg.execute("discord_transcript", {"limit": 5}, ctx)
+    assert transcript["ok"] is True
+    assert [row["message_id"] for row in transcript["messages"]] == ["m1", "b1"]
+    assert transcript["messages"][0]["channel_name"] == "voidash"
+    assert transcript["messages"][-1]["role"] == "assistant"
+    assert "letmein" not in str(transcript["messages"])
+
+
 def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
@@ -233,5 +273,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "brief_run",
         "goal_start",
         "goal_status",
+        "discord_threads",
+        "discord_transcript",
     } <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))
