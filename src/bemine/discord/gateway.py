@@ -56,7 +56,8 @@ BACKLOG_RE = re.compile(
     r"^\s*(?:!?(?:mayor|bemine)\s+)?(?:(?P<owner1>pa|smm)\s+"
     r"(?P<kind1>idea|task|backlog)|(?:store|save|remember)\s+(?:this\s+)?"
     r"(?:(?P<kind2>idea|task|backlog)\s+)?for\s+(?P<owner2>pa|smm))\s*[:\-]\s*"
-    r"(?P<text>.+)\s*$",
+    r"(?P<text>.+)\s*$|^\s*(?:!?(?:mayor|bemine)\s+)?(?:store|save|remember)\s+(?:this\s+)?"
+    r"(?:(?P<kind3>idea|task|backlog)\s+)?for\s+(?P<owner3>pa|smm)\s+(?P<text2>.+)\s*$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -542,9 +543,9 @@ def parse_backlog_command(text: str) -> BacklogCommand | None:
     match = BACKLOG_RE.match(text or "")
     if not match:
         return None
-    owner = (match.group("owner1") or match.group("owner2") or "").upper()
-    kind = (match.group("kind1") or match.group("kind2") or "idea").lower()
-    item_text = _strip_wrapping_quotes((match.group("text") or "").strip())
+    owner = (match.group("owner1") or match.group("owner2") or match.group("owner3") or "").upper()
+    kind = (match.group("kind1") or match.group("kind2") or match.group("kind3") or "idea").lower()
+    item_text = _strip_wrapping_quotes((match.group("text") or match.group("text2") or "").strip())
     if not owner or not item_text:
         return None
     return BacklogCommand(owner=owner, kind=kind, text=item_text)

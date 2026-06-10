@@ -91,7 +91,7 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "focus today:" in out.text
     assert "dream: `dream run`" in out.text
     assert "watchers: active=0" in out.text
-    assert "backlog: `backlog add` / `backlog list`" in out.text
+    assert "backlog: `backlog add` / `backlog list` / `remember this for SMM|PA: ...`" in out.text
     assert "social posts:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text

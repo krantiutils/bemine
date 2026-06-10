@@ -107,6 +107,15 @@ def test_parse_backlog_command_accepts_remember_for_owner_without_kind():
     assert parsed.text == "post the Rai checkpoint chart"
 
 
+def test_parse_backlog_command_accepts_remember_for_owner_without_punctuation():
+    parsed = parse_backlog_command("remember this for SMM post the Rai checkpoint chart")
+
+    assert parsed is not None
+    assert parsed.owner == "SMM"
+    assert parsed.kind == "idea"
+    assert parsed.text == "post the Rai checkpoint chart"
+
+
 def test_discord_backlog_command_writes_item(tmp_path, monkeypatch):
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     db = BemineDB(settings.db_path)
@@ -154,6 +163,36 @@ def test_discord_backlog_command_accepts_remember_for_owner_without_kind(
         db,
         FakeMessage(),  # type: ignore[arg-type]
         "remember this for SMM: post the Rai checkpoint chart",
+    )
+
+    assert result == {"ok": True}
+    assert calls["settings"] == settings
+    assert calls["db"] == db
+    assert calls["owner"] == "SMM"
+    assert calls["text"] == "idea: post the Rai checkpoint chart"
+    assert calls["source"] == "discord:user-1"
+
+
+def test_discord_backlog_command_accepts_remember_for_owner_without_punctuation(
+    tmp_path,
+    monkeypatch,
+):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    db = BemineDB(settings.db_path)
+    calls = {}
+
+    def fake_add_backlog_item(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr("bemine.discord.gateway.add_backlog_item", fake_add_backlog_item)
+
+    result = maybe_add_backlog_from_discord_message(
+        settings,
+        db,
+        FakeMessage(),  # type: ignore[arg-type]
+        "remember this for SMM post the Rai checkpoint chart",
     )
 
     assert result == {"ok": True}
