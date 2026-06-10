@@ -1099,7 +1099,9 @@ def build_parser() -> argparse.ArgumentParser:
     w_stop.add_argument("--project", required=True)
     w_status = watch_sub.add_parser("status", help="Show a watcher.")
     w_status.add_argument("--project", required=True)
-    watch_sub.add_parser("list", help="List all watchers.")
+    w_status.add_argument("--json", action="store_true", help="Emit JSON.")
+    w_list = watch_sub.add_parser("list", help="List active watchers.")
+    w_list.add_argument("--json", action="store_true", help="Emit JSON.")
 
     daemon = sub.add_parser(
         "daemon",
@@ -1837,9 +1839,25 @@ def main(argv: list[str] | None = None) -> None:
             print(f"watcher stopped for {args.project}")
         elif args.watch_command == "status":
             row = db.get_project_watcher(args.project)
-            print(json.dumps(row, indent=2) if row else "no watcher")
+            if args.json:
+                print(json.dumps(row, indent=2, sort_keys=True))
+            elif row:
+                print(
+                    f"{row['project_id']}\t{row['status']}\t"
+                    f"every {row['interval_secs']}s\tchannel={row['channel_id'] or 'unknown'}"
+                )
+            else:
+                print(f"No watcher for {args.project}.")
         elif args.watch_command == "list":
-            for row in db.list_active_project_watchers():
+            rows = db.list_active_project_watchers()
+            if args.json:
+                print(json.dumps(rows, indent=2, sort_keys=True))
+            elif not rows:
+                print("No active watchers.")
+            else:
+                for row in rows:
+                    print(f"{row['project_id']}\t{row['status']}\t"
+                          f"every {row['interval_secs']}s\tchannel={row['channel_id']}")
                 print(f"{row['project_id']}\t{row['status']}\t"
                       f"every {row['interval_secs']}s\tchannel={row['channel_id']}")
     elif args.command == "daemon":
