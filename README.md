@@ -447,6 +447,11 @@ oldest to newest, so short follow-ups such as "in a codeblock" can refer to the
 message above. Tool calls are shown in the Discord reply as `tool: <name>`, then
 the gateway returns the result directly.
 
+For local inspection without a live Discord token, `bemine discord threads`
+lists locally stored channels/threads by activity and
+`bemine discord transcript --query "<term>"` prints recent stored messages from
+the SQLite store.
+
 Codex dispatch defaults to `--sandbox danger-full-access` to avoid service-level
 bubblewrap failures such as `bwrap: loopback: Failed RTM_NEWADDR: Operation not
 permitted`. Override with `BEMINE_CODEX_SANDBOX=workspace-write` only on hosts

@@ -216,12 +216,15 @@ DISCORD_HELP = """\
 Manage Discord project routing.
 
 Project channels route messages into the corresponding project root. The sync
-command creates/updates Discord channels from indexed projects. The local route
-file is useful for gateway startup and tests.
+command creates/updates Discord channels from indexed projects. Local transcript
+commands inspect the SQLite message store without requiring live Discord API
+credentials.
 
 Examples:
   uv run bemine discord write-project-channels --limit 200
   uv run bemine discord sync-project-channels --guild-id "$MAYOR_DISCORD_GUILD_ID"
+  uv run bemine discord threads --query rai
+  uv run bemine discord transcript --channel-id 123 --limit 30
   uv run mayor-discord-gateway --check
 """
 
@@ -1175,6 +1178,37 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Delete project-category channels that are no longer tracked.",
     )
+    threads = discord_sub.add_parser(
+        "threads",
+        help="List locally stored Discord channels/threads by activity.",
+    )
+    threads.add_argument(
+        "--limit", type=int, default=25, help="Maximum channel/thread rows to print."
+    )
+    threads.add_argument(
+        "--query",
+        default="",
+        help="Filter by channel id, author, or message content in the local store.",
+    )
+    threads.add_argument("--json", action="store_true", help="Emit JSON.")
+    transcript = discord_sub.add_parser(
+        "transcript",
+        help="Print recent locally stored Discord transcript messages.",
+    )
+    transcript.add_argument(
+        "--channel-id",
+        default="",
+        help="Restrict to one Discord channel/thread id. Empty searches all local channels.",
+    )
+    transcript.add_argument(
+        "--query",
+        default="",
+        help="Filter by channel id, author, or message content in the local store.",
+    )
+    transcript.add_argument(
+        "--limit", type=int, default=40, help="Maximum message rows to print."
+    )
+    transcript.add_argument("--json", action="store_true", help="Emit JSON.")
     return parser
 
 
@@ -1892,6 +1926,34 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
             print(json.dumps(result, indent=2, sort_keys=True))
+        elif args.discord_command == "threads":
+            from bemine.discord.store import Store
+            from bemine.discord.transcript import (
+                redact_message_rows,
+                render_channel_summaries,
+            )
+
+            rows = Store(settings.db_path).channel_summaries(
+                limit=args.limit,
+                query=args.query,
+            )
+            if args.json:
+                print(json.dumps(redact_message_rows(rows), indent=2, sort_keys=True))
+            else:
+                print(render_channel_summaries(rows), end="")
+        elif args.discord_command == "transcript":
+            from bemine.discord.store import Store
+            from bemine.discord.transcript import redact_message_rows, render_transcript
+
+            rows = Store(settings.db_path).transcript_messages(
+                channel_id=args.channel_id,
+                query=args.query,
+                limit=args.limit,
+            )
+            if args.json:
+                print(json.dumps(redact_message_rows(rows), indent=2, sort_keys=True))
+            else:
+                print(render_transcript(rows), end="")
 
 
 if __name__ == "__main__":

@@ -120,6 +120,8 @@ Discord should feel like a natural control surface:
 - show local tool calls such as `tool: config.update_dispatch` in replies;
 - include the last `[discord].context_messages` messages from the same channel
   in tool routing and dispatch prompts;
+- inspect stored Discord context with `bemine discord threads` and
+  `bemine discord transcript` when live API credentials are unavailable;
 - support checklist writes such as shopping/buy list additions through
   `checklist.add`;
 - return worker output directly on success;

@@ -246,6 +246,159 @@ class Store:
             ).fetchall()
         return [_row_dict(row) for row in reversed(rows)]
 
+    def channel_summaries(
+        self,
+        *,
+        limit: int = 25,
+        query: str = "",
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        query = query.strip()
+        pattern = _like_pattern(query)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                WITH events AS (
+                    SELECT
+                        message_id AS message_id,
+                        channel_id AS channel_id,
+                        guild_id AS guild_id,
+                        author_name AS author_name,
+                        content AS content,
+                        created_at AS created_at,
+                        received_at AS sort_at,
+                        'user' AS role
+                    FROM inbound_messages
+                    UNION ALL
+                    SELECT
+                        COALESCE(discord_message_id, 'outbound:' || id) AS message_id,
+                        channel_id AS channel_id,
+                        NULL AS guild_id,
+                        'balen' AS author_name,
+                        content AS content,
+                        datetime(sent_at, 'unixepoch', 'localtime') AS created_at,
+                        sent_at AS sort_at,
+                        'assistant' AS role
+                    FROM outbound_messages
+                ),
+                filtered AS (
+                    SELECT *
+                    FROM events
+                    WHERE ? = ''
+                       OR channel_id LIKE ?
+                       OR author_name LIKE ?
+                       OR content LIKE ?
+                ),
+                ranked AS (
+                    SELECT
+                        *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY channel_id ORDER BY sort_at DESC
+                        ) AS rn,
+                        COUNT(*) OVER (PARTITION BY channel_id) AS total_messages,
+                        SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END)
+                            OVER (PARTITION BY channel_id) AS inbound_messages,
+                        SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END)
+                            OVER (PARTITION BY channel_id) AS outbound_messages,
+                        MAX(guild_id) OVER (PARTITION BY channel_id) AS latest_guild_id
+                    FROM filtered
+                )
+                SELECT
+                    channel_id,
+                    latest_guild_id AS guild_id,
+                    total_messages,
+                    inbound_messages,
+                    outbound_messages,
+                    message_id AS latest_message_id,
+                    author_name AS latest_author_name,
+                    content AS latest_content,
+                    created_at AS latest_created_at,
+                    sort_at AS latest_sort_at,
+                    role AS latest_role
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY latest_sort_at DESC
+                LIMIT ?
+                """,
+                (query, pattern, pattern, pattern, limit),
+            ).fetchall()
+        return [_row_dict(row) for row in rows]
+
+    def transcript_messages(
+        self,
+        *,
+        channel_id: str = "",
+        query: str = "",
+        limit: int = 40,
+    ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
+        channel_id = channel_id.strip()
+        query = query.strip()
+        pattern = _like_pattern(query)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM (
+                    SELECT
+                        message_id AS message_id,
+                        channel_id AS channel_id,
+                        guild_id AS guild_id,
+                        author_name AS author_name,
+                        content AS content,
+                        created_at AS created_at,
+                        received_at AS sort_at,
+                        'user' AS role
+                    FROM inbound_messages
+                    WHERE (? = '' OR channel_id = ?)
+                      AND (
+                          ? = ''
+                          OR channel_id LIKE ?
+                          OR author_name LIKE ?
+                          OR content LIKE ?
+                      )
+                    UNION ALL
+                    SELECT
+                        COALESCE(discord_message_id, 'outbound:' || id) AS message_id,
+                        channel_id AS channel_id,
+                        NULL AS guild_id,
+                        'balen' AS author_name,
+                        content AS content,
+                        datetime(sent_at, 'unixepoch', 'localtime') AS created_at,
+                        sent_at AS sort_at,
+                        'assistant' AS role
+                    FROM outbound_messages
+                    WHERE (? = '' OR channel_id = ?)
+                      AND (
+                          ? = ''
+                          OR channel_id LIKE ?
+                          OR 'balen' LIKE ?
+                          OR content LIKE ?
+                      )
+                )
+                ORDER BY sort_at DESC
+                LIMIT ?
+                """,
+                (
+                    channel_id,
+                    channel_id,
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    channel_id,
+                    channel_id,
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    limit,
+                ),
+            ).fetchall()
+        return [_row_dict(row) for row in reversed(rows)]
+
     def stats(self) -> dict[str, Any]:
         with self._connect() as conn:
             inbound = conn.execute("SELECT COUNT(*) FROM inbound_messages").fetchone()[0]
@@ -256,3 +409,8 @@ class Store:
             "inbound_attachments": attachments,
             "outbound_messages": outbound,
         }
+
+
+def _like_pattern(query: str) -> str:
+    cleaned = query.strip()
+    return f"%{cleaned}%" if cleaned else "%"

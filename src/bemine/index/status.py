@@ -21,6 +21,12 @@ TOKEN_RE = re.compile(
     r"|[A-Za-z0-9_-]{23,28}\.[A-Za-z0-9_-]{6,8}\.[A-Za-z0-9_-]{27,}"
     r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b"
 )
+SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([A-Z0-9_-]*(?:"
+    r"api[_-]?key|access[_-]?key|secret|token|password|passwd|pass|sshpass|"
+    r"private[_-]?key"
+    r")[A-Z0-9_-]*)(\s*[:=]\s*)([\"'`]?)([^\s\"'`]+)([\"'`]?)"
+)
 UUID_RE = re.compile(r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 
 
@@ -544,7 +550,15 @@ def _session_id_from_path(path: Path) -> str:
 
 
 def _redact(text: str) -> str:
-    return TOKEN_RE.sub("<token>", CODE_RE.sub("<code>", text))
+    text = CODE_RE.sub("<code>", text)
+    text = TOKEN_RE.sub("<token>", text)
+    return SECRET_ASSIGNMENT_RE.sub(_redact_secret_assignment, text)
+
+
+def _redact_secret_assignment(match: re.Match[str]) -> str:
+    quote = match.group(3)
+    close_quote = match.group(5) if quote else ""
+    return f"{match.group(1)}{match.group(2)}{quote}<secret>{close_quote}"
 
 
 def _format_age(seconds: int) -> str:
