@@ -58,6 +58,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `[continuity]` pass restarts Bemine-managed local tmux workers that were recorded as
   `running` but whose tmux session disappeared. This only applies to managed workers
   (especially `bemine goal` sessions), not arbitrary/adopted terminal sessions.
+- Session watcher updates create Discord project channels on first active sighting, then
+  route started/done/needs-input updates there; non-project sessions use
+  `[jobs].session_fallback_channel`.
 - Goal-driven babysitting of a project session → `watch_control {"action":"start","brief":
   "<the user's full context verbatim>","interval_secs":600}`. Stop: `{"action":"stop"}`.
 - Always-on auto-recovery (rate-limits resent with Up+Enter, trivial confirms auto-yes'd,

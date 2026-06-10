@@ -65,6 +65,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - Credential inventory and gates: `src/bemine/security/credentials.py`,
   `src/bemine/security/proxy.py`, `src/bemine/security/totp.py`
 - Jobs and daemon: `src/bemine/jobs/core.py`, `src/bemine/jobs/daemon.py`
+- Session watcher: `src/bemine/jobs/session_watcher.py` emits started/done/needs-input
+  Discord updates, creates/routes project channels on first active sighting, and
+  re-arms undelivered events for the next daemon poll.
 - Project watcher: `src/bemine/jobs/project_watcher.py` drives a tmux-hosted session
   toward a per-project brief; `src/bemine/jobs/remote_tmux.py` runs tmux locally or over
   SSH. Control via the `watch_control` channel tool or `bemine watch`.

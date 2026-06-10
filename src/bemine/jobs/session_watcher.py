@@ -1,4 +1,4 @@
-"""Session watcher job for Bemine — notifies Discord when sessions finish or need input."""
+"""Session watcher job for Bemine — routes session starts, finishes, and asks to Discord."""
 from __future__ import annotations
 
 import json

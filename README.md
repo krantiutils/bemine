@@ -159,6 +159,11 @@ to force the device. Use `uv run bemine goal --list` or
 `uv run bemine goal --status <project-or-worker> --json` to inspect goal
 workers and watchers together.
 
+The session watcher announces a newly active session on its first sighting, so
+the project's Discord channel is created/routed immediately instead of waiting
+until the session later finishes or asks for input. Undelivered notifications
+are re-armed for the next poll.
+
 On `cdjk`, `[continuity]` makes the daemon restart managed local workers after
 line cuts or reboot: if a `bemine goal` worker was recorded as `running` but its
 tmux session disappeared, the daemon starts it again from the recorded cwd and
