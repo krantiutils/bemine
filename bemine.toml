@@ -43,7 +43,7 @@ harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/AGENTS.md", "/home/cdjk
 #            proxy (needs the `meridian` service running on 127.0.0.1:3456).
 #   codex  — full coding agent on your ChatGPT plan; edits files / runs commands
 #            in the channel's project dir. Best reserved for coding channels.
-runtime = "codex"
+runtime = "claude"
 
 # ----------------------------------------------------------------------------
 # Agent loop behavior (applies to kimi + claude, which run Bemine's own loop).
@@ -80,7 +80,7 @@ bin = "/home/cdjk/.npm-global/bin/codex"  # absolute path: the systemd service P
 # Claude runs through the Meridian proxy, which bridges your Claude Max plan to
 # an Anthropic-compatible endpoint. Start it with: systemctl --user start meridian
 backend = "meridian"
-model = "claude-sonnet-4-6"
+model = "claude-opus-4-8"
 base_url = "http://127.0.0.1:3456"
 api_key_env = "MERIDIAN_API_KEY"      # Meridian accepts any value by default
 
