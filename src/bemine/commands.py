@@ -6,6 +6,8 @@ from typing import Callable, Mapping
 
 from bemine.backlog import default_backlog_owner, list_backlog_items, render_backlog_items
 from bemine.config import BemineSettings, config_bool, config_int, config_list, config_string
+from bemine.config import config_path as bemine_config_path
+from bemine.config import load_bemine_config, render_toml_config
 from bemine.kernel import BemineKernel
 
 
@@ -126,6 +128,14 @@ def _backlog_list(settings: BemineSettings, args: Mapping) -> CommandResult:
     )
 
 
+def _config_show(settings: BemineSettings, args: Mapping) -> CommandResult:
+    config = load_bemine_config()
+    return CommandResult(
+        text=render_toml_config(config),
+        data={"path": str(bemine_config_path()), "config": config},
+    )
+
+
 def _capabilities(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.capabilities import build_capability_manifest, render_capability_manifest
 
@@ -198,6 +208,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
         "- backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`",
         f"- backlog config: default_owner={backlog_default_owner} owners={', '.join(backlog_owners) or 'none'}",
+        "- config: `config show` / `what config is set?`",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM`)",
         f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom install`)",
@@ -230,6 +241,10 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
             "backlog": {
                 "default_owner": backlog_default_owner,
                 "owners": backlog_owners,
+            },
+            "config": {
+                "path": str(bemine_config_path()),
+                "config": load_bemine_config(),
             },
             "watchers": {"active": active_watchers},
             "config_knobs": configurable_knobs,
@@ -340,6 +355,7 @@ _SPECS = (
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),
+    CommandSpec("config.show", "Show parsed Bemine config", _config_show),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),
 )

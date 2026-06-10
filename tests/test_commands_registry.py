@@ -10,7 +10,7 @@ def _settings(tmp_path):
 
 def test_registry_lists_deterministic_ops():
     names = set(registry().keys())
-    assert {"status", "rundown", "jobs.list", "backlog.list", "usage", "capabilities", "continuity", "help", "discord.routes"} <= names
+    assert {"status", "rundown", "jobs.list", "backlog.list", "config.show", "usage", "capabilities", "continuity", "help", "discord.routes"} <= names
 
 
 def test_run_command_is_pure_and_deterministic(tmp_path):
@@ -31,6 +31,17 @@ def test_run_command_continuity(tmp_path):
     out = run_command("continuity", settings, {})
     assert "Bemine continuity:" in out.text
     assert isinstance(out.data, dict)
+
+
+def test_run_command_config_show(tmp_path, monkeypatch):
+    config = tmp_path / "bemine.toml"
+    config.write_text("[backlog]\ndefault_owner = \"PA\"\n", encoding="utf-8")
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    settings = _settings(tmp_path)
+    out = run_command("config.show", settings, {})
+    assert "[backlog]" in out.text
+    assert out.data["path"] == str(config)
+    assert out.data["config"]["backlog"]["default_owner"] == "PA"
 
 
 def test_run_command_backlog_list(tmp_path):
@@ -105,6 +116,7 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`" in out.text
     assert "backlog.default_owner=PA" in out.text
     assert "backlog.owners=PA, SMM" in out.text
+    assert "config: `config show` / `what config is set?`" in out.text
     assert "social posts:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text
@@ -115,6 +127,8 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert out.data["dispatch"]["runtime"] == "kimi"
     assert out.data["backlog"]["default_owner"] == "PA"
     assert out.data["backlog"]["owners"] == ["PA", "SMM"]
+    assert out.data["config"]["path"].endswith("bemine.toml")
+    assert out.data["config"]["config"]["backlog"]["default_owner"] == "PA"
     assert out.data["watchers"]["active"] == 0
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
     assert any(job["job_id"] == "morning_plan" for job in out.data["jobs"])

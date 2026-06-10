@@ -70,6 +70,7 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "status": "status",
     "rundown": "rundown",
     "jobs": "jobs.list",
+    "config": "config.show",
     "health": "health",
     "continuity": "continuity",
     "help": "help",
@@ -1117,14 +1118,6 @@ def _direct_backlog_command(normalized_lower: str) -> dict[str, str] | None:
     }:
         return {"owner": default_backlog_owner()}
     if variants & {
-        "what backlog owners are configured",
-        "what is the default backlog owner",
-        "what's the default backlog owner",
-        "what backlog config is set",
-        "what backlog config is configured",
-    }:
-        return {"command": "help"}
-    if variants & {
         "pa backlog",
         "show pa backlog",
         "open pa backlog",
@@ -1168,6 +1161,20 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "commands",
     }:
         return "help"
+    if variants & {
+        "config",
+        "config show",
+        "show config",
+        "what config is set",
+        "what's my config",
+        "what config do i have",
+        "what backlog owners are configured",
+        "what is the default backlog owner",
+        "what's the default backlog owner",
+        "what backlog config is set",
+        "what backlog config is configured",
+    }:
+        return "config.show"
     if variants & {
         "routes",
         "discord routes",
