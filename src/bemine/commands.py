@@ -45,6 +45,24 @@ def _jobs_list(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_jobs(rows), data={"jobs": rows})
 
 
+def _health(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.health import collect_health, render_health
+
+    payload = collect_health(settings)
+    return CommandResult(text=render_health(payload), data=payload)
+
+
+def _goals_list(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.goals import list_goal_sessions, render_goal_sessions
+
+    query = str(args.get("query") or "")
+    sessions = list_goal_sessions(settings, status=query)
+    return CommandResult(
+        text=render_goal_sessions(sessions),
+        data={"sessions": [session.to_dict() for session in sessions]},
+    )
+
+
 def _capabilities(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.capabilities import build_capability_manifest, render_capability_manifest
 
@@ -66,6 +84,8 @@ _SPECS = (
     CommandSpec("status", "Recent fleet status", _status),
     CommandSpec("rundown", "Project rundown", _rundown),
     CommandSpec("jobs.list", "List scheduled jobs", _jobs_list),
+    CommandSpec("health", "Bemine service/job/deploy health", _health),
+    CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),
 )
