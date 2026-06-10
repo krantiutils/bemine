@@ -1,3 +1,5 @@
+import json
+
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.cli import main
@@ -26,5 +28,26 @@ def test_cli_watch_start_status_stop(tmp_path, capsys):
     main(base + ["watch", "list"])
     assert "channel:demo" in capsys.readouterr().out
 
+    main(base + ["watch", "list", "--json"])
+    listed = json.loads(capsys.readouterr().out)
+    assert listed[0]["project_id"] == "channel:demo"
+
+    main(base + ["watch", "status", "--project", "channel:demo", "--json"])
+    status = json.loads(capsys.readouterr().out)
+    assert status["project_id"] == "channel:demo"
+    assert status["interval_secs"] == 120
+
     main(base + ["watch", "stop", "--project", "channel:demo"])
     assert db.get_project_watcher("channel:demo")["status"] == "stopped"
+
+
+def test_cli_watch_list_empty_is_explicit(tmp_path, capsys):
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine",
+        vault_dir=tmp_path / "v",
+    )
+    base = ["--state-dir", str(settings.state_dir)]
+
+    main(base + ["watch", "list"])
+
+    assert capsys.readouterr().out == "No active watchers.\n"
