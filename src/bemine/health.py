@@ -53,6 +53,7 @@ def collect_health(
     if deploy.phase not in {"confirmed", "idle"}:
         issues.append(f"deploy phase is {deploy.phase}")
     continuity = _collect_continuity_health(settings, db)
+    recovery = _collect_recovery_health(db)
     if continuity.get("check_error"):
         issues.append(f"continuity check failed: {continuity['check_error']}")
     missing_count = int(continuity.get("restartable_missing", 0) or 0)
@@ -89,6 +90,7 @@ def collect_health(
             "items": watchers,
         },
         "continuity": continuity,
+        "recovery": recovery,
     }
 
 
@@ -130,6 +132,14 @@ def render_health(payload: dict[str, Any]) -> str:
         f"applies={bool(continuity.get('applies_to_device'))} "
         f"devices={devices or 'none'} "
         f"restartable_missing={continuity.get('restartable_missing', 0)}"
+    )
+    recovery = payload.get("recovery") or {}
+    lines.append(
+        "Recovery: "
+        f"recent={recovery.get('recent', 0)} "
+        f"escalations={recovery.get('escalations', 0)} "
+        f"limit_waits={recovery.get('limit_waits', 0)} "
+        f"recovered={recovery.get('recovered', 0)}"
     )
     lines.append("")
     return "\n".join(lines)
@@ -187,6 +197,31 @@ def _collect_continuity_health(settings: BemineSettings, db: BemineDB) -> dict[s
         "missing_workers": missing,
         "recent_events": recent_events,
         "check_error": check_error,
+    }
+
+
+def _collect_recovery_health(db: BemineDB) -> dict[str, Any]:
+    rows = [dict(row) for row in db.list_audit_events(category="recovery", limit=20)]
+    counts: dict[str, int] = {}
+    for row in rows:
+        event_type = str(row.get("event_type") or "")
+        counts[event_type] = counts.get(event_type, 0) + 1
+    recent = [
+        {
+            "ts": row["ts"],
+            "event_type": row["event_type"],
+            "device_id": row["device_id"] or "",
+            "project_id": row["project_id"] or "",
+        }
+        for row in rows[:5]
+    ]
+    return {
+        "recent": len(rows),
+        "counts": counts,
+        "escalations": sum(count for event, count in counts.items() if "escalate" in event),
+        "limit_waits": counts.get("limit_wait", 0),
+        "recovered": counts.get("recovered", 0),
+        "recent_events": recent,
     }
 
 
