@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.jobs import next_run_after, run_job_by_id, seed_default_jobs, upsert_reminder_job
-from bemine.jobs.systemd import render_user_units
+from bemine.jobs.systemd import render_user_units, user_unit_status
 
 
 def test_cron_next_run_for_daily_digest_uses_local_time() -> None:
@@ -174,6 +174,33 @@ def test_systemd_units_run_gateway_and_daemon_from_repo(tmp_path: Path) -> None:
     assert "ExecStart=/usr/bin/uv run bemine-daemon" in rendered["bemine-daemon.service"]
     assert "ExecStart=/usr/bin/uv run mayor-discord-gateway" in rendered["mayor-discord-gateway.service"]
     assert "Environment=BEMINE_HOME=" + str(tmp_path / "repo" / ".bemine") in rendered["bemine-daemon.service"]
+
+
+def test_systemd_status_parses_systemctl_show() -> None:
+    import subprocess
+
+    def runner(cmd, **kwargs):
+        unit = cmd[3]
+        if unit == "bemine-daemon.service":
+            stdout = (
+                "LoadState=loaded\n"
+                "ActiveState=active\n"
+                "SubState=running\n"
+                "UnitFileState=enabled\n"
+                "MainPID=123\n"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(cmd, 3, stdout="", stderr="not-found")
+
+    statuses = user_unit_status(
+        ("bemine-daemon.service", "mayor-discord-gateway.service"),
+        runner=runner,
+    )
+
+    assert statuses[0].active_state == "active"
+    assert statuses[0].main_pid == 123
+    assert statuses[1].active_state == "unknown"
+    assert statuses[1].error == "not-found"
 
 
 def test_run_once_ticks_watchers(tmp_path, monkeypatch):

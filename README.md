@@ -138,7 +138,7 @@ Persistent startup uses user systemd units:
 ```bash
 uv run bemine systemd render
 uv run bemine systemd install --now
-systemctl --user status bemine-daemon mayor-discord-gateway
+uv run bemine systemd status
 ```
 
 ### Goal sessions
