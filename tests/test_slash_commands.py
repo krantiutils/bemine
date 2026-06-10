@@ -9,6 +9,16 @@ def test_slash_command_calls_registry(tmp_path):
     assert isinstance(text, str) and text  # came from commands.run_command, no LLM
 
 
+def test_slash_health_and_goals_are_deterministic(tmp_path):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+
+    health = slash_command_text(settings, "health", {})
+    goals = slash_command_text(settings, "goals", {})
+
+    assert "Bemine health:" in health
+    assert "goal sessions" in goals.lower()
+
+
 def test_slash_unknown_command(tmp_path):
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     text = slash_command_text(settings, "nope", {})
