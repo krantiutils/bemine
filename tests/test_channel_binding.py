@@ -108,3 +108,13 @@ def test_dm_is_not_treated_as_a_project(tmp_path):
     binding = resolve_channel_binding(settings, msg)
     assert binding.project_id == "bemine"
     assert "dedicated to the project" not in binding.system
+
+
+def test_system_prompt_forbids_handing_user_commands(tmp_path):
+    # The worker is an operator: it must run commands itself, never tell the user to run them.
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    msg = _FakeMessage(_FakeChannel(name="bemine"))
+    binding = resolve_channel_binding(settings, msg)
+    low = binding.system.lower()
+    assert "never reply with commands for the user to run" in low
+    assert "agents.md" in low
