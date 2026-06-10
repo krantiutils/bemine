@@ -3,6 +3,18 @@ from bemine.config import BemineSettings
 from bemine.db import BemineDB
 
 
+def test_codex_thread_id_roundtrip(tmp_path):
+    s = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    db = BemineDB(s.db_path)
+    db.upsert_bemine_session(
+        session_id="s1", channel_id="c1", project_id="p", runtime="codex",
+        model="gpt-5.4", device_id="cdjk", cwd="/tmp", status="active", summary="",
+    )
+    assert db.get_codex_thread_id("s1") is None
+    db.set_codex_thread_id("s1", "tid-1")
+    assert db.get_codex_thread_id("s1") == "tid-1"
+
+
 def test_project_watchers_unchanged_sends_column_exists(tmp_path):
     s = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     db = BemineDB(s.db_path)

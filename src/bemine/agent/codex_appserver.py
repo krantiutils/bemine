@@ -30,6 +30,8 @@ class CodexAppServerSession:
     ``send_fn``: callable(dict) that serialises + sends one JSON line.
     ``recv_iter``: iterator of parsed JSON dicts from the server.
     ``timeout``: overall seconds to wait for turn/completed.
+    ``resume_thread_id``: if set, attempt thread/resume before thread/start.
+    ``progress``: optional callable(str) for live item event labels.
     """
 
     def __init__(
@@ -43,6 +45,8 @@ class CodexAppServerSession:
         sandbox: str = "workspace-write",
         model: str | None = None,
         prompt: str,
+        resume_thread_id: str | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         self._send = send_fn
         self._recv = recv_iter
@@ -52,36 +56,65 @@ class CodexAppServerSession:
         self._sandbox = sandbox
         self._model = model
         self._prompt = prompt
+        self._resume_thread_id = resume_thread_id
+        self._progress = progress
+        self._next_id = 0
+        self.thread_id: str | None = None
+
+    def _rpc_id(self) -> int:
+        self._next_id += 1
+        return self._next_id
 
     def run(self) -> str:
         """Execute the full handshake and return the final agent text."""
         # Step 1: initialize
-        self._send({"id": 1, "method": "initialize",
+        init_id = self._rpc_id()
+        self._send({"id": init_id, "method": "initialize",
                     "params": {"clientInfo": {"name": "bemine", "version": "0.1.0"}}})
-        self._await_response(id=1)
+        self._await_response(id=init_id)
 
-        # Step 2: thread/start
-        thread_params: dict = {
-            "cwd": self._cwd,
-            "approvalPolicy": "never",
-            "sandbox": self._sandbox,
-        }
-        if self._developer_instructions:
-            thread_params["developerInstructions"] = self._developer_instructions
-        if self._model:
-            thread_params["model"] = self._model
-        self._send({"id": 2, "method": "thread/start", "params": thread_params})
-        resp2 = self._await_response(id=2)
-        try:
-            thread_id = resp2["result"]["thread"]["id"]
-        except (KeyError, TypeError) as exc:
-            raise CodexAppServerError(
-                f"thread/start response missing result.thread.id: {resp2}"
-            ) from exc
+        # Step 2: thread/resume or thread/start
+        thread_id: str | None = None
+        if self._resume_thread_id:
+            rid = self._rpc_id()
+            self._send({"id": rid, "method": "thread/resume",
+                        "params": {"threadId": self._resume_thread_id}})
+            try:
+                resp = self._await_response(id=rid)
+                thread_id = (
+                    ((resp.get("result") or {}).get("thread") or {}).get("id")
+                    or self._resume_thread_id
+                )
+            except CodexAppServerError as exc:
+                LOG.warning("thread/resume failed (%s); starting a fresh thread", exc)
+                thread_id = None
+
+        if thread_id is None:
+            thread_params: dict = {
+                "cwd": self._cwd,
+                "approvalPolicy": "never",
+                "sandbox": self._sandbox,
+            }
+            if self._developer_instructions:
+                thread_params["developerInstructions"] = self._developer_instructions
+            if self._model:
+                thread_params["model"] = self._model
+            start_id = self._rpc_id()
+            self._send({"id": start_id, "method": "thread/start", "params": thread_params})
+            resp_start = self._await_response(id=start_id)
+            try:
+                thread_id = resp_start["result"]["thread"]["id"]
+            except (KeyError, TypeError) as exc:
+                raise CodexAppServerError(
+                    f"thread/start response missing result.thread.id: {resp_start}"
+                ) from exc
+
+        self.thread_id = thread_id
 
         # Step 3: turn/start
+        turn_id = self._rpc_id()
         self._send({
-            "id": 3,
+            "id": turn_id,
             "method": "turn/start",
             "params": {
                 "threadId": thread_id,
@@ -142,12 +175,25 @@ class CodexAppServerSession:
                 if delta:
                     deltas.append(delta)
 
-            elif method == "item/completed":
+            elif method in ("item/started", "item/completed"):
                 item = (msg.get("params") or {}).get("item") or {}
-                if item.get("type") == "agentMessage":
-                    text = item.get("text")
-                    if text is not None:
-                        final_text = text
+                itype = item.get("type", "")
+                if itype == "agentMessage":
+                    if method == "item/completed":
+                        text = item.get("text")
+                        if text is not None:
+                            final_text = text
+                elif self._progress and method == "item/started":
+                    label = (
+                        item.get("command")
+                        or item.get("path")
+                        or item.get("query")
+                        or itype
+                    )
+                    try:
+                        self._progress(f"codex: {str(label)[:120]}")
+                    except Exception:  # noqa: BLE001
+                        pass
 
             elif method == "turn/completed":
                 # Authoritative end — prefer item/completed text, else joined deltas
@@ -263,11 +309,14 @@ def run_codex_turn(
     sandbox: str = "workspace-write",
     codex_bin: str = "codex",
     timeout: float = 180.0,
+    resume_thread_id: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
     _spawn=None,
-) -> str:
+) -> tuple[str, str | None]:
     """Run one Codex turn via the app-server (ChatGPT subscription).
 
-    Returns final agent text.
+    Returns ``(final_text, thread_id)`` where ``thread_id`` is the codex thread
+    used (new or resumed) — persist it to resume on the next call.
     Raises CodexAppServerError on protocol error / timeout / non-completion.
 
     ``_spawn`` is injectable for tests (callable(codex_bin) -> Popen-like).
@@ -305,6 +354,8 @@ def run_codex_turn(
         sandbox=sandbox,
         model=model,
         prompt=prompt,
+        resume_thread_id=resume_thread_id,
+        progress=progress_callback,
     )
 
     try:
@@ -317,7 +368,6 @@ def run_codex_turn(
             pass
         proc.wait(timeout=5)
         stderr_thread.join(timeout=2)
-        tail = "".join(stderr_lines[-20:]).strip()
         raise
     except Exception as exc:
         try:
@@ -337,4 +387,4 @@ def run_codex_turn(
             pass
         reader_thread.join(timeout=3)
 
-    return result
+    return result, session.thread_id

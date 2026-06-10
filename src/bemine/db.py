@@ -157,7 +157,8 @@ CREATE TABLE IF NOT EXISTS bemine_sessions (
     message_count INTEGER NOT NULL DEFAULT 0,
     estimated_tokens INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    codex_thread_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bemine_session_messages (
@@ -233,6 +234,11 @@ class BemineDB:
         if "unchanged_sends" not in cols:
             conn.execute(
                 "ALTER TABLE project_watchers ADD COLUMN unchanged_sends INTEGER NOT NULL DEFAULT 0"
+            )
+        bs_cols = {r[1] for r in conn.execute("PRAGMA table_info(bemine_sessions)")}
+        if "codex_thread_id" not in bs_cols:
+            conn.execute(
+                "ALTER TABLE bemine_sessions ADD COLUMN codex_thread_id TEXT"
             )
 
     def upsert_device(self, device_id: str, alias: str | None = None) -> None:
@@ -998,6 +1004,22 @@ class BemineDB:
                 (channel_id,),
             ).fetchone()
             return dict(row) if row else None
+
+    def get_codex_thread_id(self, session_id: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT codex_thread_id FROM bemine_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        value = row["codex_thread_id"] if row else None
+        return str(value) if value else None
+
+    def set_codex_thread_id(self, session_id: str, thread_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE bemine_sessions SET codex_thread_id = ? WHERE session_id = ?",
+                (thread_id, session_id),
+            )
 
     def upsert_project_watcher(self, *, project_id: str, channel_id: str,
                                brief: str, interval_secs: int) -> None:

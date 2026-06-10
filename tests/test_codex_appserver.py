@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import json
 import queue
-import threading
 from io import StringIO
 from typing import Iterator
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -351,13 +349,14 @@ def test_run_codex_turn_with_fake_subprocess():
         {"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "pong"}}},
         {"method": "turn/completed", "params": {}},
     ]
-    result = run_codex_turn(
+    result, thread_id = run_codex_turn(
         "Reply with exactly one word: pong",
         cwd="/tmp",
         sandbox="read-only",
         _spawn=_make_fake_spawn(server_msgs),
     )
     assert result == "pong"
+    assert thread_id == "thread-1"
 
 
 def test_run_codex_turn_error_raises():
@@ -405,3 +404,81 @@ def test_real_notification_error_still_raises():
         assert False, "expected CodexAppServerError"
     except CodexAppServerError as exc:
         assert "model exploded" in str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Thread resume (Part A)
+# ---------------------------------------------------------------------------
+
+def test_resume_thread_id_sends_thread_resume_and_skips_start():
+    server_msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "tid-old"}}},  # thread/resume response
+        {"id": 3, "result": {}},
+        {"method": "item/agentMessage/delta", "params": {"delta": "hi again"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    sent, session = _session(server_msgs, prompt="again", cwd="/tmp", timeout=30.0,
+                             resume_thread_id="tid-old")
+    assert session.run() == "hi again"
+    methods = [m.get("method") for m in sent]
+    assert "thread/resume" in methods
+    assert "thread/start" not in methods
+    resume = next(m for m in sent if m.get("method") == "thread/resume")
+    assert resume["params"]["threadId"] == "tid-old"
+    assert session.thread_id == "tid-old"
+
+
+def test_resume_falls_back_to_thread_start_on_error():
+    # With the id counter: initialize=1, resume=2 (fails), start=3, turn/start=4
+    server_msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "error": {"code": -1, "message": "unknown thread"}},  # resume fails
+        {"id": 3, "result": {"thread": {"id": "tid-new"}}},             # fallback start
+        {"id": 4, "result": {}},                                        # turn/start ack
+        {"method": "item/agentMessage/delta", "params": {"delta": "fresh"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    sent, session = _session(server_msgs, prompt="again", cwd="/tmp", timeout=30.0,
+                             resume_thread_id="tid-gone")
+    assert session.run() == "fresh"
+    methods = [m.get("method") for m in sent]
+    assert methods.count("thread/resume") == 1
+    assert methods.count("thread/start") == 1
+    assert session.thread_id == "tid-new"
+
+
+def test_fresh_session_exposes_new_thread_id():
+    server_msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "tid-fresh"}}},
+        {"id": 3, "result": {}},
+        {"method": "item/agentMessage/delta", "params": {"delta": "x"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    sent, session = _session(server_msgs, prompt="p", cwd="/tmp", timeout=30.0)
+    session.run()
+    assert session.thread_id == "tid-fresh"
+
+
+# ---------------------------------------------------------------------------
+# Progress callback (Part B)
+# ---------------------------------------------------------------------------
+
+def test_progress_callback_receives_item_events():
+    server_msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "t"}}},
+        {"id": 3, "result": {}},
+        {"method": "item/started", "params": {"item": {"type": "commandExecution", "command": "pytest -q"}}},
+        {"method": "item/completed", "params": {"item": {"type": "commandExecution", "command": "pytest -q", "exitCode": 0}}},
+        {"method": "item/started", "params": {"item": {"type": "fileChange", "path": "src/x.py"}}},
+        {"method": "item/agentMessage/delta", "params": {"delta": "done"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    seen = []
+    sent, session = _session(server_msgs, prompt="p", cwd="/tmp", timeout=30.0,
+                             progress=seen.append)
+    assert session.run() == "done"
+    assert any("pytest -q" in s for s in seen)
+    assert any("x.py" in s for s in seen)
