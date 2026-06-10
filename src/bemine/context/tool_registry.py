@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -431,6 +433,32 @@ def default_tools() -> list[BemineTool]:
                 },
             },
             handler=_channel_sync_plan,
+        ),
+        BemineTool(
+            name="channel_sync_apply",
+            description=(
+                "Apply project Discord channel sync: create missing project channels and "
+                "optionally prune stale project-category channels. Requires confirm=true; "
+                "without confirmation it returns the same dry-run plan as channel_sync_plan."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    "prune": {"type": "boolean"},
+                    "guild_id": {
+                        "type": "string",
+                        "description": "Discord guild/server id. Defaults to config/env/default bot guild.",
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "description": "Must be true to mutate Discord.",
+                    },
+                },
+                "required": ["confirm"],
+            },
+            handler=_channel_sync_apply,
+            policy="project-write",
         ),
         BemineTool(
             name="audit_list",
@@ -870,6 +898,52 @@ def _channel_sync_plan(args: Mapping[str, Any], context: ToolContext) -> Mapping
     )}
 
 
+def _channel_sync_apply(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    from ..discord.channel_index import default_guild_id
+    from ..discord.config import Settings as DiscordSettings
+    from ..discord.dispatch import (
+        plan_project_channel_sync,
+        sync_project_channels_to_discord,
+    )
+
+    limit = _int(args.get("limit"), default=200, minimum=1, maximum=200)
+    prune = bool(args.get("prune", False))
+    plan = plan_project_channel_sync(context.settings, limit=limit, prune=prune)
+    if not bool(args.get("confirm", False)):
+        return {
+            "ok": False,
+            "status": "confirmation_required",
+            "message": "Review this plan, then call channel_sync_apply with confirm=true.",
+            "plan": plan,
+        }
+
+    discord_settings = DiscordSettings.load()
+    if not discord_settings.token:
+        raise ToolExecutionError(
+            "Discord token not configured. Set MAYOR_DISCORD_BOT_TOKEN or discord.token_env."
+        )
+    guild_id = (
+        str(args.get("guild_id") or "").strip()
+        or os.environ.get("MAYOR_DISCORD_GUILD_ID", "").strip()
+        or os.environ.get("DISCORD_GUILD_ID", "").strip()
+        or config_string("discord", "guild_id", "")
+        or default_guild_id(discord_settings.token)
+    )
+    if not guild_id:
+        raise ToolExecutionError("Discord guild id could not be resolved.")
+
+    result = _run_coroutine_blocking(
+        lambda: sync_project_channels_to_discord(
+            context.settings,
+            discord_settings.token,
+            guild_id,
+            limit=limit,
+            prune=prune,
+        )
+    )
+    return {"ok": True, "status": "applied", "plan": plan, "result": result}
+
+
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
     limit = _int(args.get("limit"), default=8, minimum=1, maximum=20)
     rows = context.db.list_audit_events(
@@ -1163,6 +1237,28 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _run_coroutine_blocking(factory: Callable[[], Any]) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(factory())
+
+    result: dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            result["value"] = asyncio.run(factory())
+        except BaseException as exc:  # pragma: no cover - re-raised in caller thread
+            result["error"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
 
 
 def _int(value: object, *, default: int, minimum: int, maximum: int) -> int:
