@@ -68,8 +68,13 @@ Core concepts:
   capabilities  safe credential/capability manifest for workers
   permissions   explicit approval path for gated credentials
   workers       safe managed live sessions over tmux
+  watch         per-project watchers that drive a session toward a goal
+  deploy        test-gated self-deploy of Bemine with auto-rollback
   audit         query the operational event log
   discord       project channel routing and Discord sync
+
+Self-discovery: `bemine <command> --help` is the contract for every command.
+The full operator manual for agents lives in AGENTS.md at the repo root.
 """
 
 

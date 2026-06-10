@@ -1854,6 +1854,9 @@ def _build_channel_system_prompt(
                 "- Deployment runbooks live in operator context, especially `~/deploy.md`.",
                 "",
                 "Runtime-specific rules:",
+                "- You are an OPERATOR, not an advisor: NEVER reply with commands for the "
+                "user to run — run them yourself with your tools and report the results. "
+                "Your full tool manual is AGENTS.md (in the harness context above).",
                 "- Use Bemine tool calls when local state, files, commands, status, or audit history are needed.",
                 "- Do not claim a command ran unless a tool result shows it ran.",
                 *_shell_capability_lines(),

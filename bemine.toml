@@ -30,7 +30,7 @@ ignored_roots = ["~/gt"]              # repos under these paths are never indexe
 [context]
 # Files injected (redacted) into dispatched-agent prompts.
 operator_files = ["~/deploy.md"]
-harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
+harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/AGENTS.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
 
 # ----------------------------------------------------------------------------
 # Which agent answers a Discord message.
