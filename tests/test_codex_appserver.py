@@ -488,8 +488,56 @@ def test_progress_callback_receives_item_events():
     sent, session = _session(server_msgs, prompt="p", cwd="/tmp", timeout=30.0,
                              progress=seen.append)
     assert session.run() == "done"
-    assert any("pytest -q" in s for s in seen)
-    assert any("x.py" in s for s in seen)
+    assert "codex shell started: pytest -q" in seen
+    assert "codex shell done: pytest -q" in seen
+    assert "codex file started: src/x.py" in seen
+
+
+def test_progress_callback_reports_warnings_exits_and_redacts_commands():
+    server_msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "t"}}},
+        {"id": 3, "result": {}},
+        {
+            "method": "mcpServer/startupStatus/updated",
+            "params": {"error": "MCP client for `proton_bridge` timed out after 30 seconds."},
+        },
+        {
+            "method": "item/started",
+            "params": {
+                "item": {
+                    "type": "commandExecution",
+                    "command": "curl -H 'Authorization: Bearer sk-kimi-abcdefghijklmnopqrstuvwxyz'",
+                }
+            },
+        },
+        {
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "type": "commandExecution",
+                    "command": "pytest -q",
+                    "exitCode": 2,
+                }
+            },
+        },
+        {"method": "item/agentMessage/delta", "params": {"delta": "done"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    seen = []
+    sent, session = _session(
+        server_msgs,
+        prompt="p",
+        cwd="/tmp",
+        timeout=30.0,
+        progress=seen.append,
+    )
+
+    assert session.run() == "done"
+    assert any("codex warning: mcpServer/startupStatus/updated" in item for item in seen)
+    assert any("<token>" in item for item in seen)
+    assert not any("sk-kimi-abcdefghijklmnopqrstuvwxyz" in item for item in seen)
+    assert "codex shell exit 2: pytest -q" in seen
 
 
 # ---------------------------------------------------------------------------
