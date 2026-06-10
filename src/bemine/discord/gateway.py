@@ -1105,6 +1105,15 @@ def _direct_observability_command(normalized_lower: str) -> str:
         return "pa.plan"
     if variants & {"goals", "goal status", "goals status"}:
         return "goals.list"
+    if variants & {
+        "goal sessions",
+        "goal session",
+        "active goal sessions",
+        "list goal sessions",
+        "what goal sessions are active",
+        "what goals are active",
+    }:
+        return "goals.list"
     return ""
 
 
