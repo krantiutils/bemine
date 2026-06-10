@@ -827,7 +827,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project label to attach to the draft, e.g. rai-speech-toolkit.",
     )
     smm_draft.add_argument(
-        "--limit", type=int, default=3, help="Maximum drafts to produce."
+        "--limit",
+        type=int,
+        default=0,
+        help="Maximum drafts to produce. Defaults to [smm].draft_limit or 3.",
     )
     smm_draft.add_argument(
         "--write",
