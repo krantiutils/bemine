@@ -413,9 +413,33 @@ class BemineDaemon:
                 return
             from bemine.workers.workers import resume_missing_local_workers
 
-            resume_missing_local_workers(self.settings)
-        except Exception:
-            pass
+            resumed = resume_missing_local_workers(self.settings) or []
+            if not resumed:
+                return
+            BemineDB(self.settings.db_path).record_audit_event(
+                category="continuity",
+                event_type="continuity_workers_resumed",
+                actor="bemine-daemon",
+                device_id=self.settings.device_id,
+                payload_json=json.dumps(
+                    {
+                        "count": len(resumed),
+                        "workers": [record.to_dict() for record in resumed],
+                    },
+                    sort_keys=True,
+                ),
+            )
+        except Exception as exc:
+            try:
+                BemineDB(self.settings.db_path).record_audit_event(
+                    category="continuity",
+                    event_type="continuity_resume_failed",
+                    actor="bemine-daemon",
+                    device_id=self.settings.device_id,
+                    payload_json=json.dumps({"error": str(exc)}, sort_keys=True),
+                )
+            except Exception:
+                pass
 
 
 def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, Any]) -> str:
