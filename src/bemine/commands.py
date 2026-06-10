@@ -177,6 +177,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- focus today: `pa plan` / `what should I focus on today?`",
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
+        "- backlog: `backlog add` / `backlog list` for PA/SMM ideas and tasks",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'}",
         f"- phantom: project_root={phantom_root or 'unset'}",
         "Config knobs:",
