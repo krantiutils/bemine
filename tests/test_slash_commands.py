@@ -51,6 +51,46 @@ backend = "native"
     assert "- backend: native" in text
 
 
+def test_slash_goal_starts_goal_session(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+
+    class FakeWorker:
+        name = "goal-rai"
+        runtime = "shell"
+        device_id = "testbox"
+        cwd = "/tmp/repo"
+        project_id = "p"
+        exists = True
+
+        def to_dict(self):
+            return {
+                "name": self.name,
+                "runtime": self.runtime,
+                "device_id": self.device_id,
+                "cwd": self.cwd,
+                "project_id": self.project_id,
+                "exists": self.exists,
+            }
+
+    class FakeResult:
+        worker = FakeWorker()
+        watcher = {"project_id": "p", "interval_secs": 600, "channel_id": "123"}
+
+        def to_dict(self):
+            return {"worker": self.worker.to_dict(), "watcher": dict(self.watcher)}
+
+    monkeypatch.setattr("bemine.goals.start_goal", lambda *a, **k: FakeResult())
+    monkeypatch.setattr(
+        "bemine.goals.render_goal_start",
+        lambda result: "Goal session started:\n- worker: `goal-rai` [shell] device=testbox `/tmp/repo`\n",
+    )
+
+    text = slash_command_text(settings, "goal", {"project": "rai", "brief": "train checkpoint"})
+
+    assert "Goal session started:" in text
+    assert "goal-rai" in text
+
+
 def test_slash_unknown_command(tmp_path):
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     text = slash_command_text(settings, "nope", {})
