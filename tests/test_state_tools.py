@@ -37,6 +37,34 @@ def test_jobs_list_tool_runs(tmp_path):
     assert "jobs" in out and isinstance(out["jobs"], list)
 
 
+def test_health_status_tool_uses_shared_health_packet(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    def fake_collect_health(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return {
+            "ok": True,
+            "status": "ok",
+            "deploy": {"phase": "confirmed", "target_sha": "sha1"},
+            "services": [],
+            "jobs": {"total": 0, "enabled": 0, "failed": 0, "failed_jobs": []},
+            "watchers": {"active": 0, "items": []},
+            "issues": [],
+        }
+
+    monkeypatch.setattr("bemine.context.tool_registry.collect_health", fake_collect_health)
+
+    out = BemineToolRegistry().execute("health_status", {}, ctx)
+
+    assert out["ok"] is True
+    assert out["status"] == "ok"
+    assert out["deploy"]["phase"] == "confirmed"
+    assert calls["settings"] is settings
+    assert calls["db"] is db
+
+
 def test_backlog_tools_write_and_list_vault_items(tmp_path):
     settings, db, ctx = _ctx(tmp_path)
     reg = BemineToolRegistry()
@@ -91,5 +119,12 @@ def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
     names = {t["name"] for t in convert_tools_to_anthropic(schemas)}
-    assert {"bemine_config", "jobs_list", "usage_report", "backlog_add", "brief_run"} <= names
+    assert {
+        "bemine_config",
+        "jobs_list",
+        "health_status",
+        "usage_report",
+        "backlog_add",
+        "brief_run",
+    } <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))
