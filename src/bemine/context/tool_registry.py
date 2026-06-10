@@ -19,6 +19,7 @@ from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
 from ..jobs import run_job_by_id
+from ..phantom import phantom_install, phantom_status
 from ..security.credentials import CredentialInventory
 from ..workers.workers import WorkerController, WorkerError
 
@@ -158,6 +159,50 @@ def default_tools() -> list[BemineTool]:
                 },
             },
             handler=_capabilities_status,
+        ),
+        BemineTool(
+            name="phantom_status",
+            description=(
+                "Inspect the Phantom Android accessibility app workflow: project root, "
+                "debug APK, ADB authorization, install state, and accessibility-service "
+                "state. Use this for phone/Phantom questions before attempting install."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "project_root": {"type": "string"},
+                    "serial": {"type": "string", "description": "ADB device serial."},
+                    "java_home": {"type": "string", "description": "JAVA_HOME override."},
+                },
+            },
+            handler=_phantom_status,
+        ),
+        BemineTool(
+            name="phantom_install",
+            description=(
+                "Install the Phantom Android accessibility APK onto an authorized ADB "
+                "phone. Refuses to run when the phone is missing or unauthorized. This "
+                "does not silently enable Android accessibility; report that as a manual "
+                "phone setting if install succeeds."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "project_root": {"type": "string"},
+                    "serial": {"type": "string", "description": "ADB device serial."},
+                    "build": {
+                        "type": "boolean",
+                        "description": "Build first if no APK is available.",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Verify and return the command without installing.",
+                    },
+                    "java_home": {"type": "string", "description": "JAVA_HOME override."},
+                },
+            },
+            handler=_phantom_install,
+            policy="project-write",
         ),
         BemineTool(
             name="usage_report",
@@ -610,6 +655,26 @@ def _capabilities_status(args: Mapping[str, Any], context: ToolContext) -> Mappi
         ).scan()
     rows = [dict(row) for row in context.db.list_credential_profiles()]
     return build_capability_manifest(rows, device_id=context.settings.device_id)
+
+
+def _phantom_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    project_root = str(args.get("project_root") or "").strip() or None
+    serial = str(args.get("serial") or "").strip()
+    java_home = str(args.get("java_home") or "").strip() or None
+    return phantom_status(project_root=project_root, serial=serial, java_home=java_home)
+
+
+def _phantom_install(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    project_root = str(args.get("project_root") or "").strip() or None
+    serial = str(args.get("serial") or "").strip()
+    java_home = str(args.get("java_home") or "").strip() or None
+    return phantom_install(
+        project_root=project_root,
+        serial=serial,
+        build=bool(args.get("build", False)),
+        dry_run=bool(args.get("dry_run", False)),
+        java_home=java_home,
+    )
 
 
 def _usage_report(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

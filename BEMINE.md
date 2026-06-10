@@ -50,7 +50,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   runtime/model identity.
 - phone/ADB questions → `capabilities_status` native tool or `uv run bemine capabilities`;
   the tool section reports ADB availability, attached device authorization state, and
-  Android SDK path.
+  Android SDK path. Phantom-specific work → `phantom_status` /
+  `uv run bemine phantom status`; install with `phantom_install` /
+  `uv run bemine phantom install` once ADB shows an authorized device.
 
 ## Watching & recovering sessions
 

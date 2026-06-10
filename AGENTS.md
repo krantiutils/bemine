@@ -27,6 +27,7 @@ uv run bemine config show         # the active bemine.toml (paths, runtimes, pol
 uv run bemine capabilities        # which credentials/capabilities you may use
 uv run bemine status --limit 12   # what sessions are live across all devices
 uv run bemine prime               # full startup packet (state + projects + conventions)
+uv run bemine phantom status      # Phantom APK/ADB/install readiness
 ```
 
 If a `--help` and this file disagree, trust `--help` (it is generated from the code).
@@ -56,6 +57,7 @@ preference (specific tool > shell):
 | `jobs_list` | scheduled cron jobs |
 | `health_status` | deploy/services/jobs/watchers health packet |
 | `capabilities_status` | safe credential/tool manifest, including Android/ADB readiness |
+| `phantom_status` / `phantom_install` | inspect or install the Phantom phone accessibility app |
 | `usage_report` | token usage by provider |
 | `job_run` | run one configured Bemine job by id (notification opt-in) |
 | `audit_list` | recent audit events (filter by category, e.g. `recovery`, `deploy`, `watcher`) |
@@ -86,7 +88,7 @@ do the work directly in the project directory.
 - **Security:** `credentials` (inventory, no secrets), `permissions` (TOTP-gated
   approvals), `proxy` (use approved credentials via broker), `capabilities`
 - **Introspection:** `config` (show/paths), `context` (operator context), `usage`,
-  `audit` (event log), `systemd` (install/render units), `kimi`, `mail`
+  `audit` (event log), `systemd` (install/render units), `kimi`, `mail`, `phantom`
 
 ## Conventions that matter
 
