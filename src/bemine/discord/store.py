@@ -158,6 +158,18 @@ class Store:
             ).fetchall()
         return [str(row["channel_id"]) for row in rows]
 
+    def channel_metadata(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT channel_id, guild_id, channel_name, category_name,
+                       channel_type, updated_at
+                FROM discord_channels
+                ORDER BY category_name, channel_name, channel_id
+                """
+            ).fetchall()
+        return [_row_dict(row) for row in rows]
+
     def record_attachment(
         self,
         *,

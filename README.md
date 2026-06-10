@@ -453,6 +453,9 @@ logic.
 `bemine discord sync-project-channels` creates one text channel per indexed
 project under `Bemine Projects`. If the category reaches Discord's 50-channel
 limit, Bemine creates numbered overflow categories such as `Bemine Projects 2`.
+Use `bemine discord sync-project-channels --dry-run` or the native
+`channel_sync_plan` tool to inspect create/prune candidates from the local
+Discord channel cache before mutating Discord.
 
 Project channels are a routing signal, not the only place to talk to Bemine.
 Messages in project channels dispatch directly to that project. Messages in

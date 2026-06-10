@@ -68,6 +68,7 @@ preference (specific tool > shell):
 | `workers_status` | list Bemine-managed workers and duplicate active heads |
 | `discord_threads` / `discord_transcript` | search local Discord channels/threads and read redacted transcripts |
 | `channel_routes` | inspect project-to-Discord route config, DB candidates, and watcher bindings |
+| `channel_sync_plan` | dry-run project Discord channel sync create/prune plan |
 | `deploy_control` | request/status the self-deploy of Bemine's own committed code |
 | `file_read` / `file_search` | read/ripgrep files |
 
