@@ -34,11 +34,22 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "create a channel / post to a channel" → Discord REST via `shell_run` with
   `$MAYOR_DISCORD_BOT_TOKEN`; find the guild via `GET /users/@me/guilds`.
 - "remind me / schedule X" → `uv run bemine jobs add-reminder --help`.
+- "start/run a goal for project X" → `uv run bemine goal <project> "<goal brief>"`;
+  this starts a managed tmux worker, sends the brief, and registers a watcher.
 - config questions → `bemine_config` tool or `uv run bemine config show`; NEVER guess
   runtime/model identity.
 
 ## Watching & recovering sessions
 
+- Goal that should run itself from CLI/Discord → `uv run bemine goal <project> "<brief>"`
+  (optional `--cwd`, `--runtime`, `--worker`, `--interval`). This is the preferred path
+  over manually starting a terminal and then adding a watcher. If the project is only
+  visible in fleet status, `goal` can start the worker on that device; use
+  `--target-device <host>` to force a device.
+- cdjk line cuts / power loss: systemd restarts `bemine-daemon`; the daemon's
+  `[continuity]` pass restarts Bemine-managed local tmux workers that were recorded as
+  `running` but whose tmux session disappeared. This only applies to managed workers
+  (especially `bemine goal` sessions), not arbitrary/adopted terminal sessions.
 - Goal-driven babysitting of a project session → `watch_control {"action":"start","brief":
   "<the user's full context verbatim>","interval_secs":600}`. Stop: `{"action":"stop"}`.
 - Always-on auto-recovery (rate-limits resent with Up+Enter, trivial confirms auto-yes'd,

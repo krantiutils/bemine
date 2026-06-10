@@ -179,12 +179,14 @@ def test_systemd_units_run_gateway_and_daemon_from_repo(tmp_path: Path) -> None:
 def test_run_once_ticks_watchers(tmp_path, monkeypatch):
     from bemine.config import BemineSettings
     from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
     import bemine.jobs.project_watcher as pw
 
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     called = {"n": 0}
     monkeypatch.setattr(pw, "tick_all_watchers",
                         lambda s, db: called.__setitem__("n", called["n"] + 1))
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: False)
     BemineDaemon(settings).run_once()
     assert called["n"] == 1
 
@@ -210,6 +212,7 @@ def test_daemon_main_calls_boot_guard_before_run(tmp_path, monkeypatch):
 def test_run_once_publishes_daemon_heartbeat_and_confirms(tmp_path, monkeypatch):
     from bemine.config import BemineSettings
     from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
     import bemine.jobs.core as core
     import bemine.deploy.pipeline as P
     from bemine.deploy.heartbeat import read_heartbeat
@@ -218,6 +221,7 @@ def test_run_once_publishes_daemon_heartbeat_and_confirms(tmp_path, monkeypatch)
     monkeypatch.setattr(core, "current_head_sha", lambda *a, **k: "dsha")
     called = {"confirm": 0}
     monkeypatch.setattr(P, "maybe_confirm_deploy", lambda s: called.__setitem__("confirm", 1))
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: False)
     BemineDaemon(settings).run_once()
     assert read_heartbeat(settings, "daemon")["sha"] == "dsha"
     assert called["confirm"] == 1
@@ -237,9 +241,58 @@ def test_run_once_ticks_recovery(tmp_path, monkeypatch):
     assert called["n"] == 1
 
 
+def test_daemon_resumes_missing_workers_on_cdjk(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
+    import bemine.workers.workers as workers
+
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine",
+        vault_dir=tmp_path / "v",
+        device_id="cdjk",
+    )
+    called = {"n": 0}
+    monkeypatch.setattr(
+        workers,
+        "resume_missing_local_workers",
+        lambda s: called.__setitem__("n", called["n"] + 1),
+    )
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: False)
+
+    BemineDaemon(settings).run_once()
+
+    assert called["n"] == 1
+
+
+def test_daemon_continuity_is_cdjk_only_by_default(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
+    import bemine.workers.workers as workers
+
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine",
+        vault_dir=tmp_path / "v",
+        device_id="testbox",
+    )
+    called = {"n": 0}
+    monkeypatch.setattr(
+        workers,
+        "resume_missing_local_workers",
+        lambda s: called.__setitem__("n", called["n"] + 1),
+    )
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: False)
+
+    BemineDaemon(settings).run_once()
+
+    assert called["n"] == 0
+
+
 def test_daemon_heartbeat_is_frozen_at_boot(tmp_path, monkeypatch):
     from bemine.config import BemineSettings
     from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
     import bemine.jobs.core as core
     from bemine.deploy.heartbeat import read_heartbeat
 
@@ -247,6 +300,7 @@ def test_daemon_heartbeat_is_frozen_at_boot(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "current_head_sha", lambda *a, **k: "boot-sha")
     daemon = BemineDaemon(settings)            # captures boot sha now
     monkeypatch.setattr(core, "current_head_sha", lambda *a, **k: "later-sha")
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: False)
     daemon.run_once()
     assert read_heartbeat(settings, "daemon")["sha"] == "boot-sha"   # frozen, not 'later-sha'
 

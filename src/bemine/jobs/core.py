@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from ..config import BemineSettings
+from ..config import BemineSettings, config_bool, config_list
 from ..db import BemineDB
 from ..deploy.heartbeat import write_heartbeat, current_head_sha
 from ..kernel import BemineKernel
@@ -337,6 +337,7 @@ class BemineDaemon:
 
     def run_once(self) -> list[JobRunResult]:
         self._deploy_tick()
+        self._continuity_tick()
         results = run_due_jobs(self.settings)
         self._tick_watchers()
         self._recovery_tick()
@@ -347,6 +348,7 @@ class BemineDaemon:
         seed_default_jobs(db)
         while True:
             self._deploy_tick()
+            self._continuity_tick()
             run_due_jobs(self.settings)
             self._tick_watchers()
             self._recovery_tick()
@@ -394,6 +396,16 @@ class BemineDaemon:
         except Exception:
             pass
 
+    def _continuity_tick(self) -> None:
+        try:
+            if not _continuity_enabled(self.settings):
+                return
+            from bemine.workers.workers import resume_missing_local_workers
+
+            resume_missing_local_workers(self.settings)
+        except Exception:
+            pass
+
 
 def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, Any]) -> str:
     job_type = str(config.get("type") or job_id)
@@ -404,6 +416,13 @@ def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, An
     if job_type == "session_watcher":
         return generate_session_watcher_report(settings, config)
     raise ValueError(f"unsupported job type: {job_type}")
+
+
+def _continuity_enabled(settings: BemineSettings) -> bool:
+    if not config_bool("continuity", "enabled", True):
+        return False
+    devices = config_list("continuity", "devices", ["cdjk"])
+    return settings.device_id in devices
 
 
 

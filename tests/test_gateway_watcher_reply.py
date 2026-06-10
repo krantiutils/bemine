@@ -1,6 +1,22 @@
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
-from bemine.discord.gateway import maybe_consume_watcher_reply
+from bemine.discord.gateway import (
+    maybe_consume_watcher_reply,
+    maybe_start_goal_from_discord_message,
+    parse_goal_command,
+)
+
+
+class FakeChannel:
+    id = "channel-rai"
+    name = "rai-speech-toolkit"
+    category = None
+
+
+class FakeMessage:
+    channel = FakeChannel()
+    channel_mentions = []
+    content = 'goal rai-speech-toolkit: "train the first checkpoint"'
 
 
 def test_consume_when_awaiting(tmp_path, monkeypatch):
@@ -48,3 +64,45 @@ def test_relay_failure_pauses_and_does_not_consume(tmp_path, monkeypatch):
     row = db.get_project_watcher("channel:p")
     assert row["awaiting_reply"] == 0
     assert row["status"] == "paused"
+
+
+def test_parse_goal_command_accepts_project_colon_and_quotes():
+    parsed = parse_goal_command(
+        'goal rai-speech-toolkit: "train the first Rai TTS checkpoint"'
+    )
+
+    assert parsed is not None
+    assert parsed.project == "rai-speech-toolkit"
+    assert parsed.brief == "train the first Rai TTS checkpoint"
+
+
+def test_discord_goal_command_uses_goal_service_and_channel_context(
+    tmp_path,
+    monkeypatch,
+):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    db = BemineDB(settings.db_path)
+    calls = {}
+
+    def fake_start_goal(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return {"started": True}
+
+    monkeypatch.setattr("bemine.discord.gateway.start_goal", fake_start_goal)
+
+    result = maybe_start_goal_from_discord_message(
+        settings,
+        db,
+        FakeMessage(),  # type: ignore[arg-type]
+        FakeMessage.content,
+        conversation_context="- voidash: gather details by reading conversation",
+    )
+
+    assert result == {"started": True}
+    assert calls["settings"] == settings
+    assert calls["db"] == db
+    assert calls["project"] == "rai-speech-toolkit"
+    assert calls["channel_id"] == "channel-rai"
+    assert "train the first checkpoint" in calls["brief"]
+    assert "gather details by reading conversation" in calls["brief"]

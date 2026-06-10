@@ -19,6 +19,7 @@ import aiohttp
 from bemine.config import BemineSettings, config_path, config_string
 from bemine.db import BemineDB
 from bemine.context.harness_context import load_harness_context
+from bemine.context.subagents import load_subagent_context
 from bemine.kimi_handler import (
     KimiHandler,
     JsonTransport,
@@ -1797,6 +1798,10 @@ def _project_channel_block(project: ProjectChannel, *, local: bool) -> list[str]
     return block
 
 
+def _subagent_prompt_context() -> str:
+    return load_subagent_context().text or "No subagent profiles configured."
+
+
 def _build_channel_system_prompt(
     settings: BemineSettings,
     project: ProjectChannel | None,
@@ -1812,6 +1817,7 @@ def _build_channel_system_prompt(
     operator_context = (
         load_operator_context().text or "No operator context files found."
     )
+    subagent_context = _subagent_prompt_context()
     project_line = (
         f"Project root: {project.cwd}"
         if project
@@ -1846,6 +1852,9 @@ def _build_channel_system_prompt(
                 "",
                 "Shared operator context:",
                 operator_context,
+                "",
+                "Configured subagent profiles:",
+                subagent_context,
                 "",
                 "Credential and infrastructure rules:",
                 "- Use status/capability tools before assuming credential access.",
@@ -2118,6 +2127,7 @@ def build_kimi_native_system_prompt(
     operator_context = (
         load_operator_context().text or "No operator context files found."
     )
+    subagent_context = _subagent_prompt_context()
     return "\n".join(
         [
             "You are Bemine's native Kimi worker for a Discord-routed task.",
@@ -2128,6 +2138,9 @@ def build_kimi_native_system_prompt(
             "",
             "Shared operator context:",
             operator_context,
+            "",
+            "Configured subagent profiles:",
+            subagent_context,
             "",
             "Credential and infrastructure rules:",
             "- Use status/capability tools before assuming credential access.",
@@ -2159,6 +2172,7 @@ def _build_dispatch_prompt(
     operator_context = (
         load_operator_context().text or "No operator context files found."
     )
+    subagent_context = _subagent_prompt_context()
     return "\n".join(
         [
             f"You are Bemine's {runtime_name} worker for a Discord-routed task.",
@@ -2185,6 +2199,9 @@ def _build_dispatch_prompt(
             "",
             "Shared operator context:",
             operator_context,
+            "",
+            "Configured subagent profiles:",
+            subagent_context,
             "",
             "Credential and infrastructure rules:",
             "- Use `bemine capabilities` before assuming credential access.",

@@ -68,6 +68,16 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - Project watcher: `src/bemine/jobs/project_watcher.py` drives a tmux-hosted session
   toward a per-project brief; `src/bemine/jobs/remote_tmux.py` runs tmux locally or over
   SSH. Control via the `watch_control` channel tool or `bemine watch`.
+- Goal sessions: `src/bemine/goals.py` is the worker+watcher fused path. Use
+  `bemine goal <project> "<brief>"` when the user wants Bemine to start and run
+  a goal itself instead of manually opening a terminal first. It resolves local
+  projects first, then fleet status, and can start remote tmux workers via SSH.
+- cdjk continuity: `src/bemine/workers/workers.py::resume_missing_local_workers`
+  and `BemineDaemon._continuity_tick()` restart recorded `running` local managed
+  tmux workers after line cuts/reboots. Configured under `[continuity]`.
+- Subagent profiles: `src/bemine/context/subagents.py` loads configured Markdown
+  profiles such as `subagents/PA.md` and `subagents/SMM.md`; inspect them with
+  `bemine subagents list`.
 - Self-deploy: `src/bemine/deploy/` (heartbeat, state, pipeline). Triggered via the
   `deploy_control` channel tool or `bemine deploy`; executed by the daemon, test-gated,
   with heartbeat health checks and auto-rollback (daemon boot-guard self-heals crash-loops).

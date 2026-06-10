@@ -20,11 +20,13 @@ from .jobs import (
     seed_default_jobs,
     upsert_reminder_job,
 )
+from .goals import render_goal_start, start_goal
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
 from .security.notifications import notify_permission_request_via_discord
 from .context.operator_context import load_operator_context, render_operator_context
+from .context.subagents import load_subagent_context, render_subagent_context
 from .security.proxy import CredentialProxy
 from .context.rituals import (
     build_prime_packet,
@@ -66,8 +68,10 @@ Core concepts:
   status        recent sessions by last interaction and ask-state
   rundown       project summaries from SQLite/Obsidian
   capabilities  safe credential/capability manifest for workers
+  subagents     configured PA/SMM/profile Markdown injected into workers
   permissions   explicit approval path for gated credentials
   workers       safe managed live sessions over tmux
+  goal          start a managed worker and watcher from one goal brief
   watch         per-project watchers that drive a session toward a goal
   deploy        test-gated self-deploy of Bemine with auto-rollback
   audit         query the operational event log
@@ -129,6 +133,20 @@ permissions and proxy paths.
 Examples:
   uv run bemine capabilities
   uv run bemine capabilities --json
+"""
+
+
+SUBAGENTS_HELP = """\
+Inspect configured Markdown subagent profiles.
+
+Subagents are named operating contracts such as PA.md and SMM.md. They are
+configured in [subagents].files and injected as bounded, redacted context for
+Discord-routed workers.
+
+Examples:
+  uv run bemine subagents list
+  uv run bemine subagents show SMM
+  uv run bemine subagents list --json
 """
 
 
@@ -217,6 +235,21 @@ Examples:
   uv run bemine workers capture bm-codex
   uv run bemine workers stop bm-codex
   uv run bemine workers forget bm-codex
+"""
+
+
+GOAL_HELP = """\
+Start a managed goal session.
+
+This fuses the worker and watcher paths: Bemine starts a tmux-backed worker in
+the project, sends it the goal brief, and registers a watcher that keeps driving
+that worker until the goal is done or blocked.
+
+Examples:
+  uv run bemine goal rai-speech-toolkit "train the first Rai TTS checkpoint"
+  uv run bemine goal rai-speech-toolkit "eval against neptts-bench" --cwd ~/github/rai-speech-toolkit
+  uv run bemine goal rai-speech-toolkit "resume training" --target-device mbp
+  uv run bemine goal streaming-tts "find where this project exists across machines" --runtime claude --json
 """
 
 
@@ -474,6 +507,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit credential capability manifest as JSON.",
+    )
+
+    subagents = sub.add_parser(
+        "subagents",
+        help="Inspect configured PA/SMM/profile Markdown.",
+        description="Inspect configured PA/SMM/profile Markdown subagents.",
+        epilog=dedent(SUBAGENTS_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    subagents_sub = subagents.add_subparsers(dest="subagents_command", required=True)
+    subagents_list = subagents_sub.add_parser(
+        "list", help="List configured subagent profile files."
+    )
+    subagents_list.add_argument(
+        "--json", action="store_true", help="Emit profiles as JSON."
+    )
+    subagents_show = subagents_sub.add_parser(
+        "show", help="Print one configured subagent profile."
+    )
+    subagents_show.add_argument("name", help="Profile name, e.g. PA or SMM.")
+    subagents_show.add_argument(
+        "--json", action="store_true", help="Emit profile as JSON."
     )
 
     context = sub.add_parser(
@@ -783,6 +838,54 @@ def build_parser() -> argparse.ArgumentParser:
     worker_forget.add_argument(
         "--json", action="store_true", help="Emit forget result as JSON."
     )
+
+    goal = sub.add_parser(
+        "goal",
+        help="Start a managed worker and watcher from one goal brief.",
+        description="Start a managed worker and watcher from one goal brief.",
+        epilog=dedent(GOAL_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    goal.add_argument("project", help="Project name/id/path, e.g. rai-speech-toolkit.")
+    goal.add_argument("brief", help="Goal brief to send to the worker and watcher.")
+    goal.add_argument(
+        "--cwd",
+        default="",
+        help="Project root. Required when the project is not indexed yet.",
+    )
+    goal.add_argument(
+        "--runtime",
+        default="",
+        help="Worker runtime. Defaults to [goal].runtime or claude.",
+    )
+    goal.add_argument(
+        "--worker",
+        default="",
+        help="Worker/tmux session name. Defaults to goal-<project>.",
+    )
+    goal.add_argument(
+        "--interval",
+        type=int,
+        default=0,
+        help="Watcher poll interval seconds. Defaults to [goal].interval_secs or 600.",
+    )
+    goal.add_argument(
+        "--channel-id",
+        default="",
+        help="Discord channel id for watcher updates when started from Discord.",
+    )
+    goal.add_argument(
+        "--target-device",
+        default="",
+        help="Device to start the worker on. Defaults to local or fleet-resolved device.",
+    )
+    goal.add_argument(
+        "--command",
+        dest="goal_command",
+        default="",
+        help="Override worker command. Defaults from runtime.",
+    )
+    goal.add_argument("--json", action="store_true", help="Emit goal start as JSON.")
 
     creds = sub.add_parser(
         "credentials",
@@ -1283,6 +1386,30 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(manifest, indent=2, sort_keys=True))
         else:
             print(render_capability_manifest(manifest), end="")
+    elif args.command == "subagents":
+        context = load_subagent_context()
+        if args.subagents_command == "list":
+            if args.json:
+                print(json.dumps(context.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_subagent_context(context), end="")
+        elif args.subagents_command == "show":
+            name = args.name.casefold()
+            profile = next(
+                (
+                    item
+                    for item in context.profiles
+                    if item.name.casefold() == name
+                    or item.path.name.casefold() == name
+                ),
+                None,
+            )
+            if profile is None:
+                raise SystemExit(f"Unknown subagent profile: {args.name}")
+            if args.json:
+                print(json.dumps(profile.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(profile.text.rstrip() + "\n", end="")
     elif args.command == "usage":
         rollup = kernel.db.usage_rollup(provider=getattr(args, "provider", None) or None)
         if getattr(args, "json", False):
@@ -1464,6 +1591,27 @@ def main(argv: list[str] | None = None) -> None:
         if args.proxy_command == "check":
             result = CredentialProxy(kernel.db).check(args.request_id, actor=args.actor)
             print(json.dumps(result, sort_keys=True))
+    elif args.command == "goal":
+        try:
+            result = start_goal(
+                settings,
+                project=args.project,
+                brief=args.brief,
+                cwd=Path(args.cwd) if args.cwd else None,
+                runtime=args.runtime,
+                worker_name=args.worker,
+                interval_secs=args.interval,
+                channel_id=args.channel_id,
+                command=args.goal_command,
+                target_device=args.target_device,
+                db=kernel.db,
+            )
+        except (ValueError, WorkerError) as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.json:
+            print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        else:
+            print(render_goal_start(result), end="")
     elif args.command == "jobs":
         if args.jobs_command == "seed":
             seed_default_jobs(kernel.db)

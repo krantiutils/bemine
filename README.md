@@ -141,6 +141,27 @@ uv run bemine systemd install --now
 systemctl --user status bemine-daemon mayor-discord-gateway
 ```
 
+### Goal sessions
+
+Use `bemine goal` when Bemine should start the work itself instead of waiting for
+you to open a terminal first:
+
+```bash
+uv run bemine goal rai-speech-toolkit "train the first Rai TTS checkpoint from the 14 rulebooks"
+```
+
+The command starts a managed tmux worker in the project, sends the goal brief,
+and registers a watcher for follow-up/recovery. From Discord, say
+`goal <project>: "<brief>"`; recent channel context is folded into the brief.
+If the project is currently visible only on another device in fleet status,
+Bemine starts the worker there through SSH-backed tmux; pass `--target-device`
+to force the device.
+
+On `cdjk`, `[continuity]` makes the daemon restart managed local workers after
+line cuts or reboot: if a `bemine goal` worker was recorded as `running` but its
+tmux session disappeared, the daemon starts it again from the recorded cwd and
+command. This deliberately does not restart adopted/manual sessions.
+
 ### Watcher mode
 
 Enable a watcher from a project's Discord channel: "watch this, goal: <your full

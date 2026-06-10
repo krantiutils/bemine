@@ -10,6 +10,7 @@ from ..config import BemineSettings
 from ..db import BemineDB
 from .harness_context import load_harness_context
 from .operator_context import load_operator_context
+from .subagents import load_subagent_context
 from ..index.rundown import render_rundown
 from ..index.status import (
     SessionStatus,
@@ -30,6 +31,7 @@ class PrimePacket:
     project_name: str
     harness_files: list[str]
     operator_files: list[str]
+    subagent_files: list[str]
     projects: list[dict]
     statuses: list[dict]
     errors: list[dict]
@@ -81,6 +83,7 @@ def build_prime_packet(
     projects = [dict_project(row) for row in db.rundown(limit=limit)]
     harness = load_harness_context()
     operator = load_operator_context(limit=1_000)
+    subagents = load_subagent_context(limit=2_000)
     return PrimePacket(
         generated_at=datetime.now(timezone.utc).isoformat(),
         device_id=settings.device_id,
@@ -89,6 +92,7 @@ def build_prime_packet(
         project_name=project_name_from_cwd(str(cwd)),
         harness_files=[str(path) for path in harness.files],
         operator_files=[str(path) for path in operator.files],
+        subagent_files=[str(profile.path) for profile in subagents.profiles],
         projects=projects,
         statuses=[status.to_dict() for status in statuses[:limit]],
         errors=[error.__dict__ for error in errors],
@@ -116,6 +120,10 @@ def render_prime_packet(packet: PrimePacket) -> str:
         lines.extend(f"- Operator context: `{path}`" for path in packet.operator_files)
     else:
         lines.append("- Operator context: none found")
+    if packet.subagent_files:
+        lines.extend(f"- Subagent: `{path}`" for path in packet.subagent_files)
+    else:
+        lines.append("- Subagents: none configured")
     lines.extend(
         [
             "",
