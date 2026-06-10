@@ -43,6 +43,8 @@ Functional now:
 - Native workers can inspect and install the Phantom Android accessibility app
   with `phantom_status` and `phantom_install`; the CLI exposes the same flow as
   `bemine phantom status/build/install`.
+- Native workers can draft Ampixa-style social posts from SMM backlog/brief
+  evidence and local brand assets with `smm_drafts`.
 - `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
 - `SOUL.md` and `SKILL.md` define Bemine's identity and harness workflow, and
   are injected into dispatched worker prompts.
@@ -84,6 +86,7 @@ uv run bemine jobs list
 uv run bemine jobs add-reminder morning_plan "30 8 * * *" --text "Review calendar, inbox, and blockers"
 uv run bemine jobs run daily_digest --no-notify
 uv run bemine jobs run morning_plan --no-notify
+uv run bemine smm draft "Rai checkpoint eval passed" --project rai-speech-toolkit
 uv run bemine daemon --once
 uv run bemine systemd install --now
 uv run bemine credentials scan
@@ -203,6 +206,7 @@ Use `bemine backlog` for durable idea/task capture:
 ```bash
 uv run bemine backlog add "post the Rai checkpoint chart" --owner SMM
 uv run bemine backlog list --owner PA
+uv run bemine smm draft "Rai checkpoint eval passed" --project rai-speech-toolkit
 ```
 
 Entries are Markdown in the Obsidian vault under `Backlog/`. Discord handles
@@ -223,6 +227,10 @@ The brief reads recent sessions, Discord messages, audit events, and tool state.
 It writes `Briefs/<date>-pa-smm.md` in the vault and, by default, appends only
 new generated items to the PA/SMM backlog. The daemon seeds a `pa_smm_brief`
 cron job (`[brief].schedule`, default `45 8 * * *`).
+
+Use `bemine smm draft` when Bemine should turn SMM backlog/brief evidence into
+copy-ready social draft packs. Drafts include hook, body, proof, target channels,
+and an Ampixa-style image prompt using `subagents/style.md` and `assets/ampixa/`.
 
 ### Dream memory
 

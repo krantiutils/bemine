@@ -30,6 +30,7 @@ from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, 
 from .health import collect_health, render_health
 from .dreams import render_dream, run_dream
 from .briefs import render_brief, run_brief
+from .smm import draft_smm_posts, render_smm_drafts
 from .phantom import (
     phantom_build,
     phantom_install,
@@ -89,6 +90,7 @@ Core concepts:
   phantom       inspect/build/install the Phantom Android accessibility app
   subagents     configured PA/SMM/profile Markdown injected into workers
   backlog       durable PA/SMM idea and task backlog in the vault
+  smm           draft Ampixa-style social posts from SMM evidence
   dream         condense recent history into one vault data point
   brief         generate PA/SMM brief and backlog nudges from evidence
   permissions   explicit approval path for gated credentials
@@ -199,6 +201,21 @@ Examples:
   uv run bemine backlog add "post idea: Rai training checkpoint chart" --owner SMM
   uv run bemine backlog add "follow up on stuck Claude asks" --owner PA --project bm
   uv run bemine backlog list --owner SMM
+"""
+
+
+SMM_HELP = """\
+Draft Ampixa-style social posts from existing SMM evidence.
+
+The draft command reads SMM backlog items, the latest PA/SMM brief, and the local
+Ampixa style/assets (`subagents/style.md`, `assets/ampixa/*`). It returns
+structured post drafts with hook, body, proof, target channels, and an image
+prompt that follows the Ampixa visual language.
+
+Examples:
+  uv run bemine smm draft
+  uv run bemine smm draft "Rai checkpoint eval passed" --project rai-speech-toolkit
+  uv run bemine smm draft --write --json
 """
 
 
@@ -743,6 +760,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backlog_list.add_argument("--limit", type=int, default=20, help="Maximum items.")
     backlog_list.add_argument("--json", action="store_true", help="Emit items as JSON.")
+
+    smm = sub.add_parser(
+        "smm",
+        help="Draft Ampixa-style social posts from SMM evidence.",
+        description="Draft Ampixa-style social posts from SMM evidence.",
+        epilog=dedent(SMM_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    smm_sub = smm.add_subparsers(dest="smm_command", required=True)
+    smm_draft = smm_sub.add_parser(
+        "draft",
+        help="Create structured post drafts from SMM backlog/brief evidence.",
+        description="Create structured post drafts from SMM backlog/brief evidence.",
+        formatter_class=HELP_FORMATTER,
+    )
+    smm_draft.add_argument(
+        "topic",
+        nargs="?",
+        default="",
+        help="Optional topic or evidence to draft from before backlog/brief signals.",
+    )
+    smm_draft.add_argument(
+        "--project",
+        default="",
+        help="Project label to attach to the draft, e.g. rai-speech-toolkit.",
+    )
+    smm_draft.add_argument(
+        "--limit", type=int, default=3, help="Maximum drafts to produce."
+    )
+    smm_draft.add_argument(
+        "--write",
+        action="store_true",
+        help="Write the drafts into the Obsidian vault under SMM/Drafts/.",
+    )
+    smm_draft.add_argument("--json", action="store_true", help="Emit drafts as JSON.")
 
     dream = sub.add_parser(
         "dream",
@@ -1819,6 +1871,21 @@ def main(argv: list[str] | None = None) -> None:
                     print(render_backlog_items(owner, items), end="")
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
+    elif args.command == "smm":
+        if args.smm_command == "draft":
+            result = draft_smm_posts(
+                settings,
+                topic=args.topic,
+                project=args.project,
+                limit=args.limit,
+                write=args.write,
+                db=kernel.db,
+                project_root=Path.cwd(),
+            )
+            if args.json:
+                print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_smm_drafts(result), end="")
     elif args.command == "dream":
         if args.dream_command == "run":
             result = run_dream(settings, limit=args.limit, db=kernel.db)
