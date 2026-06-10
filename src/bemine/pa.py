@@ -144,11 +144,11 @@ def render_pa_plan(result: PAPlanResult) -> str:
         lines.append(f"- path: `{result.path}`")
     if not result.items:
         lines.append("- No urgent PA items found from current evidence.")
-    for item in result.items:
+    for index, item in enumerate(result.items, start=1):
         lines.extend(
             [
                 "",
-                f"{item.priority}. {item.text}",
+                f"{index}. [P{item.priority}] {item.text}",
                 f"   next: {item.next_action}",
                 f"   evidence: {item.evidence or 'none'}",
             ]
