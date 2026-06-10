@@ -106,8 +106,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - `uv run bemine systemd status` — daemon/gateway unit state plus heartbeat SHA.
 - `uv run bemine jobs list` — what runs when (session watcher every 2 min,
   dream at 03:15, PA/SMM brief at 08:45, daily digest at 18:00 by default).
-- Run one now: `uv run bemine jobs run <job_id>`. Job configs live in SQLite (`jobs` table);
-  `channel_id` in a job's config overrides where its output is posted.
+- Run one now: `job_run` native tool or `uv run bemine jobs run <job_id>`. Job configs
+  live in SQLite (`jobs` table); `channel_id` in a job's config overrides where its
+  output is posted.
 
 ## Environment gotchas (learned the hard way — don't relearn them)
 

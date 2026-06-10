@@ -18,6 +18,7 @@ from ..dreams import run_dream
 from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
+from ..jobs import run_job_by_id
 from ..security.credentials import CredentialInventory
 from ..workers.workers import WorkerController, WorkerError
 
@@ -112,6 +113,24 @@ def default_tools() -> list[BemineTool]:
             description="List Bemine's scheduled cron jobs (name, schedule, enabled, last run).",
             input_schema={"type": "object", "properties": {}},
             handler=_jobs_list,
+        ),
+        BemineTool(
+            name="job_run",
+            description=(
+                "Run one configured Bemine job immediately by job_id. Defaults to "
+                "suppressing generic Discord notification; set notify=true only when "
+                "the user explicitly wants the job's normal notification behavior."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string"},
+                    "notify": {"type": "boolean"},
+                },
+                "required": ["job_id"],
+            },
+            handler=_job_run,
+            policy="project-write",
         ),
         BemineTool(
             name="health_status",
@@ -536,6 +555,28 @@ def _jobs_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
             }
             for row in rows
         ]
+    }
+
+
+def _job_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    job_id = str(args.get("job_id") or "").strip()
+    if not job_id:
+        raise ToolExecutionError("job_id is required")
+    notify = bool(args.get("notify", False))
+    try:
+        result = run_job_by_id(
+            context.settings,
+            job_id,
+            sender=None if notify else (lambda text: {"id": "", "channel_id": ""}),
+        )
+    except ValueError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    return {
+        "ok": result.status == "success",
+        "job_id": result.job_id,
+        "status": result.status,
+        "notified": result.notified,
+        "output": result.output[-6000:],
     }
 
 

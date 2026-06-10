@@ -57,6 +57,7 @@ preference (specific tool > shell):
 | `health_status` | deploy/services/jobs/watchers health packet |
 | `capabilities_status` | safe credential/tool manifest, including Android/ADB readiness |
 | `usage_report` | token usage by provider |
+| `job_run` | run one configured Bemine job by id (notification opt-in) |
 | `audit_list` | recent audit events (filter by category, e.g. `recovery`, `deploy`, `watcher`) |
 | `shell_run` | run any shell command (scope per `[policy].shell`) — your general hands |
 | `tmux_list` / `tmux_capture` / `tmux_send` | find, read, and drive live tmux agent sessions |
