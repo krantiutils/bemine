@@ -59,6 +59,14 @@ def _dispatch_status(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_dispatch_status(payload), data=payload)
 
 
+def _pa_plan(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.pa import build_pa_plan, render_pa_plan
+
+    limit = int(args.get("limit") or 6)
+    result = build_pa_plan(settings, limit=limit)
+    return CommandResult(text=render_pa_plan(result), data=result.to_dict())
+
+
 def _goals_list(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.goals import list_goal_sessions, render_goal_sessions
 
@@ -93,6 +101,7 @@ _SPECS = (
     CommandSpec("jobs.list", "List scheduled jobs", _jobs_list),
     CommandSpec("health", "Bemine service/job/deploy health", _health),
     CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
+    CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),
