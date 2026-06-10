@@ -111,5 +111,6 @@ def test_discord_help_includes_local_transcript_commands() -> None:
 
     assert "threads" in text
     assert "transcript" in text
+    assert "refresh-channel-names" in text
     assert "without requiring live Discord API credentials" in flat
     assert "uv run bemine discord transcript" in text

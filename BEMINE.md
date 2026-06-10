@@ -77,9 +77,10 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `Backlog/PA.md` and `Backlog/SMM.md`.
 - PA/SMM daily brief → `uv run bemine brief run`; writes `Briefs/<date>-pa-smm.md`
   and adds non-duplicate generated PA/SMM backlog nudges.
-- Local Discord history → `uv run bemine discord threads` and
-  `uv run bemine discord transcript --query "<term>"`; these read the SQLite
-  store and work even when live Discord API credentials are unavailable.
+- Local Discord history → `uv run bemine discord refresh-channel-names` to backfill
+  readable server channel names, then `uv run bemine discord threads` and
+  `uv run bemine discord transcript --query "<term>"`; transcript reads work even
+  when live Discord API credentials are unavailable.
 - Periodic self-improvement memory → `uv run bemine dream run`; data points append to
   `Dreams/dreams.jsonl` and are audit-logged as `dream/dream_recorded`.
 - End substantial work with `uv run bemine handoff "<what changed>" --next "<next>"
