@@ -175,6 +175,18 @@ Entries are Markdown in the Obsidian vault under `Backlog/`. Discord handles
 explicit phrases like `SMM idea: ...` and `store idea for PA: ...` without
 starting a full agent run.
 
+### Dream memory
+
+Bemine can periodically condense recent conversation, failure, and audit history
+into one append-only data point:
+
+```bash
+uv run bemine dream run
+```
+
+The daemon seeds a `dream` cron job (`[dream].schedule`, default `15 3 * * *`)
+that appends JSONL records to `Dreams/dreams.jsonl` in the Obsidian vault.
+
 ### Watcher mode
 
 Enable a watcher from a project's Discord channel: "watch this, goal: <your full

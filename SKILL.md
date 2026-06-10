@@ -81,6 +81,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - PA/SMM backlog: `src/bemine/backlog.py` writes durable Markdown entries under
   the Obsidian vault `Backlog/`; use `bemine backlog add/list` or explicit
   Discord phrases like `SMM idea: ...`.
+- Dream memory: `src/bemine/dreams.py` condenses recent Discord/audit history
+  into one JSONL record under `Dreams/dreams.jsonl`; run manually with
+  `bemine dream run` or via the daemon's seeded `dream` cron job.
 - Self-deploy: `src/bemine/deploy/` (heartbeat, state, pipeline). Triggered via the
   `deploy_control` channel tool or `bemine deploy`; executed by the daemon, test-gated,
   with heartbeat health checks and auto-rollback (daemon boot-guard self-heals crash-loops).

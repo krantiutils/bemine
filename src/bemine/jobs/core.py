@@ -77,6 +77,17 @@ def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition,
                 "notify_discord": True,
             },
         ),
+        JobDefinition(
+            job_id="dream",
+            name="Dream memory condensation",
+            trigger_type="cron",
+            schedule=config_string("dream", "schedule", "15 3 * * *"),
+            config={
+                "type": "dream",
+                "limit": 100,
+                "notify_discord": False,
+            },
+        ),
     )
 
 
@@ -415,6 +426,11 @@ def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, An
         return generate_reminder(job_id, config)
     if job_type == "session_watcher":
         return generate_session_watcher_report(settings, config)
+    if job_type == "dream":
+        from bemine.dreams import run_dream, render_dream
+
+        result = run_dream(settings, limit=int(config.get("limit") or 100))
+        return render_dream(result)
     raise ValueError(f"unsupported job type: {job_type}")
 
 

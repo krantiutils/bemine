@@ -43,6 +43,11 @@ context_limit = 12000
 owners = ["PA", "SMM"]
 default_owner = "SMM"
 
+[dream]
+# Periodically condense recent conversation/audit history into one JSONL data point
+# in the Obsidian vault (`Dreams/dreams.jsonl`).
+schedule = "15 3 * * *"
+
 # ----------------------------------------------------------------------------
 # Which agent answers a Discord message.
 # ----------------------------------------------------------------------------

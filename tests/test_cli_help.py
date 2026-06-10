@@ -26,6 +26,7 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "workers       safe managed live sessions over tmux" in text
     assert "goal          start a managed worker and watcher" in text
     assert "backlog       durable PA/SMM idea" in text
+    assert "dream         condense recent history" in text
 
 
 def test_prime_help_explains_startup_packet() -> None:
@@ -80,3 +81,12 @@ def test_backlog_help_explains_vault_storage() -> None:
     assert "Capture or list durable PA/SMM backlog items." in text
     assert "Obsidian vault under Backlog/<owner>.md" in flat
     assert "uv run bemine backlog add" in text
+
+
+def test_dream_help_explains_jsonl_storage() -> None:
+    text = _help("dream")
+    flat = " ".join(text.split())
+
+    assert "Condense recent Bemine/Discord history" in text
+    assert "Dreams/dreams.jsonl" in flat
+    assert "uv run bemine dream run" in text

@@ -9,7 +9,12 @@ from pathlib import Path
 from textwrap import dedent
 
 from .capabilities import build_capability_manifest, render_capability_manifest
-from .backlog import add_backlog_item, default_backlog_owner, list_backlog_items, render_backlog_items
+from .backlog import (
+    add_backlog_item,
+    default_backlog_owner,
+    list_backlog_items,
+    render_backlog_items,
+)
 from .config import BemineSettings, render_toml_config
 from .config import config_path as bemine_config_path
 from .config import config_string, load_bemine_config
@@ -22,6 +27,7 @@ from .jobs import (
     upsert_reminder_job,
 )
 from .goals import render_goal_start, start_goal
+from .dreams import render_dream, run_dream
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
@@ -71,6 +77,7 @@ Core concepts:
   capabilities  safe credential/capability manifest for workers
   subagents     configured PA/SMM/profile Markdown injected into workers
   backlog       durable PA/SMM idea and task backlog in the vault
+  dream         condense recent history into one vault data point
   permissions   explicit approval path for gated credentials
   workers       safe managed live sessions over tmux
   goal          start a managed worker and watcher from one goal brief
@@ -162,6 +169,19 @@ Examples:
   uv run bemine backlog add "post idea: Rai training checkpoint chart" --owner SMM
   uv run bemine backlog add "follow up on stuck Claude asks" --owner PA --project bm
   uv run bemine backlog list --owner SMM
+"""
+
+
+DREAM_HELP = """\
+Condense recent Bemine/Discord history into one vault data point.
+
+Dreams are append-only JSONL records in the Obsidian vault under
+Dreams/dreams.jsonl. The daemon runs this periodically via the built-in
+dream job; use `dream run` for an immediate manual pass.
+
+Examples:
+  uv run bemine dream run
+  uv run bemine dream run --limit 120 --json
 """
 
 
@@ -572,6 +592,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backlog_list.add_argument("--limit", type=int, default=20, help="Maximum items.")
     backlog_list.add_argument("--json", action="store_true", help="Emit items as JSON.")
+
+    dream = sub.add_parser(
+        "dream",
+        help="Condense recent history into a vault data point.",
+        description="Condense recent Bemine/Discord history into a vault data point.",
+        epilog=dedent(DREAM_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    dream_sub = dream.add_subparsers(dest="dream_command", required=True)
+    dream_run = dream_sub.add_parser("run", help="Record one dream data point.")
+    dream_run.add_argument(
+        "--limit",
+        type=int,
+        default=80,
+        help="Maximum recent inbound/outbound/audit rows to inspect.",
+    )
+    dream_run.add_argument("--json", action="store_true", help="Emit dream data as JSON.")
 
     context = sub.add_parser(
         "context",
@@ -1482,6 +1519,13 @@ def main(argv: list[str] | None = None) -> None:
                     print(render_backlog_items(owner, items), end="")
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
+    elif args.command == "dream":
+        if args.dream_command == "run":
+            result = run_dream(settings, limit=args.limit, db=kernel.db)
+            if args.json:
+                print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_dream(result), end="")
     elif args.command == "usage":
         rollup = kernel.db.usage_rollup(provider=getattr(args, "provider", None) or None)
         if getattr(args, "json", False):

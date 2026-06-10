@@ -38,6 +38,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "remind me / schedule X" → `uv run bemine jobs add-reminder --help`.
 - "start/run a goal for project X" → `uv run bemine goal <project> "<goal brief>"`;
   this starts a managed tmux worker, sends the brief, and registers a watcher.
+- "dream / learn from recent history" → `uv run bemine dream run`; daemon also runs the
+  `dream` job periodically and appends one JSONL data point to `Dreams/dreams.jsonl`.
 - config questions → `bemine_config` tool or `uv run bemine config show`; NEVER guess
   runtime/model identity.
 
@@ -65,6 +67,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   daily; decisions in `Decisions/`; checklists in `Checklists/`.
 - PA/SMM ideas and tasks → `uv run bemine backlog add ...`; files live under
   `Backlog/PA.md` and `Backlog/SMM.md`.
+- Periodic self-improvement memory → `uv run bemine dream run`; data points append to
+  `Dreams/dreams.jsonl` and are audit-logged as `dream/dream_recorded`.
 - End substantial work with `uv run bemine handoff "<what changed>" --next "<next>"
   --test "uv run pytest -q"` — this also writes the `Daily/` note.
 - Operational history → `audit_list` / `uv run bemine audit list` (categories: deploy,
