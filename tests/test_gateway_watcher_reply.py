@@ -79,6 +79,16 @@ def test_parse_goal_command_accepts_project_colon_and_quotes():
     assert parsed.brief == "train the first Rai TTS checkpoint"
 
 
+def test_parse_goal_command_accepts_start_goal_prefix():
+    parsed = parse_goal_command(
+        'start a goal rai-speech-toolkit: "train the first Rai TTS checkpoint"'
+    )
+
+    assert parsed is not None
+    assert parsed.project == "rai-speech-toolkit"
+    assert parsed.brief == "train the first Rai TTS checkpoint"
+
+
 def test_parse_backlog_command_accepts_smm_idea():
     parsed = parse_backlog_command("SMM idea: post the Rai checkpoint chart")
 
@@ -145,3 +155,30 @@ def test_discord_goal_command_uses_goal_service_and_channel_context(
     assert calls["channel_id"] == "channel-rai"
     assert "train the first checkpoint" in calls["brief"]
     assert "gather details by reading conversation" in calls["brief"]
+
+
+def test_discord_goal_command_accepts_start_prefix(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    db = BemineDB(settings.db_path)
+    calls = {}
+
+    def fake_start_goal(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return {"started": True}
+
+    monkeypatch.setattr("bemine.discord.gateway.start_goal", fake_start_goal)
+
+    result = maybe_start_goal_from_discord_message(
+        settings,
+        db,
+        FakeMessage(),  # type: ignore[arg-type]
+        'start a goal rai-speech-toolkit: "train the first checkpoint"',
+    )
+
+    assert result == {"started": True}
+    assert calls["settings"] == settings
+    assert calls["db"] == db
+    assert calls["project"] == "rai-speech-toolkit"
+    assert calls["channel_id"] == "channel-rai"
+    assert "train the first checkpoint" in calls["brief"]

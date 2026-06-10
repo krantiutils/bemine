@@ -48,7 +48,10 @@ APPROVAL_CODE_RE = re.compile(
     r"\b((?:!?(?:mayor|bemine)\s+)?approve\s+\S+\s+)(\d{6,8})\b",
     re.IGNORECASE,
 )
-GOAL_PREFIX_RE = re.compile(r"^\s*(?:!?(?:mayor|bemine)\s+)?goal\s+", re.IGNORECASE)
+GOAL_PREFIX_RE = re.compile(
+    r"^\s*(?:!?(?:mayor|bemine)\s+)?(?:(?:start|run|begin|launch)\s+(?:a\s+)?)?goal\s+",
+    re.IGNORECASE,
+)
 BACKLOG_RE = re.compile(
     r"^\s*(?:!?(?:mayor|bemine)\s+)?(?:(?P<owner1>pa|smm)\s+"
     r"(?P<kind1>idea|task|backlog)|(?:store|save|remember)\s+(?:this\s+)?"
