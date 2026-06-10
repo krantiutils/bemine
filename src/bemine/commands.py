@@ -144,7 +144,24 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     goal_interval = config_int("goal", "interval_secs", 600)
     continuity_enabled = config_bool("continuity", "enabled", True)
     continuity_devices = config_list("continuity", "devices", ["cdjk"])
+    session_fallback_channel = config_string("jobs", "session_fallback_channel", "session-updates")
+    session_auto_create_channels = config_bool("jobs", "session_auto_create_channels", True)
+    recovery_poll_interval = config_int("recovery", "poll_interval_secs", 300)
+    smm_target_channels = config_list("smm", "target_channels", ["X", "LinkedIn"])
+    smm_style_path = config_string("smm", "style_path", "subagents/style.md")
     phantom_root = config_string("phantom", "project_root", "")
+    configurable_knobs = [
+        f"goal.runtime={goal_runtime}",
+        f"goal.interval_secs={goal_interval}",
+        f"continuity.enabled={continuity_enabled}",
+        f"continuity.devices={', '.join(continuity_devices) or 'none'}",
+        f"jobs.session_auto_create_channels={session_auto_create_channels}",
+        f"jobs.session_fallback_channel={session_fallback_channel}",
+        f"recovery.poll_interval_secs={recovery_poll_interval}",
+        f"smm.target_channels={', '.join(smm_target_channels) or 'none'}",
+        f"smm.style_path={smm_style_path}",
+        f"phantom.project_root={phantom_root or 'unset'}",
+    ]
     summary_lines = [
         "Bemine help:",
         "- ask: help, status, health, continuity, goal, watch, jobs, routes, dispatch, pa, smm, subagents, phantom, backlog, capabilities, audit, config",
@@ -157,6 +174,8 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- dispatch: runtime={dispatch.get('runtime', 'unknown')} backend={dispatch.get('backend', 'unknown')} model={dispatch.get('model', 'unknown')}",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'}",
         f"- phantom: project_root={phantom_root or 'unset'}",
+        "Config knobs:",
+        *[f"- {item}" for item in configurable_knobs],
         "Built-in jobs:",
     ]
     summary_lines.extend(
@@ -179,6 +198,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
                 "enabled": continuity_enabled,
                 "devices": continuity_devices,
             },
+            "config_knobs": configurable_knobs,
             "dispatch": dispatch,
             "subagents": [profile.to_dict() for profile in subagents.profiles],
             "phantom": {"project_root": phantom_root},
