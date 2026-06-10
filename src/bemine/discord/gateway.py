@@ -790,8 +790,9 @@ class MayorDiscordGateway:
             return
         backlog_args = _direct_backlog_command(normalized_lower)
         if backlog_args is not None:
+            command_name = backlog_args.pop("command", "backlog.list")
             text = await asyncio.to_thread(
-                lambda: run_command("backlog.list", BemineSettings.load(), backlog_args).text
+                lambda: run_command(command_name, BemineSettings.load(), backlog_args).text
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
@@ -1115,6 +1116,14 @@ def _direct_backlog_command(normalized_lower: str) -> dict[str, str] | None:
         "what's in the backlog",
     }:
         return {"owner": default_backlog_owner()}
+    if variants & {
+        "what backlog owners are configured",
+        "what is the default backlog owner",
+        "what's the default backlog owner",
+        "what backlog config is set",
+        "what backlog config is configured",
+    }:
+        return {"command": "help"}
     if variants & {
         "pa backlog",
         "show pa backlog",
