@@ -172,6 +172,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- goal: runtime={goal_runtime} interval={goal_interval}s",
         f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'}",
         f"- dispatch: runtime={dispatch.get('runtime', 'unknown')} backend={dispatch.get('backend', 'unknown')} model={dispatch.get('model', 'unknown')}",
+        "- discord routes: `discord routes` / `uv run bemine discord routes`",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'}",
         f"- phantom: project_root={phantom_root or 'unset'}",
         "Config knobs:",
