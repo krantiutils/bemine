@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 
 from ..config import BemineSettings, config_bool, config_string
 from ..backlog import add_backlog_item, default_backlog_owner, list_backlog_items
+from ..briefs import run_brief
 from ..db import BemineDB
 from ..index.status import _redact, collect_fleet_status
 
@@ -140,6 +141,25 @@ def default_tools() -> list[BemineTool]:
                 },
             },
             handler=_backlog_list,
+        ),
+        BemineTool(
+            name="brief_run",
+            description=(
+                "Generate the deterministic PA/SMM brief from recent sessions, Discord "
+                "history, audit events, and tool state. Use when the user asks what to "
+                "focus on, asks for PA/SMM nudges, or wants social post ideas."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    "record_backlog": {
+                        "type": "boolean",
+                        "description": "Whether to append non-duplicate generated PA/SMM backlog items.",
+                    },
+                },
+            },
+            handler=_brief_run,
         ),
         BemineTool(
             name="audit_list",
@@ -356,6 +376,18 @@ def _backlog_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str,
         "owner": owner.upper(),
         "items": list_backlog_items(context.settings, owner=owner, limit=limit),
     }
+
+
+def _brief_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    limit = _int(args.get("limit"), default=100, minimum=1, maximum=200)
+    record_backlog = bool(args.get("record_backlog", True))
+    result = run_brief(
+        context.settings,
+        limit=limit,
+        record_backlog=record_backlog,
+        db=context.db,
+    )
+    return {"ok": True, "result": result.to_dict()}
 
 
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

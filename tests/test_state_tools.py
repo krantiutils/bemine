@@ -54,9 +54,42 @@ def test_backlog_tools_write_and_list_vault_items(tmp_path):
     assert "post the Rai checkpoint chart" in listed["items"][0]
 
 
+def test_brief_run_tool_generates_pa_smm_brief(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+
+    class Result:
+        def to_dict(self):
+            return {
+                "path": str(settings.vault_dir / "Briefs" / "brief.md"),
+                "items": [],
+                "backlog_entries": [],
+                "evidence": {},
+            }
+
+    calls = {}
+
+    def fake_run_brief(settings_arg, **kwargs):
+        calls.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr("bemine.context.tool_registry.run_brief", fake_run_brief)
+
+    out = BemineToolRegistry().execute(
+        "brief_run",
+        {"limit": 25, "record_backlog": False},
+        ctx,
+    )
+
+    assert out["ok"] is True
+    assert out["result"]["path"].endswith("brief.md")
+    assert calls["limit"] == 25
+    assert calls["record_backlog"] is False
+    assert calls["db"] is db
+
+
 def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
     names = {t["name"] for t in convert_tools_to_anthropic(schemas)}
-    assert {"bemine_config", "jobs_list", "usage_report", "backlog_add"} <= names
+    assert {"bemine_config", "jobs_list", "usage_report", "backlog_add", "brief_run"} <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))
