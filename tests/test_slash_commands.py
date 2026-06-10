@@ -19,6 +19,15 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     assert "goal sessions" in goals.lower()
 
 
+def test_slash_pa_plan_is_deterministic(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    monkeypatch.setattr("bemine.pa.collect_fleet_status", lambda *a, **k: ([], []))
+
+    text = slash_command_text(settings, "pa", {})
+
+    assert "PA plan:" in text
+
+
 def test_slash_dispatch_reports_runtime(tmp_path, monkeypatch):
     config = tmp_path / "bemine.toml"
     config.write_text(

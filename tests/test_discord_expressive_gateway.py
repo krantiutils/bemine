@@ -128,6 +128,7 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("health?") == "health"
     assert gw._direct_observability_command("mayor dispatch status") == "dispatch.status"
     assert gw._direct_observability_command("what model are we using?") == "dispatch.status"
+    assert gw._direct_observability_command("what should I focus on today?".lower()) == "pa.plan"
     assert gw._direct_observability_command("goals") == "goals.list"
     assert gw._direct_observability_command('goal rai: "train"') == ""
 
