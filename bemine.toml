@@ -138,8 +138,8 @@ model = "kimi-k2.6"
 base_url = "https://api.kimi.com/coding"
 api_mode = "anthropic_messages"
 provider = "kimi-coding"
-bin = "/home/cdjk/.local/bin/kimi"   # only used by the legacy kimi-CLI path
-backend = "cli"                       # legacy CLI knob; live path ignores it
+backend = "native"                    # live Discord path: Bemine native tool loop
+bin = "/home/cdjk/.local/bin/kimi"    # only used when explicitly switching to CLI fallback
 
 [codex]
 # Codex runs via its app-server using your ChatGPT (Codex) plan — no API key.

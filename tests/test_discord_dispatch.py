@@ -817,6 +817,45 @@ def test_dispatch_status_makes_runtime_and_model_explicit(
     assert "- backend: exec" in text
 
 
+def test_dispatch_status_reports_kimi_native_backend(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "bemine.toml"
+    config.write_text(
+        """
+[dispatch]
+runtime = "kimi"
+
+[kimi]
+provider = "kimi-coding"
+model = "kimi-k2.6"
+base_url = "https://api.kimi.com/coding"
+api_mode = "anthropic_messages"
+backend = "native"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        codex_home=tmp_path / ".codex",
+        claude_home=tmp_path / ".claude",
+        kimi_home=tmp_path / ".kimi",
+        hermes_home=tmp_path / ".hermes",
+        device_id="testbox",
+    )
+
+    payload = dispatch_status_payload(settings)
+    text = render_dispatch_status(payload)
+
+    assert payload["runtime"] == "kimi"
+    assert payload["backend"] == "native"
+    assert payload["tool_calls"] == "available through Bemine native tools"
+    assert "- backend: native" in text
+
+
 def test_dispatch_status_reports_codex_app_server_backend(
     tmp_path: Path,
     monkeypatch,
