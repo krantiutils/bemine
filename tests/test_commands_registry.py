@@ -86,6 +86,7 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "recovery.poll_interval_secs=300" in out.text
     assert "discord routes:" in out.text
     assert "inspect ops:" in out.text
+    assert "continuity:" in out.text
     assert "focus today:" in out.text
     assert "dream: `dream run`" in out.text
     assert "watchers: active=0" in out.text
