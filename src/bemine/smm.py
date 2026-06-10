@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .backlog import list_backlog_items
-from .config import BemineSettings
+from .config import BemineSettings, config_int, config_list, config_string
 from .db import BemineDB
 from .index.status import _redact
 from .index.vault import ObsidianVault
@@ -16,8 +16,31 @@ from .util import compact_text, safe_filename
 
 
 DEFAULT_SMM_LIMIT = 3
+DEFAULT_TARGET_CHANNELS = ["X", "LinkedIn"]
 EXPECTED_ASSETS = ("logo.png", "wordmark.svg", "wordmark-dev.svg")
 PROJECT_RE = re.compile(r"\b([A-Za-z0-9][A-Za-z0-9_.-]{2,})\b")
+DEFAULT_REJECT_TERMS = [
+    "already completed",
+    "authorize termination",
+    "aws sso",
+    "blocked",
+    "destructive",
+    "dispatch failed",
+    "fallback",
+    "failed",
+    "irreversible",
+    "let me summarize",
+    "not done",
+    "now i have a complete picture",
+    "password",
+    "private",
+    "previous turn",
+    "should i",
+    "sshpass",
+    "stale",
+    "token",
+    "want me",
+]
 
 
 @dataclass(frozen=True)
@@ -94,17 +117,30 @@ def draft_smm_posts(
     db = db or BemineDB(settings.db_path)
     project_root = (project_root or Path.cwd()).expanduser().resolve()
     generated_at = generated_at or datetime.now(timezone.utc)
+    limit = _draft_limit(limit)
+    target_channels = smm_target_channels()
+    style_path = smm_style_path(project_root)
     assets = collect_ampixa_assets(project_root)
-    signals = _collect_smm_signals(settings, topic=topic, limit=max(limit * 4, 8))
+    signals = _collect_smm_signals(settings, topic=topic, limit=max(limit * 6, 12))
     drafts: list[SMMDraft] = []
     seen: set[str] = set()
     for source, signal in signals:
-        normalized = _normalize_signal(signal)
+        clean_signal = _clean_public_signal(signal)
+        if not _public_signal_usable(clean_signal):
+            continue
+        normalized = _normalize_signal(clean_signal)
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
-        drafts.append(_draft_from_signal(source, signal, project=project))
-        if len(drafts) >= max(1, limit):
+        drafts.append(
+            _draft_from_signal(
+                source,
+                clean_signal,
+                project=project,
+                target_channels=target_channels,
+            )
+        )
+        if len(drafts) >= limit:
             break
 
     path = None
@@ -115,8 +151,8 @@ def draft_smm_posts(
             generated_at=generated_at.isoformat(),
             drafts=drafts,
             assets=assets,
-            style_path=project_root / "subagents" / "style.md",
-            style_exists=(project_root / "subagents" / "style.md").exists(),
+            style_path=style_path,
+            style_exists=style_path.exists(),
             path=path,
         )
         path.write_text(render_smm_drafts_markdown(result), encoding="utf-8")
@@ -141,15 +177,15 @@ def draft_smm_posts(
         generated_at=generated_at.isoformat(),
         drafts=drafts,
         assets=assets,
-        style_path=project_root / "subagents" / "style.md",
-        style_exists=(project_root / "subagents" / "style.md").exists(),
+        style_path=style_path,
+        style_exists=style_path.exists(),
         path=path,
     )
 
 
 def collect_ampixa_assets(project_root: Path | None = None) -> list[SMMAsset]:
     root = (project_root or Path.cwd()).expanduser().resolve()
-    asset_dir = root / "assets" / "ampixa"
+    asset_dir = smm_asset_dir(root)
     assets: list[SMMAsset] = []
     for name in EXPECTED_ASSETS:
         path = asset_dir / name
@@ -248,7 +284,31 @@ def smm_draft_path(
     generated_at = generated_at or datetime.now(timezone.utc)
     ObsidianVault(settings.vault_dir)
     stem = safe_filename(f"{generated_at.date().isoformat()}-smm-drafts", "smm-drafts")
-    return settings.vault_dir / "SMM" / "Drafts" / f"{stem}.md"
+    configured = config_string("smm", "output_dir", "").strip()
+    output_dir = Path(configured).expanduser() if configured else settings.vault_dir / "SMM" / "Drafts"
+    return output_dir / f"{stem}.md"
+
+
+def smm_target_channels() -> list[str]:
+    return config_list("smm", "target_channels", DEFAULT_TARGET_CHANNELS) or list(DEFAULT_TARGET_CHANNELS)
+
+
+def smm_asset_dir(project_root: Path | None = None) -> Path:
+    root = (project_root or Path.cwd()).expanduser().resolve()
+    configured = config_string("smm", "asset_dir", "").strip()
+    return Path(configured).expanduser().resolve() if configured else root / "assets" / "ampixa"
+
+
+def smm_style_path(project_root: Path | None = None) -> Path:
+    root = (project_root or Path.cwd()).expanduser().resolve()
+    configured = config_string("smm", "style_path", "").strip()
+    return Path(configured).expanduser().resolve() if configured else root / "subagents" / "style.md"
+
+
+def _draft_limit(limit: int) -> int:
+    configured = config_int("smm", "draft_limit", DEFAULT_SMM_LIMIT)
+    requested = limit if limit and limit > 0 else configured
+    return max(1, min(10, requested))
 
 
 def _collect_smm_signals(
@@ -259,7 +319,7 @@ def _collect_smm_signals(
 ) -> list[tuple[str, str]]:
     signals: list[tuple[str, str]] = []
     if topic.strip():
-        signals.append(("topic", _redact(topic.strip())))
+        return [("topic", _redact(topic.strip()))]
     for line in reversed(list_backlog_items(settings, owner="SMM", limit=limit)):
         signals.append(("backlog:SMM", _strip_task_line(line)))
     for line in _latest_brief_smm_lines(settings, limit=limit):
@@ -299,7 +359,13 @@ def _strip_task_line(line: str) -> str:
     return " ".join(text.split())
 
 
-def _draft_from_signal(source: str, signal: str, *, project: str) -> SMMDraft:
+def _draft_from_signal(
+    source: str,
+    signal: str,
+    *,
+    project: str,
+    target_channels: list[str],
+) -> SMMDraft:
     clean = compact_text(_strip_task_line(signal), limit=260)
     inferred_project = project.strip() or _project_from_signal(clean)
     subject = inferred_project or "Ampixa"
@@ -321,7 +387,7 @@ def _draft_from_signal(source: str, signal: str, *, project: str) -> SMMDraft:
         body=body,
         proof=proof,
         asset_prompt=_asset_prompt(subject, clean),
-        target_channels=["X", "LinkedIn"],
+        target_channels=target_channels,
     )
 
 
@@ -370,6 +436,28 @@ def _project_from_signal(signal: str) -> str:
         if "-" in normalized or lowered in {"rai", "phantom", "bemine", "ampixa"}:
             return normalized
     return ""
+
+
+def _clean_public_signal(signal: str) -> str:
+    text = _strip_task_line(signal)
+    for prefix in (
+        "Turn this progress into a social post idea:",
+        "Draft a project update from",
+    ):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+    text = re.sub(r"^`([^`]+)`:\s*", r"\1: ", text)
+    text = re.sub(r"\s+\|\s+#\s+\|.*$", "", text)
+    text = re.sub(r"\s+##\s+", " ", text)
+    return compact_text(" ".join(text.split()), limit=260)
+
+
+def _public_signal_usable(signal: str) -> bool:
+    if not signal:
+        return False
+    haystack = signal.casefold()
+    reject_terms = config_list("smm", "reject_terms", DEFAULT_REJECT_TERMS)
+    return not any(term.casefold() in haystack for term in reject_terms)
 
 
 def _normalize_signal(signal: str) -> str:

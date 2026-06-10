@@ -239,6 +239,10 @@ recovery escalations, and open PA backlog items with evidence and next actions.
 Use `bemine smm draft` when Bemine should turn SMM backlog/brief evidence into
 copy-ready social draft packs. Drafts include hook, body, proof, target channels,
 and an Ampixa-style image prompt using `subagents/style.md` and `assets/ampixa/`.
+The `[smm]` config section controls the default draft limit, target channels,
+style path, asset directory, output directory, and public-safety reject terms.
+Passing a topic drafts that topic only; with no topic, Bemine sweeps SMM backlog
+and brief evidence.
 
 ### Dream memory
 

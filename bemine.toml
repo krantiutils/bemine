@@ -56,6 +56,37 @@ schedule = "45 8 * * *"
 status_limit = 12
 timeout_secs = 6
 
+[smm]
+# Social draft workflow knobs. The drafter is intentionally deterministic; it
+# turns SMM backlog/brief evidence into proof-backed copy and image prompts.
+draft_limit = 3
+target_channels = ["X", "LinkedIn"]
+style_path = "/home/cdjk/bm/subagents/style.md"
+asset_dir = "/home/cdjk/bm/assets/ampixa"
+output_dir = "~/Documents/Mayor/SMM/Drafts"
+reject_terms = [
+  "already completed",
+  "authorize termination",
+  "aws sso",
+  "blocked",
+  "destructive",
+  "dispatch failed",
+  "fallback",
+  "failed",
+  "irreversible",
+  "let me summarize",
+  "not done",
+  "now i have a complete picture",
+  "password",
+  "private",
+  "previous turn",
+  "should i",
+  "sshpass",
+  "stale",
+  "token",
+  "want me",
+]
+
 # ----------------------------------------------------------------------------
 # Which agent answers a Discord message.
 # ----------------------------------------------------------------------------

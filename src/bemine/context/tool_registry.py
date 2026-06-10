@@ -834,7 +834,11 @@ def _pa_plan(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]
 
 
 def _smm_drafts(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
-    limit = _int(args.get("limit"), default=3, minimum=1, maximum=10)
+    limit = (
+        _int(args.get("limit"), default=3, minimum=1, maximum=10)
+        if args.get("limit") is not None
+        else 0
+    )
     result = draft_smm_posts(
         context.settings,
         topic=str(args.get("topic") or "").strip(),
