@@ -61,6 +61,7 @@ preference (specific tool > shell):
 | `shell_run` | run any shell command (scope per `[policy].shell`) — your general hands |
 | `tmux_list` / `tmux_capture` / `tmux_send` | find, read, and drive live tmux agent sessions |
 | `watch_control` | start/stop/status a per-project WATCHER (drives a session toward a brief) |
+| `watchers_status` | list active project watchers across Bemine |
 | `dream_run` | record one self-improvement memory datapoint in the vault |
 | `goal_start` / `goal_status` | start or inspect managed goal workers plus watchers |
 | `workers_status` | list Bemine-managed workers and duplicate active heads |

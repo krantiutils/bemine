@@ -277,6 +277,24 @@ def default_tools() -> list[BemineTool]:
             handler=_workers_status,
         ),
         BemineTool(
+            name="watchers_status",
+            description=(
+                "List active project watchers across Bemine, including channel, interval, "
+                "awaiting-reply state, and redacted brief."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Filter by project, channel, status, or brief text.",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+            },
+            handler=_watchers_status,
+        ),
+        BemineTool(
             name="discord_threads",
             description=(
                 "List locally stored Discord channels/threads by recent activity. Use "
@@ -648,6 +666,15 @@ def _workers_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[st
     return {"ok": True, "workers": rows, "duplicates": duplicates}
 
 
+def _watchers_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    query = str(args.get("query") or "").strip()
+    limit = _int(args.get("limit"), default=50, minimum=1, maximum=100)
+    rows = [_watcher_row_dict(row) for row in context.db.list_active_project_watchers()]
+    if query:
+        rows = [row for row in rows if _route_matches(row, query)]
+    return {"ok": True, "watchers": rows[:limit]}
+
+
 def _discord_threads(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
     query = str(args.get("query") or "").strip()
     limit = _int(args.get("limit"), default=12, minimum=1, maximum=50)
@@ -940,6 +967,14 @@ def _worker_duplicate_groups(rows: list[Mapping[str, Any]]) -> list[dict[str, An
         for project_id, heads in sorted(grouped.items())
         if len(heads) > 1
     ]
+
+
+def _watcher_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    if "brief" in item:
+        item["brief"] = _redact(str(item["brief"]))
+    item["awaiting_reply"] = bool(item.get("awaiting_reply"))
+    return item
 
 
 def _load_env_files(*extra: Path) -> dict[str, str]:

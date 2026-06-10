@@ -70,6 +70,7 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `[jobs].session_fallback_channel`.
 - Goal-driven babysitting of a project session → `watch_control {"action":"start","brief":
   "<the user's full context verbatim>","interval_secs":600}`. Stop: `{"action":"stop"}`.
+  Inspect all active watchers with `watchers_status`.
 - Always-on auto-recovery (rate-limits resent with Up+Enter, usage limits held until
   their reset clock then nudged with `continue`, trivial confirms auto-yes'd, questions
   answered by an LLM tier) runs in the daemon — check what it did via

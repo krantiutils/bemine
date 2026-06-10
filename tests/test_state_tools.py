@@ -342,6 +342,33 @@ def test_workers_status_tool_lists_workers_and_duplicates(tmp_path, monkeypatch)
     assert calls["db"] is db
 
 
+def test_watchers_status_tool_lists_active_redacted_watchers(tmp_path):
+    settings, db, ctx = _ctx(tmp_path)
+    db.upsert_project_watcher(
+        project_id="rai",
+        channel_id="c-rai",
+        brief="train with TOKEN=abc123",
+        interval_secs=600,
+    )
+    db.upsert_project_watcher(
+        project_id="bm",
+        channel_id="c-bm",
+        brief="ship native tools",
+        interval_secs=300,
+    )
+
+    out = BemineToolRegistry().execute("watchers_status", {"query": "rai"}, ctx)
+
+    assert out["ok"] is True
+    assert len(out["watchers"]) == 1
+    watcher = out["watchers"][0]
+    assert watcher["project_id"] == "rai"
+    assert watcher["channel_id"] == "c-rai"
+    assert watcher["awaiting_reply"] is False
+    assert "abc123" not in watcher["brief"]
+    assert "TOKEN=<secret>" in watcher["brief"]
+
+
 def test_discord_history_tools_read_local_redacted_store(tmp_path):
     from bemine.discord.store import Store
 
@@ -458,6 +485,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "goal_start",
         "goal_status",
         "workers_status",
+        "watchers_status",
         "discord_threads",
         "discord_transcript",
         "channel_routes",
