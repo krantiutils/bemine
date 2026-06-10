@@ -1,6 +1,7 @@
 from pathlib import Path
 from bemine.config import BemineSettings
 from bemine.commands import registry, run_command
+from bemine.db import BemineDB
 
 
 def _settings(tmp_path):
@@ -65,6 +66,15 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
         (subagents / name).write_text(f"# {name}\n", encoding="utf-8")
     monkeypatch.setenv("BEMINE_CONFIG", str(config))
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    BemineDB(settings.db_path).upsert_job(
+        job_id="morning_plan",
+        name="Morning plan",
+        enabled=True,
+        trigger_type="cron",
+        schedule="30 8 * * *",
+        config_json='{"type":"morning_plan"}',
+        next_run_at="2026-06-11T08:30:00+05:45",
+    )
 
     out = run_command("help", settings, {})
 
@@ -77,10 +87,12 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "discord routes:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "project_root=/tmp/phantom" in out.text
-    assert "session_watcher (Session watcher): `*/2 * * * *`" in out.text
+    assert "Configured jobs:" in out.text
+    assert "morning_plan" in out.text
     assert out.data["goal"]["runtime"] == "shell"
     assert out.data["dispatch"]["runtime"] == "kimi"
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
+    assert any(job["job_id"] == "morning_plan" for job in out.data["jobs"])
 
 
 def test_run_command_discord_routes_smoke(tmp_path):
