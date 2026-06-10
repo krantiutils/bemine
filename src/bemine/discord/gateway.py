@@ -16,6 +16,7 @@ import discord
 from discord.ext import commands
 
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
+from bemine.backlog import add_backlog_item
 from bemine.commands import run_command
 from bemine.config import BemineSettings, config_int, config_string
 from bemine.security.credentials import CredentialInventory, PermissionGate
@@ -48,6 +49,13 @@ APPROVAL_CODE_RE = re.compile(
     re.IGNORECASE,
 )
 GOAL_PREFIX_RE = re.compile(r"^\s*(?:!?(?:mayor|bemine)\s+)?goal\s+", re.IGNORECASE)
+BACKLOG_RE = re.compile(
+    r"^\s*(?:!?(?:mayor|bemine)\s+)?(?:(?P<owner1>pa|smm)\s+"
+    r"(?P<kind1>idea|task|backlog)|(?:store|save|remember)\s+(?:this\s+)?"
+    r"(?P<kind2>idea|task|backlog)\s+for\s+(?P<owner2>pa|smm))\s*[:\-]\s*"
+    r"(?P<text>.+)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 # ---------------------------------------------------------------------------
 # Slash command bridge — deterministic ops, no LLM in the path.
@@ -447,6 +455,13 @@ class GoalCommand:
     brief: str
 
 
+@dataclass(frozen=True)
+class BacklogCommand:
+    owner: str
+    text: str
+    kind: str
+
+
 def parse_goal_command(text: str) -> GoalCommand | None:
     match = GOAL_PREFIX_RE.match(text or "")
     if not match:
@@ -470,6 +485,47 @@ def parse_goal_command(text: str) -> GoalCommand | None:
     if not project or not brief:
         return None
     return GoalCommand(project=project, brief=brief)
+
+
+def parse_backlog_command(text: str) -> BacklogCommand | None:
+    match = BACKLOG_RE.match(text or "")
+    if not match:
+        return None
+    owner = (match.group("owner1") or match.group("owner2") or "").upper()
+    kind = (match.group("kind1") or match.group("kind2") or "idea").lower()
+    item_text = _strip_wrapping_quotes((match.group("text") or "").strip())
+    if not owner or not item_text:
+        return None
+    return BacklogCommand(owner=owner, kind=kind, text=item_text)
+
+
+def maybe_add_backlog_from_discord_message(
+    settings: BemineSettings,
+    db,
+    message: discord.Message,
+    text: str,
+):
+    command = parse_backlog_command(text)
+    if command is None:
+        return None
+    route = infer_project_route(
+        channel_name=_message_channel_name(message),
+        category_name=_message_category_name(message),
+        content=str(message.content or ""),
+        state_dir=settings.state_dir,
+        repo_dir=Path.cwd(),
+        mentioned_channels=_mentioned_channels(message),
+        allow_default=False,
+    )
+    project_id = route.project.project_id if route and route.project.project_id else ""
+    return add_backlog_item(
+        settings,
+        owner=command.owner,
+        text=f"{command.kind}: {command.text}",
+        source=f"discord:{getattr(message.author, 'id', '')}",
+        project=project_id,
+        db=db,
+    )
 
 
 def maybe_start_goal_from_discord_message(
@@ -735,6 +791,22 @@ class MayorDiscordGateway:
             from bemine.db import BemineDB as _BemineDB
             _wdb = _BemineDB(self.settings.db_path)
             conversation_context = self._conversation_context(message)
+            try:
+                backlog_entry = await asyncio.to_thread(
+                    maybe_add_backlog_from_discord_message,
+                    BemineSettings.load(),
+                    _wdb,
+                    message,
+                    normalized,
+                )
+            except Exception as exc:
+                await responder.send(f"Backlog capture failed: {exc}")
+                return
+            if backlog_entry is not None:
+                await responder.send(
+                    f"Added `{backlog_entry.owner}` backlog item: `{backlog_entry.path}`"
+                )
+                return
             try:
                 goal_result = await asyncio.to_thread(
                     maybe_start_goal_from_discord_message,

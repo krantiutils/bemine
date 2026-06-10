@@ -38,6 +38,11 @@ harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/AGENTS.md", "/home/cdjk
 files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
 context_limit = 12000
 
+[backlog]
+# Durable idea/task inboxes for focused subagents.
+owners = ["PA", "SMM"]
+default_owner = "SMM"
+
 # ----------------------------------------------------------------------------
 # Which agent answers a Discord message.
 # ----------------------------------------------------------------------------

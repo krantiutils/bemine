@@ -37,9 +37,26 @@ def test_jobs_list_tool_runs(tmp_path):
     assert "jobs" in out and isinstance(out["jobs"], list)
 
 
+def test_backlog_tools_write_and_list_vault_items(tmp_path):
+    settings, db, ctx = _ctx(tmp_path)
+    reg = BemineToolRegistry()
+
+    added = reg.execute(
+        "backlog_add",
+        {"owner": "SMM", "text": "post the Rai checkpoint chart"},
+        ctx,
+    )
+    assert added["ok"] is True
+    assert Path(added["entry"]["path"]).exists()
+
+    listed = reg.execute("backlog_list", {"owner": "SMM"}, ctx)
+    assert listed["owner"] == "SMM"
+    assert "post the Rai checkpoint chart" in listed["items"][0]
+
+
 def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
     names = {t["name"] for t in convert_tools_to_anthropic(schemas)}
-    assert {"bemine_config", "jobs_list", "usage_report"} <= names
+    assert {"bemine_config", "jobs_list", "usage_report", "backlog_add"} <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))

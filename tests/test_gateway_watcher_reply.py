@@ -1,8 +1,10 @@
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.discord.gateway import (
+    maybe_add_backlog_from_discord_message,
     maybe_consume_watcher_reply,
     maybe_start_goal_from_discord_message,
+    parse_backlog_command,
     parse_goal_command,
 )
 
@@ -17,6 +19,7 @@ class FakeMessage:
     channel = FakeChannel()
     channel_mentions = []
     content = 'goal rai-speech-toolkit: "train the first checkpoint"'
+    author = type("Author", (), {"id": "user-1"})()
 
 
 def test_consume_when_awaiting(tmp_path, monkeypatch):
@@ -74,6 +77,42 @@ def test_parse_goal_command_accepts_project_colon_and_quotes():
     assert parsed is not None
     assert parsed.project == "rai-speech-toolkit"
     assert parsed.brief == "train the first Rai TTS checkpoint"
+
+
+def test_parse_backlog_command_accepts_smm_idea():
+    parsed = parse_backlog_command("SMM idea: post the Rai checkpoint chart")
+
+    assert parsed is not None
+    assert parsed.owner == "SMM"
+    assert parsed.kind == "idea"
+    assert parsed.text == "post the Rai checkpoint chart"
+
+
+def test_discord_backlog_command_writes_item(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    db = BemineDB(settings.db_path)
+    calls = {}
+
+    def fake_add_backlog_item(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr("bemine.discord.gateway.add_backlog_item", fake_add_backlog_item)
+
+    result = maybe_add_backlog_from_discord_message(
+        settings,
+        db,
+        FakeMessage(),  # type: ignore[arg-type]
+        "store idea for PA: review stale asks before noon",
+    )
+
+    assert result == {"ok": True}
+    assert calls["settings"] == settings
+    assert calls["db"] == db
+    assert calls["owner"] == "PA"
+    assert calls["text"] == "idea: review stale asks before noon"
+    assert calls["source"] == "discord:user-1"
 
 
 def test_discord_goal_command_uses_goal_service_and_channel_context(

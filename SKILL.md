@@ -78,6 +78,9 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - Subagent profiles: `src/bemine/context/subagents.py` loads configured Markdown
   profiles such as `subagents/PA.md` and `subagents/SMM.md`; inspect them with
   `bemine subagents list`.
+- PA/SMM backlog: `src/bemine/backlog.py` writes durable Markdown entries under
+  the Obsidian vault `Backlog/`; use `bemine backlog add/list` or explicit
+  Discord phrases like `SMM idea: ...`.
 - Self-deploy: `src/bemine/deploy/` (heartbeat, state, pipeline). Triggered via the
   `deploy_control` channel tool or `bemine deploy`; executed by the daemon, test-gated,
   with heartbeat health checks and auto-rollback (daemon boot-guard self-heals crash-loops).

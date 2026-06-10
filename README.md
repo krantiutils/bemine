@@ -162,6 +162,19 @@ line cuts or reboot: if a `bemine goal` worker was recorded as `running` but its
 tmux session disappeared, the daemon starts it again from the recorded cwd and
 command. This deliberately does not restart adopted/manual sessions.
 
+### PA/SMM backlog
+
+Use `bemine backlog` for durable idea/task capture:
+
+```bash
+uv run bemine backlog add "post the Rai checkpoint chart" --owner SMM
+uv run bemine backlog list --owner PA
+```
+
+Entries are Markdown in the Obsidian vault under `Backlog/`. Discord handles
+explicit phrases like `SMM idea: ...` and `store idea for PA: ...` without
+starting a full agent run.
+
 ### Watcher mode
 
 Enable a watcher from a project's Discord channel: "watch this, goal: <your full

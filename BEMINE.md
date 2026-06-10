@@ -31,6 +31,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "what did it say / is it stuck" → `tmux_capture` (remote devices reachable; recovery and
   watcher already poll every ~30s, so don't build ad-hoc loops).
 - "add X to shopping/checklist" → `checklist.add` route (the gateway's local tool router).
+- "store SMM/PA idea X" → `uv run bemine backlog add "<idea>" --owner SMM|PA`
+  (Discord also accepts `SMM idea: ...` / `store idea for PA: ...`).
 - "create a channel / post to a channel" → Discord REST via `shell_run` with
   `$MAYOR_DISCORD_BOT_TOKEN`; find the guild via `GET /users/@me/guilds`.
 - "remind me / schedule X" → `uv run bemine jobs add-reminder --help`.
@@ -61,6 +63,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 
 - Durable facts/decisions → Obsidian vault (`~/Documents/Mayor`): project pages auto-refresh
   daily; decisions in `Decisions/`; checklists in `Checklists/`.
+- PA/SMM ideas and tasks → `uv run bemine backlog add ...`; files live under
+  `Backlog/PA.md` and `Backlog/SMM.md`.
 - End substantial work with `uv run bemine handoff "<what changed>" --next "<next>"
   --test "uv run pytest -q"` — this also writes the `Daily/` note.
 - Operational history → `audit_list` / `uv run bemine audit list` (categories: deploy,

@@ -25,6 +25,7 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "permissions   explicit approval path" in text
     assert "workers       safe managed live sessions over tmux" in text
     assert "goal          start a managed worker and watcher" in text
+    assert "backlog       durable PA/SMM idea" in text
 
 
 def test_prime_help_explains_startup_packet() -> None:
@@ -70,3 +71,12 @@ def test_goal_help_explains_worker_plus_watcher_flow() -> None:
     assert "registers a watcher" in flat
     assert "--target-device" in text
     assert "uv run bemine goal rai-speech-toolkit" in text
+
+
+def test_backlog_help_explains_vault_storage() -> None:
+    text = _help("backlog")
+    flat = " ".join(text.split())
+
+    assert "Capture or list durable PA/SMM backlog items." in text
+    assert "Obsidian vault under Backlog/<owner>.md" in flat
+    assert "uv run bemine backlog add" in text

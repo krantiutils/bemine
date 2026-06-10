@@ -9,6 +9,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from .capabilities import build_capability_manifest, render_capability_manifest
+from .backlog import add_backlog_item, default_backlog_owner, list_backlog_items, render_backlog_items
 from .config import BemineSettings, render_toml_config
 from .config import config_path as bemine_config_path
 from .config import config_string, load_bemine_config
@@ -69,6 +70,7 @@ Core concepts:
   rundown       project summaries from SQLite/Obsidian
   capabilities  safe credential/capability manifest for workers
   subagents     configured PA/SMM/profile Markdown injected into workers
+  backlog       durable PA/SMM idea and task backlog in the vault
   permissions   explicit approval path for gated credentials
   workers       safe managed live sessions over tmux
   goal          start a managed worker and watcher from one goal brief
@@ -147,6 +149,19 @@ Examples:
   uv run bemine subagents list
   uv run bemine subagents show SMM
   uv run bemine subagents list --json
+"""
+
+
+BACKLOG_HELP = """\
+Capture or list durable PA/SMM backlog items.
+
+Backlog entries are Markdown in the Obsidian vault under Backlog/<owner>.md and
+are audit logged. Owners are configured in [backlog].owners.
+
+Examples:
+  uv run bemine backlog add "post idea: Rai training checkpoint chart" --owner SMM
+  uv run bemine backlog add "follow up on stuck Claude asks" --owner PA --project bm
+  uv run bemine backlog list --owner SMM
 """
 
 
@@ -530,6 +545,33 @@ def build_parser() -> argparse.ArgumentParser:
     subagents_show.add_argument(
         "--json", action="store_true", help="Emit profile as JSON."
     )
+
+    backlog = sub.add_parser(
+        "backlog",
+        help="Capture/list PA or SMM backlog items.",
+        description="Capture or list durable PA/SMM backlog items.",
+        epilog=dedent(BACKLOG_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    backlog_sub = backlog.add_subparsers(dest="backlog_command", required=True)
+    backlog_add = backlog_sub.add_parser("add", help="Append a backlog item.")
+    backlog_add.add_argument("text", help="Idea/task text to capture.")
+    backlog_add.add_argument(
+        "--owner",
+        default="",
+        help="Backlog owner, e.g. PA or SMM. Defaults to [backlog].default_owner.",
+    )
+    backlog_add.add_argument("--project", default="", help="Related project id/name.")
+    backlog_add.add_argument("--source", default="cli", help="Source label for audit.")
+    backlog_add.add_argument("--json", action="store_true", help="Emit item as JSON.")
+    backlog_list = backlog_sub.add_parser("list", help="List open backlog items.")
+    backlog_list.add_argument(
+        "--owner",
+        default="",
+        help="Backlog owner, e.g. PA or SMM. Defaults to [backlog].default_owner.",
+    )
+    backlog_list.add_argument("--limit", type=int, default=20, help="Maximum items.")
+    backlog_list.add_argument("--json", action="store_true", help="Emit items as JSON.")
 
     context = sub.add_parser(
         "context",
@@ -1410,6 +1452,36 @@ def main(argv: list[str] | None = None) -> None:
                 print(json.dumps(profile.to_dict(), indent=2, sort_keys=True))
             else:
                 print(profile.text.rstrip() + "\n", end="")
+    elif args.command == "backlog":
+        owner = args.owner or default_backlog_owner()
+        try:
+            if args.backlog_command == "add":
+                entry = add_backlog_item(
+                    settings,
+                    owner=owner,
+                    text=args.text,
+                    source=args.source,
+                    project=args.project,
+                    db=kernel.db,
+                )
+                if args.json:
+                    print(json.dumps(entry.to_dict(), indent=2, sort_keys=True))
+                else:
+                    print(f"Backlog item added: {entry.path}")
+            elif args.backlog_command == "list":
+                items = list_backlog_items(settings, owner=owner, limit=args.limit)
+                if args.json:
+                    print(
+                        json.dumps(
+                            {"owner": owner.upper(), "items": items},
+                            indent=2,
+                            sort_keys=True,
+                        )
+                    )
+                else:
+                    print(render_backlog_items(owner, items), end="")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     elif args.command == "usage":
         rollup = kernel.db.usage_rollup(provider=getattr(args, "provider", None) or None)
         if getattr(args, "json", False):
