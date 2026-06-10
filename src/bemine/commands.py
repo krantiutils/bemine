@@ -175,6 +175,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'}",
         f"- dispatch: runtime={dispatch.get('runtime', 'unknown')} backend={dispatch.get('backend', 'unknown')} model={dispatch.get('model', 'unknown')}",
         "- inspect ops: `health` / `systemd status` / `jobs list` / `watch list`",
+        "- goal sessions: `goal <project> <brief>` / `goal --list` / `goal --status <query>`",
         f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'} (`continuity` / `uv run bemine continuity`)",
         "- focus today: `pa plan` / `what should I focus on today?`",
         "- dream: `dream run` / `uv run bemine dream run` to condense recent history",
