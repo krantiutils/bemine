@@ -68,6 +68,7 @@ preference (specific tool > shell):
 | `dream_run` | record one self-improvement memory datapoint in the vault |
 | `goal_start` / `goal_status` | start or inspect managed goal workers plus watchers |
 | `workers_status` | list Bemine-managed workers and duplicate active heads |
+| `discord_refresh_channels` | refresh live Discord channel/thread names into the local store |
 | `discord_threads` / `discord_transcript` | search local Discord channels/threads and read redacted transcripts |
 | `channel_routes` | inspect project-to-Discord route config, DB candidates, and watcher bindings |
 | `channel_sync_plan` / `channel_sync_apply` | dry-run or apply project Discord channel sync create/prune |

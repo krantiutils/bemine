@@ -34,7 +34,8 @@ Functional now:
   and apply confirmed project-channel sync with `channel_sync_apply`.
 - Attachments are saved and listed in the prompt. Codex project channels also pass image attachments with `--image`.
 - Native workers can inspect local Discord channel/thread history with `discord_threads`
-  and `discord_transcript`.
+  and `discord_transcript`, and refresh live channel metadata with
+  `discord_refresh_channels`.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
 - Native workers can inspect safe credential/tool capability state with
