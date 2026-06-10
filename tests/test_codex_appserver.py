@@ -340,6 +340,8 @@ def _make_fake_spawn(server_messages: list[dict]):
 
 
 def test_run_codex_turn_with_fake_subprocess():
+    from bemine.agent.codex_appserver import _SHARED
+    _SHARED.kill()
     server_msgs = [
         {"id": 1, "result": {"serverInfo": {"name": "codex"}}},
         {"id": 2, "result": {"thread": {"id": "thread-1"}}},
@@ -354,12 +356,16 @@ def test_run_codex_turn_with_fake_subprocess():
         cwd="/tmp",
         sandbox="read-only",
         _spawn=_make_fake_spawn(server_msgs),
+        persistent=False,
     )
     assert result == "pong"
     assert thread_id == "thread-1"
+    _SHARED.kill()
 
 
 def test_run_codex_turn_error_raises():
+    from bemine.agent.codex_appserver import _SHARED
+    _SHARED.kill()
     server_msgs = [
         {"id": 1, "result": {}},
         {"id": 2, "result": {"thread": {"id": "t1"}}},
@@ -371,7 +377,9 @@ def test_run_codex_turn_error_raises():
             "hello",
             cwd="/tmp",
             _spawn=_make_fake_spawn(server_msgs),
+            persistent=False,
         )
+    _SHARED.kill()
 
 
 def test_mcp_startup_failure_notification_is_nonfatal():
@@ -482,3 +490,136 @@ def test_progress_callback_receives_item_events():
     assert session.run() == "done"
     assert any("pytest -q" in s for s in seen)
     assert any("x.py" in s for s in seen)
+
+
+# ---------------------------------------------------------------------------
+# Persistent shared server (Part C)
+# ---------------------------------------------------------------------------
+
+class _StdinRecorder:
+    """Write-recorder for FakeProc.stdin — supports getvalue() after close."""
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+        self._closed = False
+
+    def write(self, data: str) -> None:
+        if not self._closed:
+            self._parts.append(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self._closed = True
+
+    def getvalue(self) -> str:
+        return "".join(self._parts)
+
+
+class _FakeProcPersistent:
+    """Popen-like for persistent-server tests.
+
+    stdout is a _FakeStream over a list of messages; stdin is a recorder;
+    poll() returns None unless terminate() has been called.
+    """
+
+    def __init__(self, lines: list[dict]) -> None:
+        self.stdout = _FakeStream(lines)
+        self.stderr = _FakeStream([])
+        self.stdin = _StdinRecorder()
+        self._dead = False
+
+    def poll(self) -> "int | None":
+        return 0 if self._dead else None
+
+    def terminate(self) -> None:
+        self._dead = True
+
+    def wait(self, timeout=None) -> int:
+        return 0
+
+
+def test_persistent_server_reused_and_initialized_once():
+    from bemine.agent.codex_appserver import _SHARED, run_codex_turn
+    _SHARED.kill()
+    turn1 = [
+        {"id": 1, "result": {}},                                  # initialize
+        {"id": 2, "result": {"thread": {"id": "t1"}}},            # thread/start
+        {"id": 3, "result": {}},                                  # turn/start ack
+        {"method": "item/agentMessage/delta", "params": {"delta": "one"}},
+        {"method": "turn/completed", "params": {}},
+        # turn 2 messages on the SAME stream (no initialize response — none expected)
+        {"id": 4, "result": {"thread": {"id": "t1"}}},            # thread/resume
+        {"id": 5, "result": {}},                                  # turn/start ack
+        {"method": "item/agentMessage/delta", "params": {"delta": "two"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    spawned = []
+
+    def fake_spawn(codex_bin):
+        proc = _FakeProcPersistent(turn1)
+        spawned.append(proc)
+        return proc
+
+    text1, tid1 = run_codex_turn("a", cwd="/tmp", codex_bin="codex", timeout=5.0,
+                                 _spawn=fake_spawn)
+    text2, tid2 = run_codex_turn("b", cwd="/tmp", codex_bin="codex", timeout=5.0,
+                                 _spawn=fake_spawn, resume_thread_id=tid1)
+    assert (text1, text2) == ("one", "two")
+    assert tid1 == tid2 == "t1"
+    assert len(spawned) == 1                      # ONE process for both turns
+    sent = spawned[0].stdin.getvalue()
+    assert sent.count('"initialize"') == 1        # initialized once
+    _SHARED.kill()
+
+
+def test_persistent_server_respawns_when_dead():
+    from bemine.agent.codex_appserver import _SHARED, run_codex_turn
+    _SHARED.kill()
+    base = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "t"}}},
+        {"id": 3, "result": {}},
+        {"method": "item/agentMessage/delta", "params": {"delta": "ok"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    spawned = []
+
+    def fake_spawn(codex_bin):
+        proc = _FakeProcPersistent(list(base))
+        spawned.append(proc)
+        return proc
+
+    run_codex_turn("a", cwd="/tmp", codex_bin="codex", timeout=5.0, _spawn=fake_spawn)
+    _SHARED.proc.terminate()                       # simulate server death
+    text, _ = run_codex_turn("b", cwd="/tmp", codex_bin="codex", timeout=5.0,
+                             _spawn=fake_spawn)
+    assert text == "ok"
+    assert len(spawned) == 2                       # respawned
+    _SHARED.kill()
+
+
+def test_non_persistent_path_spawns_and_terminates():
+    from bemine.agent.codex_appserver import _SHARED, run_codex_turn
+    _SHARED.kill()
+    msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "t"}}},
+        {"id": 3, "result": {}},
+        {"method": "item/agentMessage/delta", "params": {"delta": "solo"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    procs = []
+
+    def fake_spawn(codex_bin):
+        p = _FakeProcPersistent(msgs)
+        procs.append(p)
+        return p
+
+    text, _ = run_codex_turn("a", cwd="/tmp", codex_bin="codex", timeout=5.0,
+                             _spawn=fake_spawn, persistent=False)
+    assert text == "solo"
+    assert procs[0]._dead is True                  # terminated after the turn
+    assert not _SHARED.alive()
+    _SHARED.kill()
