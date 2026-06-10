@@ -505,6 +505,67 @@ def test_discord_history_tools_read_local_redacted_store(tmp_path):
     assert "letmein" not in str(transcript["messages"])
 
 
+def test_discord_refresh_channels_tool_updates_local_metadata(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class FakeDiscordSettings:
+        token = "bot-token"
+
+        @classmethod
+        def load(cls):
+            return cls()
+
+    def fake_default_guild_id(token):
+        calls["default_token"] = token
+        return "guild-default"
+
+    def fake_refresh_channel_metadata(store, *, token, guild_id, channel_ids=None):
+        calls["store_path"] = store.path
+        calls["token"] = token
+        calls["guild_id"] = guild_id
+        calls["channel_ids"] = channel_ids
+        return [
+            {
+                "channel_id": "c1",
+                "guild_id": guild_id,
+                "channel_name": "voidash",
+                "category_name": "Projects",
+                "channel_type": 0,
+            },
+            {
+                "channel_id": "thread-1",
+                "guild_id": guild_id,
+                "channel_name": "launch-plan",
+                "category_name": "voidash",
+                "channel_type": 11,
+            },
+        ]
+
+    monkeypatch.setattr("bemine.discord.config.Settings", FakeDiscordSettings)
+    monkeypatch.setattr("bemine.discord.channel_index.default_guild_id", fake_default_guild_id)
+    monkeypatch.setattr(
+        "bemine.discord.channel_index.refresh_channel_metadata",
+        fake_refresh_channel_metadata,
+    )
+
+    out = BemineToolRegistry().execute(
+        "discord_refresh_channels",
+        {"channel_ids": "thread-1,thread-2", "limit": 1},
+        ctx,
+    )
+
+    assert out["ok"] is True
+    assert out["guild_id"] == "guild-default"
+    assert out["refreshed_count"] == 2
+    assert len(out["channels"]) == 1
+    assert calls["default_token"] == "bot-token"
+    assert calls["store_path"] == settings.db_path
+    assert calls["token"] == "bot-token"
+    assert calls["guild_id"] == "guild-default"
+    assert calls["channel_ids"] == ["thread-1", "thread-2"]
+
+
 def test_channel_routes_tool_reports_config_db_and_bindings(tmp_path):
     import json
 
@@ -700,6 +761,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "watchers_status",
         "discord_threads",
         "discord_transcript",
+        "discord_refresh_channels",
         "channel_routes",
         "channel_sync_plan",
         "channel_sync_apply",

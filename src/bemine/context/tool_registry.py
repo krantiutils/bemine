@@ -400,6 +400,31 @@ def default_tools() -> list[BemineTool]:
             handler=_discord_transcript,
         ),
         BemineTool(
+            name="discord_refresh_channels",
+            description=(
+                "Refresh live Discord channel/thread metadata into Bemine's local "
+                "Discord store, then return a bounded channel list. Use this before "
+                "discord_threads when local channel names/categories may be stale."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "guild_id": {
+                        "type": "string",
+                        "description": "Discord guild/server id. Defaults to config/env/default bot guild.",
+                    },
+                    "channel_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Extra channel/thread ids to fetch if missing from guild channel list.",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+            },
+            handler=_discord_refresh_channels,
+            policy="project-write",
+        ),
+        BemineTool(
             name="channel_routes",
             description=(
                 "Inspect Bemine's project-to-Discord routing map. Reports configured "
@@ -848,6 +873,54 @@ def _discord_transcript(args: Mapping[str, Any], context: ToolContext) -> Mappin
         limit=limit,
     )
     return {"ok": True, "messages": redact_message_rows(rows)}
+
+
+def _discord_refresh_channels(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    from ..discord.channel_index import (
+        DiscordChannelIndexError,
+        default_guild_id,
+        refresh_channel_metadata,
+    )
+    from ..discord.config import Settings as DiscordSettings
+
+    discord_settings = DiscordSettings.load()
+    if not discord_settings.token:
+        raise ToolExecutionError(
+            "Discord token not configured. Set MAYOR_DISCORD_BOT_TOKEN or discord.token_env."
+        )
+    guild_id = (
+        str(args.get("guild_id") or "").strip()
+        or os.environ.get("MAYOR_DISCORD_GUILD_ID", "").strip()
+        or os.environ.get("DISCORD_GUILD_ID", "").strip()
+        or config_string("discord", "guild_id", "")
+        or default_guild_id(discord_settings.token)
+    )
+    if not guild_id:
+        raise ToolExecutionError("Discord guild id could not be resolved.")
+    raw_channel_ids = args.get("channel_ids") or []
+    if isinstance(raw_channel_ids, str):
+        raw_channel_ids = raw_channel_ids.split(",")
+    channel_ids = [
+        str(item).strip()
+        for item in raw_channel_ids
+        if str(item).strip()
+    ]
+    limit = _int(args.get("limit"), default=100, minimum=1, maximum=200)
+    try:
+        rows = refresh_channel_metadata(
+            DiscordStore(context.settings.db_path),
+            token=discord_settings.token,
+            guild_id=guild_id,
+            channel_ids=channel_ids,
+        )
+    except DiscordChannelIndexError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    return {
+        "ok": True,
+        "guild_id": guild_id,
+        "refreshed_count": len(rows),
+        "channels": rows[:limit],
+    }
 
 
 def _channel_routes(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
