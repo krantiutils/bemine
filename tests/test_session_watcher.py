@@ -169,6 +169,24 @@ def test_undelivered_event_is_rearmed_for_retry(tmp_path):
     assert saved["notified_done"] is False
 
 
+def test_undelivered_started_event_is_rearmed_for_retry(tmp_path):
+    import json
+    from bemine.jobs.session_watcher import _rearm_undelivered, WatcherState
+    state_path = tmp_path / "state.json"
+    key = json.dumps({"d": "mbp", "r": "claude", "s": "sX"}, sort_keys=True)
+    WatcherState(
+        known_sessions={key: {"notified_started": True, "asks_user": False}},
+        last_check=0,
+    ).save(state_path)
+
+    _rearm_undelivered(state_path, [{
+        "type": "started", "device_id": "mbp", "runtime": "claude", "session_id": "sX",
+    }])
+
+    saved = json.loads(state_path.read_text())["known_sessions"][key]
+    assert saved["notified_started"] is False
+
+
 def test_started_event_on_first_sighting_of_active_session(tmp_path, monkeypatch):
     # A NEW actively-working session must emit a "started" event on first sighting, so its
     # project channel is created immediately (not only when it later stalls or finishes).
