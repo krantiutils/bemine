@@ -30,6 +30,14 @@ from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, 
 from .health import collect_health, render_health
 from .dreams import render_dream, run_dream
 from .briefs import render_brief, run_brief
+from .phantom import (
+    phantom_build,
+    phantom_install,
+    phantom_status,
+    render_phantom_build,
+    render_phantom_install,
+    render_phantom_status,
+)
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
@@ -78,6 +86,7 @@ Core concepts:
   health        deploy/services/jobs/watchers health packet
   rundown       project summaries from SQLite/Obsidian
   capabilities  safe credential/capability manifest for workers
+  phantom       inspect/build/install the Phantom Android accessibility app
   subagents     configured PA/SMM/profile Markdown injected into workers
   backlog       durable PA/SMM idea and task backlog in the vault
   dream         condense recent history into one vault data point
@@ -146,6 +155,23 @@ permissions and proxy paths.
 Examples:
   uv run bemine capabilities
   uv run bemine capabilities --json
+"""
+
+
+PHANTOM_HELP = """\
+Inspect and install the Phantom Android accessibility service app.
+
+Status checks the configured Phantom Android project, finds the debug APK, reads
+ADB authorization state, and verifies whether the package is already installed.
+Install refuses to run unless an authorized ADB device is attached. Android does
+not allow Bemine to silently enable the accessibility service; after install,
+enable "Phantom Service" in the phone's Accessibility settings.
+
+Examples:
+  uv run bemine phantom status
+  uv run bemine phantom build
+  uv run bemine phantom install
+  uv run bemine phantom install --dry-run --json
 """
 
 
@@ -576,6 +602,98 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit credential capability manifest as JSON.",
     )
+
+    phantom = sub.add_parser(
+        "phantom",
+        help="Inspect/build/install the Phantom Android accessibility app.",
+        description="Inspect/build/install the Phantom Android accessibility app.",
+        epilog=dedent(PHANTOM_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    phantom_sub = phantom.add_subparsers(dest="phantom_command", required=True)
+    phantom_status_cmd = phantom_sub.add_parser(
+        "status",
+        help="Show APK, ADB, install, and accessibility readiness.",
+        description="Show Phantom APK, ADB, install, and accessibility readiness.",
+        formatter_class=HELP_FORMATTER,
+    )
+    phantom_status_cmd.add_argument(
+        "--project-root",
+        default="",
+        help="Android service project root. Defaults to [phantom].project_root.",
+    )
+    phantom_status_cmd.add_argument(
+        "--serial",
+        default="",
+        help="ADB serial to inspect. Defaults to the first authorized device.",
+    )
+    phantom_status_cmd.add_argument(
+        "--java-home",
+        default="",
+        help="JAVA_HOME override for Gradle readiness checks.",
+    )
+    phantom_status_cmd.add_argument("--json", action="store_true", help="Emit JSON.")
+    phantom_build_cmd = phantom_sub.add_parser(
+        "build",
+        help="Build the Phantom debug APK with Gradle.",
+        description="Build the Phantom debug APK with Gradle.",
+        formatter_class=HELP_FORMATTER,
+    )
+    phantom_build_cmd.add_argument(
+        "--project-root",
+        default="",
+        help="Android service project root. Defaults to [phantom].project_root.",
+    )
+    phantom_build_cmd.add_argument(
+        "--java-home",
+        default="",
+        help="JAVA_HOME override. Defaults to [phantom].java_home or an installed JDK.",
+    )
+    phantom_build_cmd.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="Build timeout in seconds.",
+    )
+    phantom_build_cmd.add_argument("--json", action="store_true", help="Emit JSON.")
+    phantom_install_cmd = phantom_sub.add_parser(
+        "install",
+        help="Install the Phantom APK onto an authorized ADB phone.",
+        description="Install the Phantom APK onto an authorized ADB phone.",
+        formatter_class=HELP_FORMATTER,
+    )
+    phantom_install_cmd.add_argument(
+        "--project-root",
+        default="",
+        help="Android service project root. Defaults to [phantom].project_root.",
+    )
+    phantom_install_cmd.add_argument(
+        "--serial",
+        default="",
+        help="ADB serial to install to. Defaults to the first authorized device.",
+    )
+    phantom_install_cmd.add_argument(
+        "--build",
+        action="store_true",
+        help="Build the APK first if no APK is available.",
+    )
+    phantom_install_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Verify readiness and print the install command without running it.",
+    )
+    phantom_install_cmd.add_argument(
+        "--java-home",
+        default="",
+        help="JAVA_HOME override for optional build.",
+    )
+    phantom_install_cmd.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="Install/build timeout in seconds.",
+    )
+    phantom_install_cmd.add_argument("--json", action="store_true", help="Emit JSON.")
 
     subagents = sub.add_parser(
         "subagents",
@@ -1607,6 +1725,46 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(manifest, indent=2, sort_keys=True))
         else:
             print(render_capability_manifest(manifest), end="")
+    elif args.command == "phantom":
+        project_root = Path(args.project_root) if args.project_root else None
+        java_home = Path(args.java_home) if args.java_home else None
+        if args.phantom_command == "status":
+            result = phantom_status(
+                project_root=project_root,
+                serial=args.serial,
+                java_home=java_home,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(render_phantom_status(result), end="")
+        elif args.phantom_command == "build":
+            result = phantom_build(
+                project_root=project_root,
+                java_home=java_home,
+                timeout=args.timeout,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(render_phantom_build(result), end="")
+            if not result.get("ok"):
+                raise SystemExit(1)
+        elif args.phantom_command == "install":
+            result = phantom_install(
+                project_root=project_root,
+                serial=args.serial,
+                build=args.build,
+                dry_run=args.dry_run,
+                java_home=java_home,
+                timeout=args.timeout,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(render_phantom_install(result), end="")
+            if not result.get("ok"):
+                raise SystemExit(1)
     elif args.command == "subagents":
         context = load_subagent_context()
         if args.subagents_command == "list":

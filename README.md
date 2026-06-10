@@ -38,6 +38,9 @@ Functional now:
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
 - Native workers can inspect safe credential/tool capability state with
   `capabilities_status`, including Android/ADB readiness.
+- Native workers can inspect and install the Phantom Android accessibility app
+  with `phantom_status` and `phantom_install`; the CLI exposes the same flow as
+  `bemine phantom status/build/install`.
 - `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
 - `SOUL.md` and `SKILL.md` define Bemine's identity and harness workflow, and
   are injected into dispatched worker prompts.
@@ -185,7 +188,11 @@ command. This deliberately does not restart adopted/manual sessions.
 
 `bemine capabilities` includes a non-secret tools section for Android/ADB state,
 including attached device authorization and the detected Android SDK path. This
-is the first check before Phantom phone work.
+is the first check before Phantom phone work. `bemine phantom status` then checks
+the configured Phantom Android project, debug APK, ADB device, install state, and
+accessibility-service state. `bemine phantom install` installs the APK only when
+an authorized ADB device is attached; Android still requires enabling "Phantom
+Service" manually in Accessibility settings after install.
 
 ### PA/SMM backlog
 

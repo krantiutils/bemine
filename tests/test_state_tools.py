@@ -142,6 +142,69 @@ def test_capabilities_status_tool_scans_and_returns_manifest(tmp_path, monkeypat
     assert calls["rows"] == []
 
 
+def test_phantom_status_tool_uses_shared_workflow(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    def fake_phantom_status(**kwargs):
+        calls.update(kwargs)
+        return {
+            "schema": "bemine.phantom.v1",
+            "ok": True,
+            "status": "blocked",
+            "blockers": ["Android device phone is unauthorized; authorize USB debugging."],
+        }
+
+    monkeypatch.setattr("bemine.context.tool_registry.phantom_status", fake_phantom_status)
+
+    out = BemineToolRegistry().execute(
+        "phantom_status",
+        {"project_root": "/tmp/phantom", "serial": "phone", "java_home": "/jdk"},
+        ctx,
+    )
+
+    assert out["schema"] == "bemine.phantom.v1"
+    assert out["status"] == "blocked"
+    assert calls["project_root"] == "/tmp/phantom"
+    assert calls["serial"] == "phone"
+    assert calls["java_home"] == "/jdk"
+
+
+def test_phantom_install_tool_uses_shared_workflow(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    def fake_phantom_install(**kwargs):
+        calls.update(kwargs)
+        return {
+            "ok": True,
+            "status": "dry_run",
+            "command": ["/usr/bin/adb", "-s", "phone", "install", "-r", "app.apk"],
+        }
+
+    monkeypatch.setattr("bemine.context.tool_registry.phantom_install", fake_phantom_install)
+
+    out = BemineToolRegistry().execute(
+        "phantom_install",
+        {
+            "project_root": "/tmp/phantom",
+            "serial": "phone",
+            "build": True,
+            "dry_run": True,
+            "java_home": "/jdk",
+        },
+        ctx,
+    )
+
+    assert out["ok"] is True
+    assert out["status"] == "dry_run"
+    assert calls["project_root"] == "/tmp/phantom"
+    assert calls["serial"] == "phone"
+    assert calls["build"] is True
+    assert calls["dry_run"] is True
+    assert calls["java_home"] == "/jdk"
+
+
 def test_backlog_tools_write_and_list_vault_items(tmp_path):
     settings, db, ctx = _ctx(tmp_path)
     reg = BemineToolRegistry()
@@ -543,6 +606,8 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "job_run",
         "health_status",
         "capabilities_status",
+        "phantom_status",
+        "phantom_install",
         "usage_report",
         "backlog_add",
         "brief_run",

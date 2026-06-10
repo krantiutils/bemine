@@ -90,6 +90,14 @@ interval_secs = 600
 enabled = true
 devices = ["cdjk"]
 
+[phantom]
+# Android accessibility service app installed onto the connected phone.
+project_root = "/home/cdjk/phantom/packages/android/phantom-service"
+application_id = "dev.phantom.service"
+accessibility_service = ".PhantomAccessibilityService"
+java_home = "/usr/lib/jvm/java-17-openjdk-amd64"
+android_home = "/home/cdjk/Android/Sdk"
+
 # ----------------------------------------------------------------------------
 # Per-runtime settings. Subscriptions/keys are used — no pay-per-token API keys.
 # ----------------------------------------------------------------------------
