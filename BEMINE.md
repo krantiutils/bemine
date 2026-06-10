@@ -43,6 +43,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `dream` job periodically and appends one JSONL data point to `Dreams/dreams.jsonl`.
 - config questions → `bemine_config` tool or `uv run bemine config show`; NEVER guess
   runtime/model identity.
+- phone/ADB questions → `uv run bemine capabilities`; the tool section reports ADB
+  availability, attached device authorization state, and Android SDK path.
 
 ## Watching & recovering sessions
 

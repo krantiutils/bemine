@@ -77,6 +77,8 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - cdjk continuity: `src/bemine/workers/workers.py::resume_missing_local_workers`
   and `BemineDaemon._continuity_tick()` restart recorded `running` local managed
   tmux workers after line cuts/reboots. Configured under `[continuity]`.
+- Android/Phantom phone state is exposed through `bemine capabilities` under the
+  non-secret tools section (`adb`, attached device states, Android SDK path).
 - Subagent profiles: `src/bemine/context/subagents.py` loads configured Markdown
   profiles such as `subagents/PA.md` and `subagents/SMM.md`; inspect them with
   `bemine subagents list`.

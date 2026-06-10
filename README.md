@@ -164,6 +164,10 @@ line cuts or reboot: if a `bemine goal` worker was recorded as `running` but its
 tmux session disappeared, the daemon starts it again from the recorded cwd and
 command. This deliberately does not restart adopted/manual sessions.
 
+`bemine capabilities` includes a non-secret tools section for Android/ADB state,
+including attached device authorization and the detected Android SDK path. This
+is the first check before Phantom phone work.
+
 ### PA/SMM backlog
 
 Use `bemine backlog` for durable idea/task capture:
