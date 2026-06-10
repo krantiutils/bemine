@@ -201,3 +201,31 @@ def test_usage_limit_within_backoff_does_not_renudge(tmp_path):
     tick_recovery(s, deps, now=t0)        # waits (parse -> tomorrow? no: stored wait)
     tick_recovery(s, deps, now=t0 + 60)   # still inside scheduled window -> no spam
     assert tmux.sent_text.count("continue") <= 1
+
+
+def test_usage_limit_retries_continue_with_backoff_capped_10min(tmp_path):
+    import time as _t
+    s = _settings(tmp_path)
+    # Pane shows the limit forever (nudge not taking) — must retry with doubling
+    # backoff capped at 600s, not stall until tomorrow.
+    tmux = _Tmux(["You've hit your usage limit. Try again at 3:47am."])
+    clock, esc, aud = _clock(), [], []
+    deps = _deps([_pane(command="codex-aarch64-a")], tmux, clock=clock,
+                 escalations=esc, audits=aud)
+    t0 = _t.mktime((2026, 6, 11, 1, 0, 0, 0, 0, -1))
+    tick_recovery(s, deps, now=t0)                       # schedules wait until 03:47
+    assert tmux.sent_text == []
+
+    from bemine.jobs.auto_recovery import load_recovery_state, recovery_state_path
+    reset = _t.mktime((2026, 6, 11, 3, 47, 0, 0, 0, -1))
+    now = reset + 1
+    gaps = []
+    for _ in range(7):
+        tick_recovery(s, deps, now=now)
+        rec = list(load_recovery_state(recovery_state_path(s)).values())[0]
+        gaps.append(rec["next_retry_at"] - now)
+        now = float(rec["next_retry_at"]) + 1
+    assert len(tmux.sent_text) == 7                      # kept retrying
+    assert all(g <= 600 for g in gaps)                   # never beyond 10 min
+    assert max(gaps) == 600                              # reaches and caps at 10 min
+    assert gaps[0] < gaps[-1]                            # actually backs off

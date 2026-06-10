@@ -124,6 +124,7 @@ def recovery_key(pane: dict) -> str:
 
 _BACKOFF_CAP = 1800
 _ESCALATED_HOLD = 86400  # after escalation, don't retry for a day (until state changes)
+_LIMIT_RETRY_CAP = 600   # default post-reset "continue" retry cap: 10 min
 
 
 def recovery_enabled() -> bool:
@@ -149,6 +150,10 @@ def _cfg_verify_delay() -> int:
 def _cfg_poll_interval() -> int:
     """How often the daemon runs a recovery pass (it polls more often than this)."""
     return config_int("recovery", "poll_interval_secs", 300)
+
+
+def _cfg_usage_limit_retry_cap() -> int:
+    return max(60, config_int("recovery", "usage_limit_retry_cap_secs", _LIMIT_RETRY_CAP))
 
 
 def _cfg_signatures() -> list[str]:
@@ -326,21 +331,19 @@ def _handle_usage_limit(deps, pane, device, pid, rec, now, pane_text) -> dict:
             "limit_continue_sent": bool(rec.get("limit_continue_sent")),
         }
 
-    if not rec.get("limit_continue_sent"):
-        deps.tmux.send_text(device, pid, "continue")
-        deps.audit("limit_continue", "usage_limit", pane)
-        return {
-            "limit_wait_until": wait_until,
-            "next_retry_at": now + max(60, _cfg_backoff()),
-            "limit_wait_audited": True,
-            "limit_continue_sent": True,
-        }
-
+    # Past the reset: nudge "continue", and if the pane still shows the limit on later
+    # passes, RETRY with doubling backoff capped at 10 minutes — never stall to the next
+    # day on a nudge that didn't take. When the pane moves, classify() stops returning
+    # usage_limit and the recovered path clears this record.
+    attempts = int(rec.get("continue_attempts", 0))
+    deps.tmux.send_text(device, pid, "continue")
+    deps.audit("limit_continue", "usage_limit", pane)
+    backoff = min(60 * (2 ** attempts), _cfg_usage_limit_retry_cap())
     return {
-        "limit_wait_until": _fallback_reset_epoch(now),
-        "next_retry_at": _fallback_reset_epoch(now),
+        "limit_wait_until": wait_until,
+        "next_retry_at": now + backoff,
         "limit_wait_audited": True,
-        "limit_continue_sent": True,
+        "continue_attempts": attempts + 1,
     }
 
 
