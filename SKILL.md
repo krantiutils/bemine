@@ -88,7 +88,8 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
 - PA/SMM brief: `src/bemine/briefs.py` deterministically turns recent
   sessions/messages/audit/tool state into `Briefs/<date>-pa-smm.md` and
   non-duplicate PA/SMM backlog nudges; run with `bemine brief run` or the
-  daemon's seeded `pa_smm_brief` cron job.
+  daemon's seeded `pa_smm_brief` cron job. Routed agents can call the
+  `brief_run` local tool directly.
 - Dream memory: `src/bemine/dreams.py` condenses recent Discord/audit history
   into one JSONL record under `Dreams/dreams.jsonl`; run manually with
   `bemine dream run` or via the daemon's seeded `dream` cron job.
