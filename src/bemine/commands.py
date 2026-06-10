@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
+from bemine.backlog import default_backlog_owner, list_backlog_items, render_backlog_items
 from bemine.config import BemineSettings, config_bool, config_int, config_list, config_string
 from bemine.kernel import BemineKernel
 
@@ -115,6 +116,16 @@ def _goals_list(settings: BemineSettings, args: Mapping) -> CommandResult:
     )
 
 
+def _backlog_list(settings: BemineSettings, args: Mapping) -> CommandResult:
+    owner = str(args.get("owner") or "").strip() or default_backlog_owner()
+    limit = int(args.get("limit") or 20)
+    items = list_backlog_items(settings, owner=owner, limit=limit)
+    return CommandResult(
+        text=render_backlog_items(owner, items),
+        data={"owner": owner.upper(), "items": items},
+    )
+
+
 def _capabilities(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.capabilities import build_capability_manifest, render_capability_manifest
 
@@ -181,7 +192,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- dream: `dream run` / `uv run bemine dream run` to condense recent history",
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
-        "- backlog: `backlog add` / `backlog list` / `remember this for SMM|PA: ...`",
+        "- backlog: `backlog add` / `backlog list` / `show backlog` / `remember this for SMM|PA: ...`",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM`)",
         f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom install`)",
@@ -319,6 +330,7 @@ _SPECS = (
     CommandSpec("goal.start", "Start a managed goal session", _goal_start),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
+    CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),
 )

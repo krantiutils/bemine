@@ -138,6 +138,9 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("what goal sessions are active?") == "goals.list"
     assert gw._direct_observability_command("what jobs are scheduled?") == "jobs.list"
     assert gw._direct_observability_command("what cron jobs are set up?") == "jobs.list"
+    assert gw._direct_backlog_command("show backlog") == {"owner": "SMM"}
+    assert gw._direct_backlog_command("what's in my backlog?") == {"owner": "SMM"}
+    assert gw._direct_backlog_command("what's in PA backlog?") == {"owner": "PA"}
     assert gw._direct_observability_command('goal rai: "train"') == ""
 
 

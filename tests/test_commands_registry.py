@@ -10,7 +10,7 @@ def _settings(tmp_path):
 
 def test_registry_lists_deterministic_ops():
     names = set(registry().keys())
-    assert {"status", "rundown", "jobs.list", "usage", "capabilities", "continuity", "help", "discord.routes"} <= names
+    assert {"status", "rundown", "jobs.list", "backlog.list", "usage", "capabilities", "continuity", "help", "discord.routes"} <= names
 
 
 def test_run_command_is_pure_and_deterministic(tmp_path):
@@ -31,6 +31,13 @@ def test_run_command_continuity(tmp_path):
     out = run_command("continuity", settings, {})
     assert "Bemine continuity:" in out.text
     assert isinstance(out.data, dict)
+
+
+def test_run_command_backlog_list(tmp_path):
+    settings = _settings(tmp_path)
+    out = run_command("backlog.list", settings, {})
+    assert "backlog" in out.text.lower()
+    assert out.data["owner"] == "SMM"
 
 
 def test_run_command_help_summarizes_configurable_surfaces(tmp_path, monkeypatch):
@@ -91,7 +98,7 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "focus today:" in out.text
     assert "dream: `dream run`" in out.text
     assert "watchers: active=0" in out.text
-    assert "backlog: `backlog add` / `backlog list` / `remember this for SMM|PA: ...`" in out.text
+    assert "backlog: `backlog add` / `backlog list` / `show backlog` / `remember this for SMM|PA: ...`" in out.text
     assert "social posts:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text

@@ -16,7 +16,7 @@ import discord
 from discord.ext import commands
 
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
-from bemine.backlog import add_backlog_item
+from bemine.backlog import add_backlog_item, default_backlog_owner
 from bemine.commands import run_command
 from bemine.config import BemineSettings, config_int, config_string
 from bemine.security.credentials import CredentialInventory, PermissionGate
@@ -70,6 +70,7 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "status": "status",
     "rundown": "rundown",
     "jobs": "jobs.list",
+    "backlog": "backlog.list",
     "health": "health",
     "continuity": "continuity",
     "help": "help",
@@ -758,6 +759,13 @@ class MayorDiscordGateway:
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
+        backlog_args = _direct_backlog_command(normalized_lower)
+        if backlog_args is not None:
+            text = await asyncio.to_thread(
+                lambda: run_command("backlog.list", BemineSettings.load(), backlog_args).text
+            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
+            return
         if normalized_lower in {
             "!mayor rundown",
             "mayor rundown",
@@ -1057,8 +1065,48 @@ def _message_category_name(message: discord.Message) -> str:
     return _channel_category_name(message.channel)
 
 
+def _direct_backlog_command(normalized_lower: str) -> dict[str, str] | None:
+    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip().lower())
+    variants = {
+        text,
+        text.removeprefix("!mayor ").removeprefix("mayor "),
+        text.removeprefix("!bemine ").removeprefix("bemine "),
+    }
+    if variants & {
+        "backlog",
+        "backlog list",
+        "show backlog",
+        "show my backlog",
+        "open backlog",
+        "open backlog items",
+        "my backlog",
+        "what is in my backlog",
+        "what's in my backlog",
+        "what is in the backlog",
+        "what's in the backlog",
+    }:
+        return {"owner": default_backlog_owner()}
+    if variants & {
+        "pa backlog",
+        "show pa backlog",
+        "open pa backlog",
+        "what is in pa backlog",
+        "what's in pa backlog",
+    }:
+        return {"owner": "PA"}
+    if variants & {
+        "smm backlog",
+        "show smm backlog",
+        "open smm backlog",
+        "what is in smm backlog",
+        "what's in smm backlog",
+    }:
+        return {"owner": "SMM"}
+    return None
+
+
 def _direct_observability_command(normalized_lower: str) -> str:
-    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip())
+    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip().lower())
     variants = {
         text,
         text.removeprefix("!mayor ").removeprefix("mayor "),
