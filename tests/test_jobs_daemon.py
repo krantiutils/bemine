@@ -265,6 +265,71 @@ def test_daemon_resumes_missing_workers_on_cdjk(tmp_path, monkeypatch):
     assert called["n"] == 1
 
 
+def test_daemon_audits_continuity_resumed_workers(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
+    import bemine.workers.workers as workers
+
+    class ResumedRecord:
+        name = "goal-restart"
+
+        def to_dict(self):
+            return {
+                "name": self.name,
+                "runtime": "shell",
+                "transport": "tmux",
+                "device_id": "cdjk",
+                "project_id": "proj_restart",
+                "cwd": "/tmp/repo",
+                "command": "cat",
+                "status": "running",
+                "exists": True,
+            }
+
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine",
+        vault_dir=tmp_path / "v",
+        device_id="cdjk",
+    )
+    monkeypatch.setattr(workers, "resume_missing_local_workers", lambda s: [ResumedRecord()])
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: False)
+
+    BemineDaemon(settings).run_once()
+
+    rows = BemineDB(settings.db_path).list_audit_events(category="continuity", limit=1)
+    assert rows[0]["event_type"] == "continuity_workers_resumed"
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["count"] == 1
+    assert payload["workers"][0]["name"] == "goal-restart"
+
+
+def test_daemon_audits_continuity_errors_without_raising(tmp_path, monkeypatch):
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
+    import bemine.workers.workers as workers
+
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine",
+        vault_dir=tmp_path / "v",
+        device_id="cdjk",
+    )
+
+    def fail(settings):
+        raise RuntimeError("tmux unavailable")
+
+    monkeypatch.setattr(workers, "resume_missing_local_workers", fail)
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: False)
+
+    BemineDaemon(settings).run_once()
+
+    rows = BemineDB(settings.db_path).list_audit_events(category="continuity", limit=1)
+    assert rows[0]["event_type"] == "continuity_resume_failed"
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["error"] == "tmux unavailable"
+
+
 def test_daemon_continuity_is_cdjk_only_by_default(tmp_path, monkeypatch):
     from bemine.config import BemineSettings
     from bemine.jobs.core import BemineDaemon
