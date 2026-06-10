@@ -127,6 +127,7 @@ def test_dispatch_progress_text_uses_runtime_summary() -> None:
 def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("health?") == "health"
     assert gw._direct_observability_command("what can you do?") == "help"
+    assert gw._direct_observability_command("discord routes") == "discord.routes"
     assert gw._direct_observability_command("line cuts") == "continuity"
     assert gw._direct_observability_command("mayor dispatch status") == "dispatch.status"
     assert gw._direct_observability_command("what model are we using?") == "dispatch.status"
@@ -398,6 +399,28 @@ def test_help_plain_text_uses_local_command(tmp_path: Path, monkeypatch) -> None
 
     assert calls == ["help"]
     assert message.replies == ["Bemine help:\n- device: `cdjk`"]
+
+
+def test_routes_plain_text_uses_local_command(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_run_command(name, settings, args):
+        calls.append(name)
+        return SimpleNamespace(text="Discord route management:\n- config_exists: True", data={})
+
+    def fail_run_agent(*args, **kwargs):
+        raise AssertionError("routes should not start an agent")
+
+    monkeypatch.setattr(gw, "run_command", fake_run_command)
+    monkeypatch.setattr(gw, "run_bound_agent", fail_run_agent)
+
+    gateway = _make_gateway(tmp_path)
+    message = _PassthroughMessage("discord routes")
+
+    asyncio.run(gateway._handle_allowed_message(message))
+
+    assert calls == ["discord.routes"]
+    assert message.replies == ["Discord route management:\n- config_exists: True"]
 
 
 def test_dispatch_failure_finishes_progress_as_failed(tmp_path: Path, monkeypatch) -> None:

@@ -40,8 +40,10 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "store SMM/PA idea X" → `uv run bemine backlog add "<idea>" --owner SMM|PA`
   (Discord also accepts `SMM idea: ...` / `store idea for PA: ...`).
 - "create/sync project channels" → inspect `channel_routes` and `channel_sync_plan`
-  first, then use `channel_sync_apply` with `confirm=true` to mutate Discord. Use
-  `shell_run` + Discord REST only for channel operations outside that project-sync path.
+  first, or use `discord routes` / `uv run bemine discord routes` for the read-only
+  management view. Then use `channel_sync_apply` with `confirm=true` to mutate
+  Discord. Use `shell_run` + Discord REST only for channel operations outside that
+  project-sync path.
 - "remind me / schedule X" → `uv run bemine jobs add-reminder --help`.
 - "start/run a goal for project X" → `goal_start` native tool or
   `uv run bemine goal <project> "<goal brief>"`; this starts a managed tmux worker,

@@ -147,7 +147,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     phantom_root = config_string("phantom", "project_root", "")
     summary_lines = [
         "Bemine help:",
-        "- ask: help, status, health, continuity, goal, watch, jobs, dispatch, pa, smm, subagents, phantom, backlog, capabilities, audit, config",
+        "- ask: help, status, health, continuity, goal, watch, jobs, routes, dispatch, pa, smm, subagents, phantom, backlog, capabilities, audit, config",
         "Configured surfaces:",
         f"- device: `{settings.device_id}`",
         f"- state: `{settings.state_dir}`",
@@ -165,7 +165,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     summary_lines.extend(
         [
             "",
-            "Use `uv run bemine <command> --help` for the contract of any command.",
+        "Use `uv run bemine <command> --help` for the contract of any command.",
         ]
     )
     return CommandResult(
@@ -190,6 +190,92 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     )
 
 
+def _discord_routes(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.discord.dispatch import DISPATCH_CONFIG_NAME, load_project_channels, project_channels_from_db
+
+    kernel = BemineKernel(settings)
+    query = str(args.get("query") or "").strip()
+    limit = int(args.get("limit") or 50)
+    watchers = {
+        str(row.get("project_id") or ""): dict(row)
+        for row in kernel.db.list_active_project_watchers()
+    }
+
+    def _route_payload(channel) -> dict[str, str]:
+        project_id = channel.project_id or channel.channel_name
+        watcher = watchers.get(project_id) or {}
+        return {
+            "channel_name": channel.channel_name,
+            "cwd": str(channel.cwd),
+            "project_id": channel.project_id,
+            "project_name": channel.project_name,
+            "runtime": channel.runtime,
+            "latest_channel_id": kernel.db.get_channel_id_for_project(project_id) or "",
+            "watcher_channel_id": str(watcher.get("channel_id") or ""),
+            "watcher_status": str(watcher.get("status") or ""),
+        }
+
+    configured = [
+        _route_payload(channel)
+        for channel in load_project_channels(settings.state_dir).values()
+    ]
+    indexed = [
+        _route_payload(channel)
+        for channel in project_channels_from_db(kernel.db, limit=limit)
+    ]
+    if query:
+        needle = query.casefold()
+        configured = [
+            row for row in configured if any(needle in str(value or "").casefold() for value in row.values())
+        ]
+        indexed = [
+            row for row in indexed if any(needle in str(value or "").casefold() for value in row.values())
+        ]
+
+    config_path = settings.state_dir / DISPATCH_CONFIG_NAME
+    lines = [
+        "Discord route management:",
+        f"- config: `{config_path}`",
+        f"- config_exists: {config_path.exists()}",
+        f"- configured: {len(configured)}",
+        f"- indexed: {len(indexed)}",
+        f"- active_watchers: {len(watchers)}",
+        "Configured routes:",
+    ]
+    if configured:
+        for row in configured[:limit]:
+            lines.append(
+                f"- `{row['channel_name']}` -> `{row['cwd']}` "
+                f"latest={row['latest_channel_id'] or 'none'} "
+                f"watcher={row['watcher_channel_id'] or 'none'} "
+                f"status={row['watcher_status'] or 'none'}"
+            )
+    else:
+        lines.append("- none")
+    lines.append("Indexed routes:")
+    if indexed:
+        for row in indexed[:limit]:
+            lines.append(
+                f"- `{row['channel_name']}` [{row['runtime']}] `{row['cwd']}` "
+                f"project={row['project_id'] or row['project_name'] or 'none'} "
+                f"latest={row['latest_channel_id'] or 'none'} "
+                f"watcher={row['watcher_channel_id'] or 'none'}"
+            )
+    else:
+        lines.append("- none")
+    lines.append("")
+    return CommandResult(
+        text="\n".join(lines),
+        data={
+            "config_path": str(config_path),
+            "config_exists": config_path.exists(),
+            "configured": configured[:limit],
+            "indexed": indexed[:limit],
+            "active_watchers": len(watchers),
+        },
+    )
+
+
 _SPECS = (
     CommandSpec("status", "Recent fleet status", _status),
     CommandSpec("rundown", "Project rundown", _rundown),
@@ -197,6 +283,7 @@ _SPECS = (
     CommandSpec("health", "Bemine service/job/deploy health", _health),
     CommandSpec("continuity", "cdjk line-cut recovery status", _continuity),
     CommandSpec("help", "Self-documenting command and config summary", _help),
+    CommandSpec("discord.routes", "Discord project route management", _discord_routes),
     CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
     CommandSpec("goal.start", "Start a managed goal session", _goal_start),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
