@@ -55,6 +55,7 @@ preference (specific tool > shell):
 | `bemine_config` | AUTHORITATIVE active runtime/model/device — never guess what you are |
 | `jobs_list` | scheduled cron jobs |
 | `health_status` | deploy/services/jobs/watchers health packet |
+| `capabilities_status` | safe credential/tool manifest, including Android/ADB readiness |
 | `usage_report` | token usage by provider |
 | `audit_list` | recent audit events (filter by category, e.g. `recovery`, `deploy`, `watcher`) |
 | `shell_run` | run any shell command (scope per `[policy].shell`) — your general hands |

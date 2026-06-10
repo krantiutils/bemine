@@ -65,6 +65,51 @@ def test_health_status_tool_uses_shared_health_packet(tmp_path, monkeypatch):
     assert calls["db"] is db
 
 
+def test_capabilities_status_tool_scans_and_returns_manifest(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class FakeInventory:
+        def __init__(self, db_arg, *, device_id=""):
+            calls["db"] = db_arg
+            calls["device_id"] = device_id
+
+        def scan(self):
+            calls["scanned"] = True
+
+    def fake_build_capability_manifest(rows, *, device_id):
+        calls["rows"] = rows
+        return {
+            "schema": "bemine.capabilities.v1",
+            "device_id": device_id,
+            "credentials": [],
+            "tools": {
+                "adb": {
+                    "available": True,
+                    "status": "attention_required",
+                    "devices": [{"serial": "phone", "state": "unauthorized"}],
+                }
+            },
+            "worker_contract": [],
+        }
+
+    monkeypatch.setattr("bemine.context.tool_registry.CredentialInventory", FakeInventory)
+    monkeypatch.setattr(
+        "bemine.context.tool_registry.build_capability_manifest",
+        fake_build_capability_manifest,
+    )
+
+    out = BemineToolRegistry().execute("capabilities_status", {}, ctx)
+
+    assert out["schema"] == "bemine.capabilities.v1"
+    assert out["device_id"] == settings.device_id
+    assert out["tools"]["adb"]["devices"][0]["state"] == "unauthorized"
+    assert calls["db"] is db
+    assert calls["device_id"] == settings.device_id
+    assert calls["scanned"] is True
+    assert calls["rows"] == []
+
+
 def test_backlog_tools_write_and_list_vault_items(tmp_path):
     settings, db, ctx = _ctx(tmp_path)
     reg = BemineToolRegistry()
@@ -328,6 +373,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "bemine_config",
         "jobs_list",
         "health_status",
+        "capabilities_status",
         "usage_report",
         "backlog_add",
         "brief_run",

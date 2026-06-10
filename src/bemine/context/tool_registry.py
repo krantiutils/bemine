@@ -10,12 +10,14 @@ from typing import Any, Callable, Mapping
 from ..config import BemineSettings, config_bool, config_string
 from ..backlog import add_backlog_item, default_backlog_owner, list_backlog_items
 from ..briefs import run_brief
+from ..capabilities import build_capability_manifest
 from ..db import BemineDB
 from ..discord.store import Store as DiscordStore
 from ..discord.transcript import redact_message_rows
 from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
+from ..security.credentials import CredentialInventory
 from ..workers.workers import WorkerError
 
 
@@ -118,6 +120,24 @@ def default_tools() -> list[BemineTool]:
             ),
             input_schema={"type": "object", "properties": {}},
             handler=_health_status,
+        ),
+        BemineTool(
+            name="capabilities_status",
+            description=(
+                "Return Bemine's safe credential/capability manifest, including "
+                "non-secret Android/ADB authorization state. Use this before assuming "
+                "credential, phone, or external-tool access."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "scan": {
+                        "type": "boolean",
+                        "description": "Refresh credential inventory first; defaults true.",
+                    }
+                },
+            },
+            handler=_capabilities_status,
         ),
         BemineTool(
             name="usage_report",
@@ -464,6 +484,17 @@ def _jobs_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
 def _health_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
     del args
     return collect_health(context.settings, db=context.db)
+
+
+def _capabilities_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    scan = args.get("scan", True)
+    if scan is None or bool(scan):
+        CredentialInventory(
+            context.db,
+            device_id=context.settings.device_id,
+        ).scan()
+    rows = [dict(row) for row in context.db.list_credential_profiles()]
+    return build_capability_manifest(rows, device_id=context.settings.device_id)
 
 
 def _usage_report(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
