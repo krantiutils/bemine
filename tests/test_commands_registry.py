@@ -9,7 +9,7 @@ def _settings(tmp_path):
 
 def test_registry_lists_deterministic_ops():
     names = set(registry().keys())
-    assert {"status", "rundown", "jobs.list", "usage", "capabilities"} <= names
+    assert {"status", "rundown", "jobs.list", "usage", "capabilities", "continuity"} <= names
 
 
 def test_run_command_is_pure_and_deterministic(tmp_path):
@@ -23,3 +23,10 @@ def test_run_command_usage(tmp_path):
     settings = _settings(tmp_path)
     out = run_command("usage", settings, {})
     assert isinstance(out.text, str)
+
+
+def test_run_command_continuity(tmp_path):
+    settings = _settings(tmp_path)
+    out = run_command("continuity", settings, {})
+    assert "Bemine continuity:" in out.text
+    assert isinstance(out.data, dict)
