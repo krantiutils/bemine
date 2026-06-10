@@ -74,6 +74,7 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "goal.runtime=shell" in out.text
     assert "jobs.session_fallback_channel=session-updates" in out.text
     assert "recovery.poll_interval_secs=300" in out.text
+    assert "discord routes:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "project_root=/tmp/phantom" in out.text
     assert out.data["goal"]["runtime"] == "shell"
