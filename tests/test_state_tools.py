@@ -294,6 +294,54 @@ def test_goal_status_tool_lists_goal_sessions(tmp_path, monkeypatch):
     assert calls["db"] is db
 
 
+def test_workers_status_tool_lists_workers_and_duplicates(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class Worker:
+        def __init__(self, name, project_id, runtime="shell", status="running"):
+            self.name = name
+            self.project_id = project_id
+            self.runtime = runtime
+            self.status = status
+
+        def to_dict(self):
+            return {
+                "name": self.name,
+                "runtime": self.runtime,
+                "transport": "tmux",
+                "device_id": "local",
+                "project_id": self.project_id,
+                "cwd": f"/tmp/{self.project_id}",
+                "command": "cat",
+                "status": self.status,
+                "exists": self.status == "running",
+            }
+
+    class FakeController:
+        def __init__(self, settings_arg, *, db=None):
+            calls["settings"] = settings_arg
+            calls["db"] = db
+
+        def list(self):
+            return [
+                Worker("goal-rai", "rai"),
+                Worker("rai-kimi", "rai", runtime="kimi"),
+                Worker("stopped", "old", status="stopped"),
+            ]
+
+    monkeypatch.setattr("bemine.context.tool_registry.WorkerController", FakeController)
+
+    out = BemineToolRegistry().execute("workers_status", {"query": "rai"}, ctx)
+
+    assert out["ok"] is True
+    assert [row["name"] for row in out["workers"]] == ["goal-rai", "rai-kimi"]
+    assert out["duplicates"][0]["project_id"] == "rai"
+    assert {row["name"] for row in out["duplicates"][0]["heads"]} == {"goal-rai", "rai-kimi"}
+    assert calls["settings"] is settings
+    assert calls["db"] is db
+
+
 def test_discord_history_tools_read_local_redacted_store(tmp_path):
     from bemine.discord.store import Store
 
@@ -409,6 +457,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "dream_run",
         "goal_start",
         "goal_status",
+        "workers_status",
         "discord_threads",
         "discord_transcript",
         "channel_routes",

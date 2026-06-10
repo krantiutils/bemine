@@ -45,6 +45,8 @@ Functional now:
   shutdown context in the Obsidian vault and audit log.
 - `bemine workers` is the safe live-control surface for sessions Bemine starts
   or existing tmux sessions it adopts.
+- Native workers can inspect Bemine-managed worker inventory and duplicate active
+  heads with `workers_status`.
 
 Not functional yet:
 

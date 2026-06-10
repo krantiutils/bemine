@@ -26,6 +26,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 
 - "what's running / status of X" → `status_show` (or `uv run bemine status --limit 12`);
   for a project channel, X = THAT project's session (match cwd basename).
+- "what Bemine-managed workers are running / duplicates?" → `workers_status` native tool
+  or `uv run bemine workers list` / `uv run bemine workers duplicates`.
 - "send/tell the session …" → `tmux_list` → `tmux_send` (it appends Enter; afterwards
   `tmux_capture` to VERIFY the input registered — if the pane didn't change, send Enter again).
 - "what did it say / is it stuck" → `tmux_capture` (remote devices reachable; recovery and
