@@ -942,7 +942,13 @@ def test_codex_dispatch_parses_jsonl_progress_usage_and_audit(tmp_path: Path) ->
 
 def test_codex_dispatch_runs_in_project_root_with_images_and_audit(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # Isolate from the repo's bemine.toml (its sandbox override would change --sandbox).
+    empty = tmp_path / "empty.toml"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("BEMINE_CONFIG", str(empty))
+    monkeypatch.delenv("BEMINE_CODEX_SANDBOX", raising=False)
     state_dir = tmp_path / "state"
     project_root = tmp_path / "repo"
     image_path = tmp_path / "inbox" / "diagram.png"
@@ -1166,8 +1172,13 @@ def test_resolve_kimi_bin_falls_back_to_user_local_bin(
     assert resolve_kimi_bin() == str(kimi)
 
 
-def test_resolve_codex_sandbox_defaults_to_workspace_write(monkeypatch) -> None:
+def test_resolve_codex_sandbox_defaults_to_workspace_write(monkeypatch, tmp_path) -> None:
+    # Isolate from the repo's bemine.toml: the CODE default is workspace-write even
+    # though this box's config overrides it (bwrap broken under systemd).
     monkeypatch.delenv("BEMINE_CODEX_SANDBOX", raising=False)
+    empty = tmp_path / "empty.toml"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("BEMINE_CONFIG", str(empty))
 
     assert resolve_codex_sandbox() == "workspace-write"
 
