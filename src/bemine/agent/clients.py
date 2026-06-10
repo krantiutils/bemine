@@ -20,6 +20,43 @@ class LLMClient(Protocol):
 
 from bemine.providers import get_transport  # noqa: E402
 
+import logging  # noqa: E402
+
+LOG = logging.getLogger("bemine.agent.clients")
+
+
+class FallbackClient:
+    """Wraps a primary LLM client with a fallback (e.g. claude-via-meridian -> kimi).
+
+    The meridian proxy intermittently 500s (its passthrough caps Claude Code at 3 internal
+    turns); without this, one bad completion kills the whole dispatch/worker. Policy:
+    try primary, retry primary once, then run THIS completion on the fallback client with
+    the fallback model. The next completion tries the primary again (transient by design).
+    """
+
+    def __init__(self, primary, fallback, *, fallback_model: str) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self._fallback_model = fallback_model
+
+    def complete(self, *, messages, tools, model, system):
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                return self._primary.complete(
+                    messages=messages, tools=tools, model=model, system=system
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                LOG.warning("primary client failed (attempt %d): %s", attempt, exc)
+        try:
+            LOG.warning("falling back to %s for this completion", self._fallback_model)
+            return self._fallback.complete(
+                messages=messages, tools=tools, model=self._fallback_model, system=system
+            )
+        except Exception:
+            raise last_exc  # surface the PRIMARY failure, it's the real problem
+
 
 class AnthropicClient:
     """Claude AND Anthropic-compatible Kimi. The vendored anthropic transport already
@@ -103,7 +140,15 @@ def build_client_for_runtime(settings: BemineSettings, runtime: str):
             if base_url
             else anthropic.Anthropic(api_key=api_key)
         )
-        return AnthropicClient(sdk=sdk, base_url=base_url)
+        primary = AnthropicClient(sdk=sdk, base_url=base_url)
+        # Meridian 500s intermittently; fall back to kimi for the affected completion so
+        # a proxy hiccup never kills a dispatch/worker. Disable with fallback_runtime="".
+        fb_runtime = config_string("claude", "fallback_runtime", "kimi")
+        if not fb_runtime.strip() or fb_runtime.strip().lower() == "claude":
+            return primary
+        fallback = build_client_for_runtime(settings, fb_runtime)
+        fb_model = config_string(fb_runtime, "model", "") or "kimi-k2.6"
+        return FallbackClient(primary, fallback, fallback_model=fb_model)
 
     # kimi (Anthropic-compatible)
     base_url = config_string("kimi", "base_url", "https://api.kimi.com/coding")

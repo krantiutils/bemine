@@ -81,7 +81,10 @@ def slash_command_text(settings: BemineSettings, slash_name: str, args: dict) ->
     Returns the plain-text result suitable for sending back to Discord.
     No LLM is invoked; this is entirely deterministic.
     """
-    command = _SLASH_TO_COMMAND.get(slash_name)
+    if slash_name == "goal":
+        command = "goal.start"
+    else:
+        command = _SLASH_TO_COMMAND.get(slash_name)
     if not command:
         return f"Unknown command: {slash_name}"
     return run_command(command, settings, args).text
@@ -130,6 +133,44 @@ def register_slash_commands(
             callback=_handler,
         )
         tree.add_command(cmd)
+
+    async def _goal_handler(
+        interaction: discord.Interaction,
+        project: str,
+        brief: str,
+    ) -> None:
+        if is_allowed_check is not None and not is_allowed_check(interaction):
+            await interaction.response.send_message("Access denied.", ephemeral=True)
+            return
+        settings = await asyncio.to_thread(settings_loader)
+        cwd = ""
+        route = infer_project_route(
+            channel_name=_channel_name(getattr(interaction, "channel", None)),
+            category_name=_channel_category_name(getattr(interaction, "channel", None)),
+            content="",
+            state_dir=settings.state_dir,
+            repo_dir=Path.cwd(),
+            mentioned_channels=[],
+            allow_default=False,
+        )
+        if route is not None:
+            cwd = str(route.project.cwd)
+        channel_id = str(getattr(getattr(interaction, "channel", None), "id", "") or "")
+        text = await asyncio.to_thread(
+            slash_command_text,
+            settings,
+            "goal",
+            {"project": project, "brief": brief, "channel_id": channel_id, "cwd": cwd},
+        )
+        await interaction.response.send_message(text)
+
+    _goal_handler.__name__ = "goal"
+    goal_cmd = discord.app_commands.Command(
+        name="goal",
+        description="Bemine: start a managed goal session",
+        callback=_goal_handler,
+    )
+    tree.add_command(goal_cmd)
 
 
 class DiscordResponder:

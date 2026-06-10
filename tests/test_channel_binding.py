@@ -6,9 +6,14 @@ from bemine.discord.dispatch import resolve_channel_binding, ChannelBinding
 
 
 def test_runtime_factory_maps_runtime_to_client(tmp_path):
+    from bemine.agent.clients import FallbackClient
+
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     assert isinstance(build_client_for_runtime(settings, "kimi"), AnthropicClient)
-    assert isinstance(build_client_for_runtime(settings, "claude"), AnthropicClient)
+    # claude is wrapped so a meridian hiccup falls back to kimi for that completion.
+    claude = build_client_for_runtime(settings, "claude")
+    assert isinstance(claude, FallbackClient)
+    assert isinstance(claude._primary, AnthropicClient)
     assert isinstance(build_client_for_runtime(settings, "codex"), CodexClient)
 
 

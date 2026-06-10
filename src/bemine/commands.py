@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Mapping
 
 from bemine.config import BemineSettings
@@ -59,6 +60,35 @@ def _dispatch_status(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_dispatch_status(payload), data=payload)
 
 
+def _goal_start(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.goals import render_goal_start, start_goal
+
+    project = str(args.get("project") or "").strip()
+    brief = str(args.get("brief") or "").strip()
+    if not project or not brief:
+        raise ValueError("goal.start requires project and brief")
+    cwd_raw = str(args.get("cwd") or "").strip()
+    runtime = str(args.get("runtime") or "").strip()
+    worker_name = str(args.get("worker") or "").strip()
+    interval = int(args.get("interval") or 0)
+    channel_id = str(args.get("channel_id") or "").strip()
+    target_device = str(args.get("target_device") or "").strip()
+    command = str(args.get("command") or "").strip()
+    result = start_goal(
+        settings,
+        project=project,
+        brief=brief,
+        cwd=Path(cwd_raw) if cwd_raw else None,
+        runtime=runtime,
+        worker_name=worker_name,
+        interval_secs=interval,
+        channel_id=channel_id,
+        target_device=target_device,
+        command=command,
+    )
+    return CommandResult(text=render_goal_start(result), data=result.to_dict())
+
+
 def _pa_plan(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.pa import build_pa_plan, render_pa_plan
 
@@ -101,6 +131,7 @@ _SPECS = (
     CommandSpec("jobs.list", "List scheduled jobs", _jobs_list),
     CommandSpec("health", "Bemine service/job/deploy health", _health),
     CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
+    CommandSpec("goal.start", "Start a managed goal session", _goal_start),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
