@@ -15,6 +15,7 @@ from .backlog import (
     list_backlog_items,
     render_backlog_items,
 )
+from .commands import run_command
 from .config import BemineSettings, render_toml_config
 from .config import config_path as bemine_config_path
 from .config import config_string, load_bemine_config
@@ -87,6 +88,7 @@ Core concepts:
   status        recent sessions by last interaction and ask-state
   health        deploy/services/jobs/watchers health packet
   continuity    line-cut recovery status packet
+  help          self-documenting capability and config summary
   rundown       project summaries from SQLite/Obsidian
   capabilities  safe credential/capability manifest for workers
   phantom       inspect/build/install the Phantom Android accessibility app
@@ -632,6 +634,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HELP_FORMATTER,
     )
     continuity.add_argument("--json", action="store_true", help="Emit JSON.")
+
+    help_cmd = sub.add_parser(
+        "help",
+        help="Show the self-documenting capability and config summary.",
+        description="Show Bemine's self-documenting capability and config summary.",
+        epilog="Examples:\n  uv run bemine help\n  uv run bemine help --json",
+        formatter_class=HELP_FORMATTER,
+    )
+    help_cmd.add_argument("--json", action="store_true", help="Emit JSON.")
 
     capabilities = sub.add_parser(
         "capabilities",
@@ -1823,6 +1834,12 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(payload["continuity"], indent=2, sort_keys=True))
         else:
             print(render_continuity(payload), end="")
+    elif args.command == "help":
+        result = run_command("help", settings, {})
+        if args.json:
+            print(json.dumps(result.data, indent=2, sort_keys=True))
+        else:
+            print(result.text, end="")
     elif args.command == "capabilities":
         inventory = CredentialInventory(
             kernel.db,
