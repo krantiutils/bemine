@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from bemine.config import BemineSettings
@@ -596,6 +597,87 @@ def test_channel_sync_plan_tool_returns_dry_run_plan(tmp_path, monkeypatch):
     assert calls["prune"] is True
 
 
+def test_channel_sync_apply_requires_confirmation_and_returns_plan(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+
+    def fake_plan_project_channel_sync(settings_arg, **kwargs):
+        return {
+            "dry_run": True,
+            "would_create": [{"channel_name": "rai"}],
+            "would_prune": [],
+            "limit": kwargs["limit"],
+            "prune": kwargs["prune"],
+        }
+
+    monkeypatch.setattr(
+        "bemine.discord.dispatch.plan_project_channel_sync",
+        fake_plan_project_channel_sync,
+    )
+
+    out = BemineToolRegistry().execute(
+        "channel_sync_apply",
+        {"limit": 10, "prune": True, "confirm": False},
+        ctx,
+    )
+
+    assert out["ok"] is False
+    assert out["status"] == "confirmation_required"
+    assert out["plan"]["would_create"][0]["channel_name"] == "rai"
+    assert out["plan"]["prune"] is True
+
+
+def test_channel_sync_apply_runs_confirmed_sync_inside_event_loop(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    def fake_plan_project_channel_sync(settings_arg, **kwargs):
+        calls["plan_settings"] = settings_arg
+        calls["plan_kwargs"] = kwargs
+        return {"dry_run": True, "would_create": [], "would_prune": []}
+
+    async def fake_sync_project_channels_to_discord(settings_arg, token, guild_id, **kwargs):
+        calls["sync_settings"] = settings_arg
+        calls["token"] = token
+        calls["guild_id"] = guild_id
+        calls["sync_kwargs"] = kwargs
+        return {"guild_id": guild_id, "created": [{"name": "rai"}], "deleted": []}
+
+    class FakeDiscordSettings:
+        token = "bot-token"
+
+        @classmethod
+        def load(cls):
+            return cls()
+
+    monkeypatch.setattr(
+        "bemine.discord.dispatch.plan_project_channel_sync",
+        fake_plan_project_channel_sync,
+    )
+    monkeypatch.setattr(
+        "bemine.discord.dispatch.sync_project_channels_to_discord",
+        fake_sync_project_channels_to_discord,
+    )
+    monkeypatch.setattr("bemine.discord.config.Settings", FakeDiscordSettings)
+
+    async def run_tool():
+        return BemineToolRegistry().execute(
+            "channel_sync_apply",
+            {"limit": 25, "prune": True, "guild_id": "guild-1", "confirm": True},
+            ctx,
+        )
+
+    out = asyncio.run(run_tool())
+
+    assert out["ok"] is True
+    assert out["status"] == "applied"
+    assert out["result"]["created"][0]["name"] == "rai"
+    assert calls["plan_settings"] is settings
+    assert calls["sync_settings"] is settings
+    assert calls["token"] == "bot-token"
+    assert calls["guild_id"] == "guild-1"
+    assert calls["sync_kwargs"] == {"limit": 25, "prune": True}
+
+
 def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
@@ -620,5 +702,6 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "discord_transcript",
         "channel_routes",
         "channel_sync_plan",
+        "channel_sync_apply",
     } <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))

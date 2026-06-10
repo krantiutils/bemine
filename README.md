@@ -30,7 +30,8 @@ Functional now:
   duplicate heads, and query the audit log.
 - Per-project Discord channels route messages to Kimi's Bemine-owned tool loop by default, with Codex and Claude selectable per project.
 - Native workers can inspect project channel route configuration and live bindings
-  with `channel_routes`.
+  with `channel_routes`, dry-run project channel sync with `channel_sync_plan`,
+  and apply confirmed project-channel sync with `channel_sync_apply`.
 - Attachments are saved and listed in the prompt. Codex project channels also pass image attachments with `--image`.
 - Native workers can inspect local Discord channel/thread history with `discord_threads`
   and `discord_transcript`.
