@@ -256,6 +256,40 @@ def test_brief_run_tool_generates_pa_smm_brief(tmp_path, monkeypatch):
     assert calls["db"] is db
 
 
+def test_pa_plan_tool_uses_shared_planner(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class Result:
+        def to_dict(self):
+            return {
+                "generated_at": "2026-06-11T00:00:00+00:00",
+                "items": [{"priority": 1, "text": "fix health"}],
+                "evidence": {"statuses": 0},
+                "path": "",
+            }
+
+    def fake_build_pa_plan(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr("bemine.context.tool_registry.build_pa_plan", fake_build_pa_plan)
+
+    out = BemineToolRegistry().execute(
+        "pa_plan",
+        {"limit": 4, "write": True},
+        ctx,
+    )
+
+    assert out["ok"] is True
+    assert out["result"]["items"][0]["text"] == "fix health"
+    assert calls["settings"] is settings
+    assert calls["limit"] == 4
+    assert calls["write"] is True
+    assert calls["db"] is db
+
+
 def test_smm_drafts_tool_uses_shared_drafter(tmp_path, monkeypatch):
     settings, db, ctx = _ctx(tmp_path)
     calls = {}
@@ -795,6 +829,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "usage_report",
         "backlog_add",
         "brief_run",
+        "pa_plan",
         "smm_drafts",
         "dream_run",
         "goal_start",

@@ -30,6 +30,7 @@ from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, 
 from .health import collect_health, render_health
 from .dreams import render_dream, run_dream
 from .briefs import render_brief, run_brief
+from .pa import build_pa_plan, render_pa_plan
 from .smm import draft_smm_posts, render_smm_drafts
 from .phantom import (
     phantom_build,
@@ -90,6 +91,7 @@ Core concepts:
   phantom       inspect/build/install the Phantom Android accessibility app
   subagents     configured PA/SMM/profile Markdown injected into workers
   backlog       durable PA/SMM idea and task backlog in the vault
+  pa            plan daily focus from live PA evidence
   smm           draft Ampixa-style social posts from SMM evidence
   dream         condense recent history into one vault data point
   brief         generate PA/SMM brief and backlog nudges from evidence
@@ -216,6 +218,20 @@ Examples:
   uv run bemine smm draft
   uv run bemine smm draft "Rai checkpoint eval passed" --project rai-speech-toolkit
   uv run bemine smm draft --write --json
+"""
+
+
+PA_HELP = """\
+Plan daily focus from live PA evidence.
+
+The plan command inspects Bemine health, recent agent sessions, active watchers,
+failed jobs, recovery escalations, and open PA backlog items. It returns a
+small priority-ordered list with evidence and the next action for each item.
+
+Examples:
+  uv run bemine pa plan
+  uv run bemine pa plan --write
+  uv run bemine pa plan --json --limit 8
 """
 
 
@@ -760,6 +776,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backlog_list.add_argument("--limit", type=int, default=20, help="Maximum items.")
     backlog_list.add_argument("--json", action="store_true", help="Emit items as JSON.")
+
+    pa = sub.add_parser(
+        "pa",
+        help="Plan daily focus from live PA evidence.",
+        description="Plan daily focus from live PA evidence.",
+        epilog=dedent(PA_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    pa_sub = pa.add_subparsers(dest="pa_command", required=True)
+    pa_plan = pa_sub.add_parser(
+        "plan",
+        help="Create a priority-ordered PA plan from live evidence.",
+        description="Create a priority-ordered PA plan from live evidence.",
+        formatter_class=HELP_FORMATTER,
+    )
+    pa_plan.add_argument(
+        "--limit", type=int, default=6, help="Maximum plan items to produce."
+    )
+    pa_plan.add_argument(
+        "--write",
+        action="store_true",
+        help="Write the plan into the Obsidian vault under PA/Plans/.",
+    )
+    pa_plan.add_argument("--json", action="store_true", help="Emit plan as JSON.")
 
     smm = sub.add_parser(
         "smm",
@@ -1871,6 +1911,18 @@ def main(argv: list[str] | None = None) -> None:
                     print(render_backlog_items(owner, items), end="")
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
+    elif args.command == "pa":
+        if args.pa_command == "plan":
+            result = build_pa_plan(
+                settings,
+                limit=args.limit,
+                write=args.write,
+                db=kernel.db,
+            )
+            if args.json:
+                print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_pa_plan(result), end="")
     elif args.command == "smm":
         if args.smm_command == "draft":
             result = draft_smm_posts(
