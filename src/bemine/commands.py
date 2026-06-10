@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
-from bemine.config import BemineSettings
+from bemine.config import BemineSettings, config_bool, config_int, config_list, config_string
 from bemine.kernel import BemineKernel
 
 
@@ -132,12 +132,71 @@ def _usage(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_usage(rollup), data={"providers": rollup})
 
 
+def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.context.subagents import load_subagent_context
+    from bemine.discord.dispatch import dispatch_status_payload
+    from bemine.jobs import default_jobs
+
+    subagents = load_subagent_context()
+    dispatch = dispatch_status_payload(settings)
+    jobs = list(default_jobs(settings))
+    goal_runtime = config_string("goal", "runtime", "claude") or "claude"
+    goal_interval = config_int("goal", "interval_secs", 600)
+    continuity_enabled = config_bool("continuity", "enabled", True)
+    continuity_devices = config_list("continuity", "devices", ["cdjk"])
+    phantom_root = config_string("phantom", "project_root", "")
+    summary_lines = [
+        "Bemine help:",
+        "- ask: help, status, health, continuity, goal, watch, jobs, dispatch, pa, smm, subagents, phantom, backlog, capabilities, audit, config",
+        "Configured surfaces:",
+        f"- device: `{settings.device_id}`",
+        f"- state: `{settings.state_dir}`",
+        f"- vault: `{settings.vault_dir}`",
+        f"- goal: runtime={goal_runtime} interval={goal_interval}s",
+        f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'}",
+        f"- dispatch: runtime={dispatch.get('runtime', 'unknown')} backend={dispatch.get('backend', 'unknown')} model={dispatch.get('model', 'unknown')}",
+        f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'}",
+        f"- phantom: project_root={phantom_root or 'unset'}",
+        "Built-in jobs:",
+    ]
+    summary_lines.extend(
+        f"- {job.job_id}: `{job.schedule}`" for job in jobs
+    )
+    summary_lines.extend(
+        [
+            "",
+            "Use `uv run bemine <command> --help` for the contract of any command.",
+        ]
+    )
+    return CommandResult(
+        text="\n".join(summary_lines) + "\n",
+        data={
+            "device_id": settings.device_id,
+            "state_dir": str(settings.state_dir),
+            "vault_dir": str(settings.vault_dir),
+            "goal": {"runtime": goal_runtime, "interval_secs": goal_interval},
+            "continuity": {
+                "enabled": continuity_enabled,
+                "devices": continuity_devices,
+            },
+            "dispatch": dispatch,
+            "subagents": [profile.to_dict() for profile in subagents.profiles],
+            "phantom": {"project_root": phantom_root},
+            "jobs": [
+                {"job_id": job.job_id, "schedule": job.schedule, "name": job.name}
+                for job in jobs
+            ],
+        },
+    )
+
+
 _SPECS = (
     CommandSpec("status", "Recent fleet status", _status),
     CommandSpec("rundown", "Project rundown", _rundown),
     CommandSpec("jobs.list", "List scheduled jobs", _jobs_list),
     CommandSpec("health", "Bemine service/job/deploy health", _health),
     CommandSpec("continuity", "cdjk line-cut recovery status", _continuity),
+    CommandSpec("help", "Self-documenting command and config summary", _help),
     CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
     CommandSpec("goal.start", "Start a managed goal session", _goal_start),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),

@@ -26,6 +26,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 
 - "what's running / status of X" → `status_show` (or `uv run bemine status --limit 12`);
   for a project channel, X = THAT project's session (match cwd basename).
+- "what can you do / help" → `help` or `uv run bemine help`; this prints the live
+  capability/config summary and the main operator surfaces.
 - "line cuts / continuity on cdjk" → `continuity` / `uv run bemine continuity`
   (or `health` if you want the whole deploy/service/watchers packet).
 - "what Bemine-managed workers are running / duplicates?" → `workers_status` native tool
