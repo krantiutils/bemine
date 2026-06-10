@@ -87,6 +87,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `Backlog/PA.md` and `Backlog/SMM.md`.
 - PA/SMM daily brief → `uv run bemine brief run`; writes `Briefs/<date>-pa-smm.md`
   and adds non-duplicate generated PA/SMM backlog nudges.
+- "what should I focus on today?" / PA planning → `pa_plan` native tool or
+  `uv run bemine pa plan`; this prioritizes health issues, failed jobs, waiting
+  sessions, active watchers, recovery escalations, and PA backlog with evidence.
 - SMM post ideas/copy → `smm_drafts` native tool or `uv run bemine smm draft`;
   this turns SMM backlog/brief signals into Ampixa-style draft posts with proof,
   target channels, and image prompts using `subagents/style.md` + `assets/ampixa/`.

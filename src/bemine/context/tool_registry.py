@@ -21,6 +21,7 @@ from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
 from ..jobs import run_job_by_id
+from ..pa import build_pa_plan
 from ..phantom import phantom_install, phantom_status
 from ..security.credentials import CredentialInventory
 from ..smm import draft_smm_posts
@@ -262,6 +263,26 @@ def default_tools() -> list[BemineTool]:
                 },
             },
             handler=_brief_run,
+        ),
+        BemineTool(
+            name="pa_plan",
+            description=(
+                "Create a compact PA daily focus plan from live evidence: health, "
+                "recent sessions asking for input, failed jobs, active watchers, "
+                "recovery escalations, and PA backlog. Set write=true to save to vault."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+                    "write": {
+                        "type": "boolean",
+                        "description": "Write plan into the Obsidian vault.",
+                    },
+                },
+            },
+            handler=_pa_plan,
+            policy="project-write",
         ),
         BemineTool(
             name="smm_drafts",
@@ -796,6 +817,17 @@ def _brief_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
         context.settings,
         limit=limit,
         record_backlog=record_backlog,
+        db=context.db,
+    )
+    return {"ok": True, "result": result.to_dict()}
+
+
+def _pa_plan(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    limit = _int(args.get("limit"), default=6, minimum=1, maximum=20)
+    result = build_pa_plan(
+        context.settings,
+        limit=limit,
+        write=bool(args.get("write", False)),
         db=context.db,
     )
     return {"ok": True, "result": result.to_dict()}
