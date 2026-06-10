@@ -55,7 +55,7 @@ GOAL_PREFIX_RE = re.compile(
 BACKLOG_RE = re.compile(
     r"^\s*(?:!?(?:mayor|bemine)\s+)?(?:(?P<owner1>pa|smm)\s+"
     r"(?P<kind1>idea|task|backlog)|(?:store|save|remember)\s+(?:this\s+)?"
-    r"(?P<kind2>idea|task|backlog)\s+for\s+(?P<owner2>pa|smm))\s*[:\-]\s*"
+    r"(?:(?P<kind2>idea|task|backlog)\s+)?for\s+(?P<owner2>pa|smm))\s*[:\-]\s*"
     r"(?P<text>.+)\s*$",
     re.IGNORECASE | re.DOTALL,
 )
