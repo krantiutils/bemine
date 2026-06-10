@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -19,6 +20,47 @@ RATE_LIMIT_DEFAULTS = [
     "too many requests",
     "please try again",
 ]
+
+# Plan/usage-window limits (e.g. codex's 5h cap): resending is pointless — wait for the
+# stated reset time, then nudge with "continue". Checked BEFORE rate-limit signatures.
+USAGE_LIMIT_DEFAULTS = [
+    "usage limit",
+    "hit your limit",
+    "reached your limit",
+    "limit will reset",
+    "limit resets",
+    "try again at",
+    "5-hour limit",
+    "5 hour limit",
+    "weekly limit",
+]
+
+# "… try again at 3:47am" / "resets at 03:47" — capture the clock time of the reset.
+_RESET_TIME = re.compile(
+    r"(?:try again|resets?|reset)\D{0,15}?(\d{1,2}):(\d{2})\s*(am|pm)?",
+    re.IGNORECASE,
+)
+
+
+def _parse_reset_epoch(text: str, now: float) -> float | None:
+    """Epoch of the next occurrence of the reset clock-time stated in *text* (local tz)."""
+    m = _RESET_TIME.search(text or "")
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2))
+    ampm = (m.group(3) or "").lower()
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    if ampm == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        return None
+    lt = time.localtime(now)
+    candidate = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, minute, 0,
+                             0, 0, -1))
+    if candidate <= now + 60:
+        candidate += 86400
+    return candidate
 
 # Obvious "just say yes / press enter" prompts that are safe to auto-confirm.
 _TRIVIAL_CONFIRM = re.compile(
@@ -45,6 +87,10 @@ def _recent(text: str) -> str:
 def classify(pane_text: str, asks_user: bool = False, *, signatures: list[str]) -> str:
     text = _recent(pane_text)
     low = text.lower()
+    # "(not your usage limit)" in the transient rate-limit message must not trip this tier.
+    usage_low = low.replace("not your usage limit", "")
+    if any(sig in usage_low for sig in USAGE_LIMIT_DEFAULTS):
+        return "usage_limit"
     if any(sig in low for sig in signatures):
         return "rate_limit"
     if _TRIVIAL_CONFIRM.search(text) and not _DESTRUCTIVE.search(text):
@@ -186,15 +232,21 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
             before = deps.tmux.capture(device, pid)
             kind = classify(before, signatures=sigs)
 
+            if kind == "usage_limit":
+                state[key] = _handle_usage_limit(deps, pane, device, pid, rec, now, before)
+                continue
+
             if kind == "rate_limit":
                 state[key] = _handle_rate_limit(deps, pane, device, pid, rec, now,
                                                 base_backoff, max_attempts)
                 continue
 
-            # No longer rate-limited: if we were mid rate-limit episode, it cleared.
-            if rec.get("rl_attempts"):
-                if not rec.get("escalated"):
+            # No longer rate/usage-limited: if we were mid episode, it cleared.
+            if rec.get("rl_attempts") or rec.get("limit_wait_until"):
+                if rec.get("rl_attempts") and not rec.get("escalated"):
                     deps.audit("recovered", "rate_limit", pane)
+                if rec.get("limit_wait_until"):
+                    deps.audit("recovered", "usage_limit", pane)
                 state.pop(key, None)
                 continue
 
@@ -223,6 +275,20 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
     save_recovery_state(path, state)
 
 
+def _fallback_reset_epoch(now: float) -> float:
+    """Next occurrence of [recovery].limit_reset_time (default 03:47, the codex window)."""
+    raw = config_string("recovery", "limit_reset_time", "03:47")
+    try:
+        hour, minute = (int(p) for p in raw.strip().split(":"))
+    except ValueError:
+        hour, minute = 3, 47
+    lt = time.localtime(now)
+    candidate = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, minute, 0, 0, 0, -1))
+    if candidate <= now + 60:
+        candidate += 86400
+    return candidate
+
+
 def _handle_rate_limit(deps, pane, device, pid, rec, now, base_backoff, max_attempts) -> dict:
     if rec.get("escalated"):
         # Already pinged the human for this episode — hold silently, no more resends.
@@ -241,6 +307,41 @@ def _handle_rate_limit(deps, pane, device, pid, rec, now, base_backoff, max_atte
     if attempts >= max_attempts:
         new["next_retry_at"] = now + _ESCALATED_HOLD
     return new
+
+
+def _handle_usage_limit(deps, pane, device, pid, rec, now, pane_text) -> dict:
+    wait_until = float(rec.get("limit_wait_until") or 0)
+    if wait_until <= 0:
+        # Prefer the reset time stated on screen; else the configured window reset
+        # ([recovery].limit_reset_time, default 03:47 — the codex 5h window).
+        wait_until = _parse_reset_epoch(pane_text, now) or _fallback_reset_epoch(now)
+
+    if now < wait_until:
+        if not rec.get("limit_wait_audited"):
+            deps.audit("limit_wait", "usage_limit", pane)
+        return {
+            "limit_wait_until": wait_until,
+            "next_retry_at": wait_until,
+            "limit_wait_audited": True,
+            "limit_continue_sent": bool(rec.get("limit_continue_sent")),
+        }
+
+    if not rec.get("limit_continue_sent"):
+        deps.tmux.send_text(device, pid, "continue")
+        deps.audit("limit_continue", "usage_limit", pane)
+        return {
+            "limit_wait_until": wait_until,
+            "next_retry_at": now + max(60, _cfg_backoff()),
+            "limit_wait_audited": True,
+            "limit_continue_sent": True,
+        }
+
+    return {
+        "limit_wait_until": _fallback_reset_epoch(now),
+        "next_retry_at": _fallback_reset_epoch(now),
+        "limit_wait_audited": True,
+        "limit_continue_sent": True,
+    }
 
 
 def _handle_question(deps, pane, device, pid, before) -> None:

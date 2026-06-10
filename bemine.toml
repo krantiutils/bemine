@@ -168,6 +168,7 @@ max_session_age_secs = 14400  # 4h window — recover sessions stuck within this
 backoff_secs = 300            # retry backoff after a failed attempt; doubles each retry
 max_attempts = 5              # failed verifications before escalating to Discord
 verify_delay_secs = 4         # wait before re-capturing to confirm an action worked
+limit_reset_time = "03:47"    # fallback local reset clock for usage-limit messages without one
 # rate_limit_signatures = "rate limited,server is temporarily limiting requests,overloaded"
 
 [security]

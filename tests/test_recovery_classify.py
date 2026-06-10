@@ -82,3 +82,28 @@ def test_state_roundtrip_and_key(tmp_path):
     assert load_recovery_state(tmp_path / "missing.json") == {}
 
     assert recovery_key({"device": "mbp", "pane_id": "%2"}) == "mbp:%2"
+
+
+def test_classify_usage_limit_beats_rate_limit():
+    for pane in [
+        "You've hit your usage limit. Try again at 3:47am.",
+        "You have reached your usage limit. Your limit will reset at 03:47.",
+        "5-hour limit reached — upgrade or try again later.",
+    ]:
+        assert classify(pane, signatures=RATE_LIMIT_DEFAULTS) == "usage_limit", pane
+
+
+def test_parse_reset_epoch():
+    import time as _t
+    from bemine.jobs.auto_recovery import _parse_reset_epoch
+    # 2026-06-11 01:00 local
+    now = _t.mktime((2026, 6, 11, 1, 0, 0, 0, 0, -1))
+    e = _parse_reset_epoch("hit your usage limit. Try again at 3:47am", now)
+    assert e is not None
+    lt = _t.localtime(e)
+    assert (lt.tm_hour, lt.tm_min, lt.tm_mday) == (3, 47, 11)  # later today
+    # time already past -> tomorrow
+    now2 = _t.mktime((2026, 6, 11, 5, 0, 0, 0, 0, -1))
+    e2 = _parse_reset_epoch("limit will reset at 03:47", now2)
+    assert _t.localtime(e2).tm_mday == 12
+    assert _parse_reset_epoch("no time here", now) is None
