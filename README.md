@@ -122,6 +122,8 @@ uv run mayor-discord-send --text "legacy alias"
 
 `bemine-daemon` is the one background process. It seeds and runs jobs from the
 SQLite `jobs` table, recording each execution in `job_runs`.
+Native workers can run a specific configured job with `job_run`; notifications are
+opt-in on that tool.
 
 The first built-in job is `daily_digest`, scheduled at `0 18 * * *` local time.
 It scans local histories, checks recent fleet status using `[status].devices`

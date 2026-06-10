@@ -37,6 +37,38 @@ def test_jobs_list_tool_runs(tmp_path):
     assert "jobs" in out and isinstance(out["jobs"], list)
 
 
+def test_job_run_tool_runs_job_without_notification_by_default(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class Result:
+        job_id = "dream"
+        status = "success"
+        output = "Dream recorded"
+        notified = False
+
+    def fake_run_job_by_id(settings_arg, job_id, **kwargs):
+        calls["settings"] = settings_arg
+        calls["job_id"] = job_id
+        calls.update(kwargs)
+        sent = kwargs["sender"]("output")
+        calls["sender_result"] = sent
+        return Result()
+
+    monkeypatch.setattr("bemine.context.tool_registry.run_job_by_id", fake_run_job_by_id)
+
+    out = BemineToolRegistry().execute("job_run", {"job_id": "dream"}, ctx)
+
+    assert out["ok"] is True
+    assert out["job_id"] == "dream"
+    assert out["status"] == "success"
+    assert out["notified"] is False
+    assert out["output"] == "Dream recorded"
+    assert calls["settings"] is settings
+    assert calls["job_id"] == "dream"
+    assert calls["sender_result"] == {"id": "", "channel_id": ""}
+
+
 def test_health_status_tool_uses_shared_health_packet(tmp_path, monkeypatch):
     settings, db, ctx = _ctx(tmp_path)
     calls = {}
@@ -476,6 +508,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
     assert {
         "bemine_config",
         "jobs_list",
+        "job_run",
         "health_status",
         "capabilities_status",
         "usage_report",
