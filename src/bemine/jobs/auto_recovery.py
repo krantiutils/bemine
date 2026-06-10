@@ -331,11 +331,30 @@ def _handle_usage_limit(deps, pane, device, pid, rec, now, pane_text) -> dict:
             "limit_continue_sent": bool(rec.get("limit_continue_sent")),
         }
 
+    attempts = int(rec.get("continue_attempts", 0))
+
+    # A nudge already went out and the pane STILL shows a limit: the wait was probably
+    # mis-scheduled (each session's 5h window resets at its own time, the fallback can be
+    # wrong). If the pane itself states a reset comfortably in the future, RE-WAIT to it
+    # instead of poking the session for hours.
+    if attempts:
+        stated = _parse_reset_epoch(pane_text, now)
+        if stated and stated > now + 120:
+            st_lt, w_lt = time.localtime(stated), time.localtime(wait_until)
+            # Same clock-time as the reset we already waited for = stale text, keep
+            # retrying. A DIFFERENT stated time is new information -> re-wait to it.
+            if (st_lt.tm_hour, st_lt.tm_min) != (w_lt.tm_hour, w_lt.tm_min):
+                deps.audit("limit_wait", "usage_limit", pane)
+                return {
+                    "limit_wait_until": stated,
+                    "next_retry_at": stated,
+                    "limit_wait_audited": True,
+                }
+
     # Past the reset: nudge "continue", and if the pane still shows the limit on later
     # passes, RETRY with doubling backoff capped at 10 minutes — never stall to the next
     # day on a nudge that didn't take. When the pane moves, classify() stops returning
     # usage_limit and the recovered path clears this record.
-    attempts = int(rec.get("continue_attempts", 0))
     deps.tmux.send_text(device, pid, "continue")
     deps.audit("limit_continue", "usage_limit", pane)
     backoff = min(60 * (2 ** attempts), _cfg_usage_limit_retry_cap())
