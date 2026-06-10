@@ -180,7 +180,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "Built-in jobs:",
     ]
     summary_lines.extend(
-        f"- {job.job_id}: `{job.schedule}`" for job in jobs
+        f"- {job.job_id} ({job.name}): `{job.schedule}`" for job in jobs
     )
     summary_lines.extend(
         [

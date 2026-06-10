@@ -77,6 +77,7 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "discord routes:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "project_root=/tmp/phantom" in out.text
+    assert "session_watcher (Session watcher): `*/2 * * * *`" in out.text
     assert out.data["goal"]["runtime"] == "shell"
     assert out.data["dispatch"]["runtime"] == "kimi"
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
