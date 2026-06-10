@@ -203,3 +203,106 @@ def test_store_migrates_existing_discord_messages_without_channel_names(tmp_path
     }
     assert {"channel_name", "category_name"} <= cols
     assert store.channel_summaries(limit=1)[0]["channel_id"] == "chan-old"
+
+
+def test_channel_metadata_labels_outbound_only_threads(tmp_path: Path) -> None:
+    store = Store(tmp_path / "bemine.db")
+    store.record_outbound(
+        discord_message_id="b1",
+        channel_id="chan-digest",
+        content="daily digest",
+        files=[],
+    )
+    store.record_channel_metadata(
+        channel_id="chan-digest",
+        guild_id="guild-1",
+        channel_name="daily-digest",
+        category_name="Ops",
+        channel_type=0,
+    )
+
+    rendered = render_channel_summaries(store.channel_summaries(limit=5))
+
+    assert "#Ops/daily-digest" in rendered
+    assert "chan-digest" in rendered
+    assert store.local_channel_ids() == ["chan-digest"]
+
+
+def test_fetch_guild_channel_metadata_maps_parent_category(monkeypatch) -> None:
+    from bemine.discord import channel_index
+
+    monkeypatch.setattr(
+        channel_index,
+        "_discord_json",
+        lambda token, url: [
+            {"id": "cat-1", "name": "Projects", "type": 4},
+            {"id": "chan-1", "name": "voidash", "type": 0, "parent_id": "cat-1"},
+            {"id": "chan-2", "name": "dm-ish", "type": 0, "parent_id": None},
+        ],
+    )
+
+    rows = channel_index.fetch_guild_channel_metadata("token", "guild-1")
+
+    assert rows[0].channel_name == "Projects"
+    assert rows[1].channel_name == "voidash"
+    assert rows[1].category_name == "Projects"
+
+
+def test_default_guild_id_prefers_voidash(monkeypatch) -> None:
+    from bemine.discord import channel_index
+
+    monkeypatch.setattr(
+        channel_index,
+        "_discord_json",
+        lambda token, url: [
+            {"id": "guild-other", "name": "Other"},
+            {"id": "guild-voidash", "name": "voidash"},
+        ],
+    )
+
+    assert channel_index.default_guild_id("token") == "guild-voidash"
+
+
+def test_refresh_channel_metadata_fetches_unknown_local_thread(monkeypatch, tmp_path: Path) -> None:
+    from bemine.discord import channel_index
+
+    responses = {
+        "guilds/guild-1/channels": [{"id": "cat-1", "name": "Projects", "type": 4}],
+        "channels/thread-1": {
+            "id": "thread-1",
+            "name": "launch-plan",
+            "type": 11,
+            "guild_id": "guild-1",
+            "parent_id": "parent-1",
+        },
+        "channels/parent-1": {"id": "parent-1", "name": "voidash", "type": 0},
+    }
+
+    def fake_json(token: str, url: str):
+        for key, value in responses.items():
+            if url.endswith(key):
+                return value
+        return []
+
+    monkeypatch.setattr(channel_index, "_discord_json", fake_json)
+    store = Store(tmp_path / "bemine.db")
+
+    rows = channel_index.refresh_channel_metadata(
+        store,
+        token="token",
+        guild_id="guild-1",
+        channel_ids=["thread-1"],
+    )
+
+    assert any(row["channel_id"] == "thread-1" for row in rows)
+    rendered = render_channel_summaries([
+        {
+            "channel_id": "thread-1",
+            "channel_name": "launch-plan",
+            "category_name": "voidash",
+            "total_messages": 1,
+            "inbound_messages": 1,
+            "outbound_messages": 0,
+        }
+    ])
+    assert "#voidash/launch-plan" in rendered

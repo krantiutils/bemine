@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS outbound_messages (
     files_json TEXT NOT NULL,
     sent_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS discord_channels (
+    channel_id TEXT PRIMARY KEY,
+    guild_id TEXT,
+    channel_name TEXT NOT NULL,
+    category_name TEXT NOT NULL,
+    channel_type INTEGER,
+    updated_at REAL NOT NULL
+);
 """
 
 
@@ -106,6 +115,48 @@ class Store:
                     time.time(),
                 ),
             )
+            if channel_name or category_name:
+                _upsert_channel_metadata(
+                    conn,
+                    channel_id=channel_id,
+                    guild_id=guild_id or "",
+                    channel_name=channel_name,
+                    category_name=category_name,
+                    channel_type=None,
+                    updated_at=time.time(),
+                )
+
+    def record_channel_metadata(
+        self,
+        *,
+        channel_id: str,
+        guild_id: str = "",
+        channel_name: str,
+        category_name: str = "",
+        channel_type: int | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            _upsert_channel_metadata(
+                conn,
+                channel_id=channel_id,
+                guild_id=guild_id,
+                channel_name=channel_name,
+                category_name=category_name,
+                channel_type=channel_type,
+                updated_at=time.time(),
+            )
+
+    def local_channel_ids(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT channel_id FROM inbound_messages
+                UNION
+                SELECT channel_id FROM outbound_messages
+                ORDER BY channel_id
+                """
+            ).fetchall()
+        return [str(row["channel_id"]) for row in rows]
 
     def record_attachment(
         self,
@@ -218,8 +269,8 @@ class Store:
                     SELECT
                         message_id AS message_id,
                         channel_id AS channel_id,
-                        channel_name AS channel_name,
-                        category_name AS category_name,
+                        COALESCE(channel_name, '') AS channel_name,
+                        COALESCE(category_name, '') AS category_name,
                         author_name AS author_name,
                         content AS content,
                         created_at AS created_at,
@@ -274,29 +325,31 @@ class Store:
                 WITH events AS (
                     SELECT
                         message_id AS message_id,
-                        channel_id AS channel_id,
-                        channel_name AS channel_name,
-                        category_name AS category_name,
-                        guild_id AS guild_id,
+                        inbound_messages.channel_id AS channel_id,
+                        COALESCE(NULLIF(inbound_messages.channel_name, ''), dc.channel_name, '') AS channel_name,
+                        COALESCE(NULLIF(inbound_messages.category_name, ''), dc.category_name, '') AS category_name,
+                        inbound_messages.guild_id AS guild_id,
                         author_name AS author_name,
                         content AS content,
                         created_at AS created_at,
                         received_at AS sort_at,
                         'user' AS role
                     FROM inbound_messages
+                    LEFT JOIN discord_channels dc ON dc.channel_id = inbound_messages.channel_id
                     UNION ALL
                     SELECT
                         COALESCE(discord_message_id, 'outbound:' || id) AS message_id,
-                        channel_id AS channel_id,
-                        NULL AS channel_name,
-                        NULL AS category_name,
-                        NULL AS guild_id,
+                        outbound_messages.channel_id AS channel_id,
+                        COALESCE(dc.channel_name, '') AS channel_name,
+                        COALESCE(dc.category_name, '') AS category_name,
+                        dc.guild_id AS guild_id,
                         'balen' AS author_name,
                         content AS content,
                         datetime(sent_at, 'unixepoch', 'localtime') AS created_at,
                         sent_at AS sort_at,
                         'assistant' AS role
                     FROM outbound_messages
+                    LEFT JOIN discord_channels dc ON dc.channel_id = outbound_messages.channel_id
                 ),
                 filtered AS (
                     SELECT *
@@ -325,9 +378,9 @@ class Store:
                     FROM filtered
                 )
                 SELECT
-                    channel_id,
-                    latest_channel_name AS channel_name,
-                    latest_category_name AS category_name,
+                    ranked.channel_id,
+                    COALESCE(NULLIF(latest_channel_name, ''), discord_channels.channel_name, '') AS channel_name,
+                    COALESCE(NULLIF(latest_category_name, ''), discord_channels.category_name, '') AS category_name,
                     latest_guild_id AS guild_id,
                     total_messages,
                     inbound_messages,
@@ -339,6 +392,7 @@ class Store:
                     sort_at AS latest_sort_at,
                     role AS latest_role
                 FROM ranked
+                LEFT JOIN discord_channels ON discord_channels.channel_id = ranked.channel_id
                 WHERE rn = 1
                 ORDER BY latest_sort_at DESC
                 LIMIT ?
@@ -367,7 +421,11 @@ class Store:
                         channel_id,
                         MAX(channel_name) AS channel_name,
                         MAX(category_name) AS category_name
-                    FROM inbound_messages
+                    FROM (
+                        SELECT channel_id, channel_name, category_name FROM discord_channels
+                        UNION ALL
+                        SELECT channel_id, channel_name, category_name FROM inbound_messages
+                    )
                     GROUP BY channel_id
                 )
                 SELECT *
@@ -463,3 +521,31 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str)
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     if column not in existing:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def _upsert_channel_metadata(
+    conn: sqlite3.Connection,
+    *,
+    channel_id: str,
+    guild_id: str,
+    channel_name: str,
+    category_name: str,
+    channel_type: int | None,
+    updated_at: float,
+) -> None:
+    if not channel_id or not channel_name:
+        return
+    conn.execute(
+        """
+        INSERT INTO discord_channels (
+            channel_id, guild_id, channel_name, category_name, channel_type, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel_id) DO UPDATE SET
+            guild_id = excluded.guild_id,
+            channel_name = excluded.channel_name,
+            category_name = excluded.category_name,
+            channel_type = excluded.channel_type,
+            updated_at = excluded.updated_at
+        """,
+        (channel_id, guild_id, channel_name, category_name, channel_type, updated_at),
+    )

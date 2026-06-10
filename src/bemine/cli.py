@@ -239,6 +239,7 @@ credentials.
 Examples:
   uv run bemine discord write-project-channels --limit 200
   uv run bemine discord sync-project-channels --guild-id "$MAYOR_DISCORD_GUILD_ID"
+  uv run bemine discord refresh-channel-names --guild-id "$MAYOR_DISCORD_GUILD_ID"
   uv run bemine discord threads --query rai
   uv run bemine discord transcript --channel-id 123 --limit 30
   uv run mayor-discord-gateway --check
@@ -1241,6 +1242,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Delete project-category channels that are no longer tracked.",
     )
+    refresh_names = discord_sub.add_parser(
+        "refresh-channel-names",
+        help="Fetch live Discord channel names into the local transcript index.",
+    )
+    refresh_names.add_argument(
+        "--guild-id",
+        default=os.environ.get("MAYOR_DISCORD_GUILD_ID", ""),
+        help="Discord guild/server id.",
+    )
+    refresh_names.add_argument("--json", action="store_true", help="Emit JSON.")
     threads = discord_sub.add_parser(
         "threads",
         help="List locally stored Discord channels/threads by activity.",
@@ -2036,6 +2047,41 @@ def main(argv: list[str] | None = None) -> None:
                 )
             )
             print(json.dumps(result, indent=2, sort_keys=True))
+        elif args.discord_command == "refresh-channel-names":
+            from bemine.discord.channel_index import (
+                DiscordChannelIndexError,
+                default_guild_id,
+                refresh_channel_metadata,
+            )
+            from bemine.discord.config import Settings as DiscordSettings
+            from bemine.discord.store import Store
+
+            discord_settings = DiscordSettings.load()
+            try:
+                guild_id = (
+                    args.guild_id.strip()
+                    or os.environ.get("DISCORD_GUILD_ID", "").strip()
+                    or config_string("discord", "guild_id", "")
+                    or default_guild_id(discord_settings.token)
+                )
+            except DiscordChannelIndexError as exc:
+                raise SystemExit(str(exc)) from exc
+            if not guild_id:
+                raise SystemExit("Set --guild-id or MAYOR_DISCORD_GUILD_ID.")
+            try:
+                store = Store(settings.db_path)
+                rows = refresh_channel_metadata(
+                    store,
+                    token=discord_settings.token,
+                    guild_id=guild_id,
+                    channel_ids=store.local_channel_ids(),
+                )
+            except DiscordChannelIndexError as exc:
+                raise SystemExit(str(exc)) from exc
+            if args.json:
+                print(json.dumps(rows, indent=2, sort_keys=True))
+            else:
+                print(f"refreshed {len(rows)} Discord channel names")
         elif args.discord_command == "threads":
             from bemine.discord.store import Store
             from bemine.discord.transcript import (
