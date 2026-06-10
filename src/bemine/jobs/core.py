@@ -384,8 +384,13 @@ class BemineDaemon:
         try:
             if not ar.recovery_enabled():
                 return
+            now = _time.time()
+            # The daemon polls every ~30s, but recovery acts on its own (slower) cadence.
+            if now - getattr(self, "_last_recovery_ts", 0.0) < ar._cfg_poll_interval():
+                return
+            self._last_recovery_ts = now
             ar.tick_recovery(self.settings, ar.default_recovery_deps(self.settings),
-                             now=_time.time())
+                             now=now)
         except Exception:
             pass
 

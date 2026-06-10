@@ -249,3 +249,23 @@ def test_daemon_heartbeat_is_frozen_at_boot(tmp_path, monkeypatch):
     monkeypatch.setattr(core, "current_head_sha", lambda *a, **k: "later-sha")
     daemon.run_once()
     assert read_heartbeat(settings, "daemon")["sha"] == "boot-sha"   # frozen, not 'later-sha'
+
+
+def test_recovery_tick_respects_poll_interval(tmp_path, monkeypatch):
+    # [recovery].poll_interval_secs gates how often the daemon runs auto-recovery —
+    # the daemon polls every ~30s but recovery must only act once per interval.
+    from bemine.config import BemineSettings
+    from bemine.jobs.core import BemineDaemon
+    import bemine.jobs.auto_recovery as ar
+
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    called = {"n": 0}
+    monkeypatch.setattr(ar, "recovery_enabled", lambda: True)
+    monkeypatch.setattr(ar, "tick_recovery",
+                        lambda s, deps, *, now: called.__setitem__("n", called["n"] + 1))
+    monkeypatch.setattr(ar, "_cfg_poll_interval", lambda: 300)
+    daemon = BemineDaemon(settings)
+    daemon.run_once()   # first tick fires
+    daemon.run_once()   # within the interval -> skipped
+    daemon.run_once()
+    assert called["n"] == 1
