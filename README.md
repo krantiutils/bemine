@@ -222,6 +222,7 @@ uv run bemine dream run
 
 The daemon seeds a `dream` cron job (`[dream].schedule`, default `15 3 * * *`)
 that appends JSONL records to `Dreams/dreams.jsonl` in the Obsidian vault.
+Native workers can call `dream_run` for an immediate manual pass.
 
 ### Watcher mode
 

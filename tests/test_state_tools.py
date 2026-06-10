@@ -160,6 +160,35 @@ def test_brief_run_tool_generates_pa_smm_brief(tmp_path, monkeypatch):
     assert calls["db"] is db
 
 
+def test_dream_run_tool_records_dream(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+
+    class Result:
+        def to_dict(self):
+            return {
+                "path": str(settings.vault_dir / "Dreams" / "dreams.jsonl"),
+                "data": {"schema": "bemine.dream.v1", "signals": []},
+            }
+
+    calls = {}
+
+    def fake_run_dream(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return Result()
+
+    monkeypatch.setattr("bemine.context.tool_registry.run_dream", fake_run_dream)
+
+    out = BemineToolRegistry().execute("dream_run", {"limit": 25}, ctx)
+
+    assert out["ok"] is True
+    assert out["result"]["data"]["schema"] == "bemine.dream.v1"
+    assert out["result"]["path"].endswith("dreams.jsonl")
+    assert calls["settings"] is settings
+    assert calls["limit"] == 25
+    assert calls["db"] is db
+
+
 def test_goal_start_tool_uses_current_context_defaults(tmp_path, monkeypatch):
     settings, db, ctx = _ctx(tmp_path)
     calls = []
@@ -377,6 +406,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "usage_report",
         "backlog_add",
         "brief_run",
+        "dream_run",
         "goal_start",
         "goal_status",
         "discord_threads",

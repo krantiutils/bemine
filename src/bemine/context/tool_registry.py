@@ -14,6 +14,7 @@ from ..capabilities import build_capability_manifest
 from ..db import BemineDB
 from ..discord.store import Store as DiscordStore
 from ..discord.transcript import redact_message_rows
+from ..dreams import run_dream
 from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
@@ -194,6 +195,26 @@ def default_tools() -> list[BemineTool]:
                 },
             },
             handler=_brief_run,
+        ),
+        BemineTool(
+            name="dream_run",
+            description=(
+                "Record one self-improvement dream data point by condensing recent "
+                "Discord history, failures, and audit events into the Obsidian vault."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                        "description": "Recent rows/events to inspect; defaults to 80.",
+                    }
+                },
+            },
+            handler=_dream_run,
+            policy="project-write",
         ),
         BemineTool(
             name="goal_start",
@@ -536,6 +557,12 @@ def _brief_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
         record_backlog=record_backlog,
         db=context.db,
     )
+    return {"ok": True, "result": result.to_dict()}
+
+
+def _dream_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    limit = _int(args.get("limit"), default=80, minimum=1, maximum=300)
+    result = run_dream(context.settings, limit=limit, db=context.db)
     return {"ok": True, "result": result.to_dict()}
 
 
