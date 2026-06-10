@@ -52,6 +52,13 @@ def _health(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_health(payload), data=payload)
 
 
+def _dispatch_status(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.discord.dispatch import dispatch_status_payload, render_dispatch_status
+
+    payload = dispatch_status_payload(settings)
+    return CommandResult(text=render_dispatch_status(payload), data=payload)
+
+
 def _goals_list(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.goals import list_goal_sessions, render_goal_sessions
 
@@ -85,6 +92,7 @@ _SPECS = (
     CommandSpec("rundown", "Project rundown", _rundown),
     CommandSpec("jobs.list", "List scheduled jobs", _jobs_list),
     CommandSpec("health", "Bemine service/job/deploy health", _health),
+    CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),
