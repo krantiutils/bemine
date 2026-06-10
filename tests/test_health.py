@@ -73,3 +73,49 @@ def test_health_reports_service_and_job_issues(tmp_path):
     assert any("deploy phase is deploying" in issue for issue in payload["issues"])
     assert any("mayor-discord-gateway" in issue for issue in payload["issues"])
     assert any("bad_job" in issue for issue in payload["issues"])
+
+
+def test_health_reports_continuity_restartable_missing_worker(tmp_path, monkeypatch):
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine",
+        vault_dir=tmp_path / "v",
+        device_id="cdjk",
+    )
+    project = tmp_path / "repo"
+    project.mkdir()
+    DeployState(phase="confirmed", target_sha="sha1").save(state_path(settings))
+    write_heartbeat(settings, "daemon", "sha1")
+    write_heartbeat(settings, "gateway", "sha1")
+    db = BemineDB(settings.db_path)
+    db.upsert_managed_session(
+        name="goal-restart",
+        runtime="shell",
+        transport="tmux",
+        device_id="cdjk",
+        project_id="proj_restart",
+        cwd=str(project),
+        command="cat",
+        status="running",
+    )
+
+    class FakeTmux:
+        def exists(self, _name):
+            return False
+
+    monkeypatch.setattr("bemine.health.TmuxAdapter", lambda: FakeTmux())
+
+    payload = collect_health(
+        settings,
+        db=db,
+        unit_statuses=[
+            UnitStatus("bemine-daemon.service", "loaded", "active", "running", "enabled", 111),
+            UnitStatus("mayor-discord-gateway.service", "loaded", "active", "running", "enabled", 222),
+        ],
+    )
+
+    assert payload["ok"] is False
+    assert payload["continuity"]["applies_to_device"] is True
+    assert payload["continuity"]["restartable_missing"] == 1
+    assert payload["continuity"]["missing_workers"][0]["name"] == "goal-restart"
+    assert any("continuity has 1 restartable missing worker" in issue for issue in payload["issues"])
+    assert "Continuity:" in render_health(payload)
