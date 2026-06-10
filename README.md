@@ -36,6 +36,8 @@ Functional now:
   and `discord_transcript`.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
+- Native workers can inspect safe credential/tool capability state with
+  `capabilities_status`, including Android/ADB readiness.
 - `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
 - `SOUL.md` and `SKILL.md` define Bemine's identity and harness workflow, and
   are injected into dispatched worker prompts.
