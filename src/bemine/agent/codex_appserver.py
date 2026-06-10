@@ -156,6 +156,15 @@ class CodexAppServerSession:
                 return "".join(deltas)
 
             elif method and (msg.get("params") or {}).get("error"):
+                # Status/startup notifications (e.g. an optional MCP server failing to
+                # start) are informational — codex itself continues the turn without it,
+                # so we must too. Only non-status notification errors abort the turn.
+                if method.startswith("mcpServer/") or "status" in method.lower():
+                    LOG.warning(
+                        "codex notification (non-fatal) %s: %s",
+                        method, msg["params"]["error"],
+                    )
+                    continue
                 raise CodexAppServerError(
                     f"codex notification error ({method}): {msg['params']['error']}"
                 )
