@@ -11,7 +11,7 @@ def render_channel_summaries(rows: list[Mapping[str, Any]]) -> str:
         return "No local Discord channels or threads found.\n"
     lines = ["Local Discord channels/threads:"]
     for row in rows:
-        channel_id = str(row.get("channel_id") or "")
+        channel = _channel_label(row)
         total = int(row.get("total_messages") or 0)
         inbound = int(row.get("inbound_messages") or 0)
         outbound = int(row.get("outbound_messages") or 0)
@@ -19,7 +19,7 @@ def render_channel_summaries(rows: list[Mapping[str, Any]]) -> str:
         author = str(row.get("latest_author_name") or "")
         content = _clip_one_line(str(row.get("latest_content") or ""), 180)
         lines.append(
-            f"- `{channel_id}` messages={total} in={inbound} out={outbound} "
+            f"- {channel} messages={total} in={inbound} out={outbound} "
             f"last={created_at} {author}: {content}"
         )
     lines.append("")
@@ -31,12 +31,12 @@ def render_transcript(rows: list[Mapping[str, Any]]) -> str:
         return "No local Discord transcript messages found.\n"
     lines = ["Local Discord transcript:"]
     for row in rows:
-        channel_id = str(row.get("channel_id") or "")
+        channel = _channel_label(row)
         created_at = str(row.get("created_at") or "")
         author = str(row.get("author_name") or "")
         role = str(row.get("role") or "")
         content = _clip_block(str(row.get("content") or ""), 1200)
-        lines.append(f"[{created_at}] `{channel_id}` {author} ({role}):")
+        lines.append(f"[{created_at}] {channel} {author} ({role}):")
         lines.append(content or "(empty)")
     lines.append("")
     return "\n".join(lines)
@@ -51,6 +51,17 @@ def redact_message_rows(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
                 item[key] = _redact(str(item[key]))
         redacted.append(item)
     return redacted
+
+
+def _channel_label(row: Mapping[str, Any]) -> str:
+    channel_id = str(row.get("channel_id") or "")
+    channel_name = str(row.get("channel_name") or "").strip()
+    category_name = str(row.get("category_name") or "").strip()
+    if channel_name and category_name:
+        return f"`#{category_name}/{channel_name}` (`{channel_id}`)"
+    if channel_name:
+        return f"`#{channel_name}` (`{channel_id}`)"
+    return f"`{channel_id}`"
 
 
 def _clip_one_line(text: str, limit: int) -> str:

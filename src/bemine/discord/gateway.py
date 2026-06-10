@@ -929,6 +929,8 @@ class MayorDiscordGateway:
         self.store.record_inbound_message(
             message_id=message_id,
             channel_id=channel_id,
+            channel_name=_message_channel_name(message),
+            category_name=_message_category_name(message),
             guild_id=guild_id,
             author_id=str(message.author.id),
             author_name=author_name,

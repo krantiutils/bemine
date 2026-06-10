@@ -15,6 +15,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS inbound_messages (
     message_id TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL,
+    channel_name TEXT,
+    category_name TEXT,
     guild_id TEXT,
     author_id TEXT NOT NULL,
     author_name TEXT NOT NULL,
@@ -65,6 +67,8 @@ class Store:
     def _init(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            _ensure_column(conn, "inbound_messages", "channel_name", "TEXT")
+            _ensure_column(conn, "inbound_messages", "category_name", "TEXT")
 
     def record_inbound_message(
         self,
@@ -77,18 +81,22 @@ class Store:
         content: str,
         is_dm: bool,
         created_at: str,
+        channel_name: str = "",
+        category_name: str = "",
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO inbound_messages (
-                    message_id, channel_id, guild_id, author_id, author_name,
-                    content, is_dm, created_at, received_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    message_id, channel_id, channel_name, category_name, guild_id,
+                    author_id, author_name, content, is_dm, created_at, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message_id,
                     channel_id,
+                    channel_name,
+                    category_name,
                     guild_id,
                     author_id,
                     author_name,
@@ -210,6 +218,8 @@ class Store:
                     SELECT
                         message_id AS message_id,
                         channel_id AS channel_id,
+                        channel_name AS channel_name,
+                        category_name AS category_name,
                         author_name AS author_name,
                         content AS content,
                         created_at AS created_at,
@@ -223,6 +233,8 @@ class Store:
                     SELECT
                         COALESCE(discord_message_id, 'outbound:' || id) AS message_id,
                         channel_id AS channel_id,
+                        NULL AS channel_name,
+                        NULL AS category_name,
                         'balen' AS author_name,
                         content AS content,
                         datetime(sent_at, 'unixepoch', 'localtime') AS created_at,
@@ -263,6 +275,8 @@ class Store:
                     SELECT
                         message_id AS message_id,
                         channel_id AS channel_id,
+                        channel_name AS channel_name,
+                        category_name AS category_name,
                         guild_id AS guild_id,
                         author_name AS author_name,
                         content AS content,
@@ -274,6 +288,8 @@ class Store:
                     SELECT
                         COALESCE(discord_message_id, 'outbound:' || id) AS message_id,
                         channel_id AS channel_id,
+                        NULL AS channel_name,
+                        NULL AS category_name,
                         NULL AS guild_id,
                         'balen' AS author_name,
                         content AS content,
@@ -287,6 +303,8 @@ class Store:
                     FROM events
                     WHERE ? = ''
                        OR channel_id LIKE ?
+                       OR channel_name LIKE ?
+                       OR category_name LIKE ?
                        OR author_name LIKE ?
                        OR content LIKE ?
                 ),
@@ -301,11 +319,15 @@ class Store:
                             OVER (PARTITION BY channel_id) AS inbound_messages,
                         SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END)
                             OVER (PARTITION BY channel_id) AS outbound_messages,
-                        MAX(guild_id) OVER (PARTITION BY channel_id) AS latest_guild_id
+                        MAX(guild_id) OVER (PARTITION BY channel_id) AS latest_guild_id,
+                        MAX(channel_name) OVER (PARTITION BY channel_id) AS latest_channel_name,
+                        MAX(category_name) OVER (PARTITION BY channel_id) AS latest_category_name
                     FROM filtered
                 )
                 SELECT
                     channel_id,
+                    latest_channel_name AS channel_name,
+                    latest_category_name AS category_name,
                     latest_guild_id AS guild_id,
                     total_messages,
                     inbound_messages,
@@ -321,7 +343,7 @@ class Store:
                 ORDER BY latest_sort_at DESC
                 LIMIT ?
                 """,
-                (query, pattern, pattern, pattern, limit),
+                (query, pattern, pattern, pattern, pattern, pattern, limit),
             ).fetchall()
         return [_row_dict(row) for row in rows]
 
@@ -340,11 +362,21 @@ class Store:
         with self._connect() as conn:
             rows = conn.execute(
                 """
+                WITH channel_meta AS (
+                    SELECT
+                        channel_id,
+                        MAX(channel_name) AS channel_name,
+                        MAX(category_name) AS category_name
+                    FROM inbound_messages
+                    GROUP BY channel_id
+                )
                 SELECT *
                 FROM (
                     SELECT
                         message_id AS message_id,
                         channel_id AS channel_id,
+                        channel_name AS channel_name,
+                        category_name AS category_name,
                         guild_id AS guild_id,
                         author_name AS author_name,
                         content AS content,
@@ -356,13 +388,17 @@ class Store:
                       AND (
                           ? = ''
                           OR channel_id LIKE ?
+                          OR channel_name LIKE ?
+                          OR category_name LIKE ?
                           OR author_name LIKE ?
                           OR content LIKE ?
                       )
                     UNION ALL
                     SELECT
                         COALESCE(discord_message_id, 'outbound:' || id) AS message_id,
-                        channel_id AS channel_id,
+                        outbound_messages.channel_id AS channel_id,
+                        channel_meta.channel_name AS channel_name,
+                        channel_meta.category_name AS category_name,
                         NULL AS guild_id,
                         'balen' AS author_name,
                         content AS content,
@@ -370,10 +406,13 @@ class Store:
                         sent_at AS sort_at,
                         'assistant' AS role
                     FROM outbound_messages
-                    WHERE (? = '' OR channel_id = ?)
+                    LEFT JOIN channel_meta ON channel_meta.channel_id = outbound_messages.channel_id
+                    WHERE (? = '' OR outbound_messages.channel_id = ?)
                       AND (
                           ? = ''
-                          OR channel_id LIKE ?
+                          OR outbound_messages.channel_id LIKE ?
+                          OR channel_meta.channel_name LIKE ?
+                          OR channel_meta.category_name LIKE ?
                           OR 'balen' LIKE ?
                           OR content LIKE ?
                       )
@@ -388,9 +427,13 @@ class Store:
                     pattern,
                     pattern,
                     pattern,
+                    pattern,
+                    pattern,
                     channel_id,
                     channel_id,
                     query,
+                    pattern,
+                    pattern,
                     pattern,
                     pattern,
                     pattern,
@@ -414,3 +457,9 @@ class Store:
 def _like_pattern(query: str) -> str:
     cleaned = query.strip()
     return f"%{cleaned}%" if cleaned else "%"
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")

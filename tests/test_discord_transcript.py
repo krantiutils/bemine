@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from bemine.cli import main
@@ -20,6 +21,8 @@ def _record_message(
     store.record_inbound_message(
         message_id=message_id,
         channel_id=channel_id,
+        channel_name=channel_id.replace("chan-", ""),
+        category_name="Projects",
         guild_id="guild-1",
         author_id="user-1",
         author_name=author_name,
@@ -62,6 +65,7 @@ def test_store_summarizes_and_searches_local_discord_threads(tmp_path: Path) -> 
 
     rendered = render_channel_summaries(summaries) + render_transcript(transcript)
     assert "chan-rai" in rendered
+    assert "#Projects/rai" in rendered
     assert "Started goal worker" in rendered
     assert "chan-other" not in rendered
 
@@ -121,6 +125,7 @@ def test_cli_discord_threads_and_transcript_read_local_store(
     )
     threads = json.loads(capsys.readouterr().out)
     assert threads[0]["channel_id"] == "chan-voidash"
+    assert threads[0]["channel_name"] == "voidash"
     assert "letmein" not in json.dumps(threads)
     assert "SSHPASS='<secret>'" in threads[0]["latest_content"]
 
@@ -140,7 +145,61 @@ def test_cli_discord_threads_and_transcript_read_local_store(
     )
     text = capsys.readouterr().out
     assert "Local Discord transcript:" in text
+    assert "#Projects/voidash" in text
     assert "SMM idea" in text
     assert "Added SMM backlog item." in text
     assert "letmein" not in text
     assert "SSHPASS='<secret>'" in text
+
+
+def test_store_migrates_existing_discord_messages_without_channel_names(tmp_path: Path) -> None:
+    db_path = tmp_path / "bemine.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE inbound_messages (
+                message_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                guild_id TEXT,
+                author_id TEXT NOT NULL,
+                author_name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                is_dm INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                received_at REAL NOT NULL
+            );
+            CREATE TABLE outbound_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_message_id TEXT,
+                channel_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                files_json TEXT NOT NULL,
+                sent_at REAL NOT NULL
+            );
+            CREATE TABLE inbound_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL,
+                attachment_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                content_type TEXT,
+                size INTEGER,
+                url TEXT NOT NULL,
+                saved_path TEXT NOT NULL,
+                is_image INTEGER NOT NULL,
+                is_voice INTEGER NOT NULL
+            );
+            INSERT INTO inbound_messages VALUES (
+                'm1', 'chan-old', 'guild-1', 'user-1', 'voidash',
+                'old message', 0, '2026-06-10T10:00:00+05:45', 1.0
+            );
+            """
+        )
+
+    store = Store(db_path)
+    cols = {
+        row[1]
+        for row in sqlite3.connect(db_path).execute("PRAGMA table_info(inbound_messages)")
+    }
+    assert {"channel_name", "category_name"} <= cols
+    assert store.channel_summaries(limit=1)[0]["channel_id"] == "chan-old"
