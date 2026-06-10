@@ -9,7 +9,7 @@ from bemine.cli import main
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.index.status import SessionStatus
-from bemine.pa import build_pa_plan
+from bemine.pa import build_pa_plan, render_pa_plan
 
 
 def _settings(tmp_path: Path) -> tuple[BemineSettings, BemineDB]:
@@ -82,6 +82,10 @@ def test_build_pa_plan_prioritizes_health_jobs_sessions_watchers_and_backlog(tmp
     assert "gateway heartbeat is missing" in result.path.read_text(encoding="utf-8")
     rows = db.list_audit_events(category="pa", limit=1)
     assert rows[0]["event_type"] == "pa_plan_recorded"
+    rendered = render_pa_plan(result)
+    assert "1. [P1] Fix Bemine health issue" in rendered
+    assert "2. [P1] Recover failed scheduled job `daily_digest`" in rendered
+    assert "3. [P2]" in rendered
 
 
 def test_cli_pa_plan_json(tmp_path: Path, capsys, monkeypatch) -> None:
