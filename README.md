@@ -290,8 +290,9 @@ MAYOR_DISCORD_ALLOW_ALL_USERS=false
 
 Routine management currently means daemon-backed cron jobs plus Discord
 notifications. Use `jobs add-reminder` for recurring personal reminders and
-`health` for the deploy/service/job/watchers packet. Use `jobs list` to see
-next runs.
+`health` for the deploy/service/job/watchers packet. Native Discord workers can
+use the `health_status` tool for the same packet without shelling out. Use
+`jobs list` to see next runs.
 
 Proton Mail Bridge is treated as a local integration point. Bemine can verify
 that Bridge is installed, the process is running, and IMAP/SMTP ports are open:

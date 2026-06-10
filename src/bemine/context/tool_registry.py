@@ -11,6 +11,7 @@ from ..config import BemineSettings, config_bool, config_string
 from ..backlog import add_backlog_item, default_backlog_owner, list_backlog_items
 from ..briefs import run_brief
 from ..db import BemineDB
+from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
 
 
@@ -104,6 +105,15 @@ def default_tools() -> list[BemineTool]:
             description="List Bemine's scheduled cron jobs (name, schedule, enabled, last run).",
             input_schema={"type": "object", "properties": {}},
             handler=_jobs_list,
+        ),
+        BemineTool(
+            name="health_status",
+            description=(
+                "Return Bemine's deploy/services/jobs/watchers health packet. Use this "
+                "before drilling into jobs, systemd, deploy, or watcher status."
+            ),
+            input_schema={"type": "object", "properties": {}},
+            handler=_health_status,
         ),
         BemineTool(
             name="usage_report",
@@ -346,6 +356,11 @@ def _jobs_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
             for row in rows
         ]
     }
+
+
+def _health_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    del args
+    return collect_health(context.settings, db=context.db)
 
 
 def _usage_report(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
