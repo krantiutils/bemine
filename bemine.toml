@@ -74,7 +74,7 @@ model = "gpt-5.4"                            # empty = use Codex's own configure
 #   workspace-write  — codex may edit files / run commands within the project dir
 #   danger-full-access — no sandbox (not recommended)
 sandbox = "workspace-write"
-bin = ""                              # empty = find `codex` on PATH
+bin = "/home/cdjk/.npm-global/bin/codex"  # absolute path: the systemd service PATH doesn't include ~/.npm-global/bin
 
 [claude]
 # Claude runs through the Meridian proxy, which bridges your Claude Max plan to
