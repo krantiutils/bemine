@@ -126,6 +126,8 @@ def test_dispatch_progress_text_uses_runtime_summary() -> None:
 
 def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("health?") == "health"
+    assert gw._direct_observability_command("what's running?") == "health"
+    assert gw._direct_observability_command("what daemons are running?") == "health"
     assert gw._direct_observability_command("what can you do?") == "help"
     assert gw._direct_observability_command("discord routes") == "discord.routes"
     assert gw._direct_observability_command("line cuts") == "continuity"
@@ -134,6 +136,8 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("what should I focus on today?".lower()) == "pa.plan"
     assert gw._direct_observability_command("goals") == "goals.list"
     assert gw._direct_observability_command("what goal sessions are active?") == "goals.list"
+    assert gw._direct_observability_command("what jobs are scheduled?") == "jobs.list"
+    assert gw._direct_observability_command("what cron jobs are set up?") == "jobs.list"
     assert gw._direct_observability_command('goal rai: "train"') == ""
 
 

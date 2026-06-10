@@ -1060,7 +1060,14 @@ def _direct_observability_command(normalized_lower: str) -> str:
         text.removeprefix("!mayor ").removeprefix("mayor "),
         text.removeprefix("!bemine ").removeprefix("bemine "),
     }
-    if variants & {"health", "health status"}:
+    if variants & {
+        "health",
+        "health status",
+        "what is running",
+        "what's running",
+        "what daemons are running",
+        "what services are running",
+    }:
         return "health"
     if variants & {
         "help",
@@ -1114,6 +1121,16 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "what goals are active",
     }:
         return "goals.list"
+    if variants & {
+        "jobs",
+        "jobs list",
+        "job list",
+        "cron jobs",
+        "scheduled jobs",
+        "what jobs are scheduled",
+        "what cron jobs are set up",
+    }:
+        return "jobs.list"
     return ""
 
 
