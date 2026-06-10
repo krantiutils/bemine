@@ -195,7 +195,7 @@ context_limit = 1000
     assert out.data["backlog"]["owners"] == ["PA", "SMM"]
     assert out.data["config"]["path"].endswith("bemine.toml")
     assert out.data["config"]["config"]["backlog"]["default_owner"] == "PA"
-    assert out.data["subagent_config"]["context_limit"] == 1000
+    assert out.data["subagents_config"]["context_limit"] == 1000
     assert out.data["watchers"]["active"] == 0
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
     assert "subagents.files=subagents/PA.md, subagents/SMM.md, subagents/style.md" in out.data["config_knobs"]
