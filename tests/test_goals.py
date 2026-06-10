@@ -105,6 +105,36 @@ def test_resume_missing_local_workers_restarts_running_cdjk_worker(
     assert "worker_resumed_after_outage" in events
 
 
+def test_resume_missing_local_workers_restarts_missing_cdjk_worker(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    db.upsert_managed_session(
+        name="goal-restart",
+        runtime="shell",
+        transport="tmux",
+        device_id="cdjk",
+        project_id="proj_restart",
+        cwd=str(project),
+        command="cat",
+        status="missing",
+    )
+    tmux = FakeTmux()
+
+    resumed = resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    assert [record.name for record in resumed] == ["goal-restart"]
+    assert "goal-restart" in tmux.sessions
+    assert resumed[0].status == "running"
+
+
 def test_list_goal_sessions_joins_goal_worker_and_active_watcher(tmp_path: Path) -> None:
     project = tmp_path / "rai-speech-toolkit"
     project.mkdir()

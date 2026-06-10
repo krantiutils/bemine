@@ -3,12 +3,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from bemine.config import BemineSettings
+from bemine.config import BemineSettings, config_bool, config_list
 from bemine.db import BemineDB
 from bemine.deploy.heartbeat import read_heartbeat
 from bemine.deploy.state import DeployState, state_path
 from bemine.jobs import seed_default_jobs
 from bemine.jobs.systemd import UnitStatus, user_unit_status
+from bemine.workers.tmux_adapter import TmuxAdapter
 
 
 def collect_health(
@@ -51,6 +52,12 @@ def collect_health(
     watchers = db.list_active_project_watchers()
     if deploy.phase not in {"confirmed", "idle"}:
         issues.append(f"deploy phase is {deploy.phase}")
+    continuity = _collect_continuity_health(settings, db)
+    if continuity.get("check_error"):
+        issues.append(f"continuity check failed: {continuity['check_error']}")
+    missing_count = int(continuity.get("restartable_missing", 0) or 0)
+    if missing_count:
+        issues.append(f"continuity has {missing_count} restartable missing worker(s)")
 
     return {
         "ok": not issues,
@@ -81,6 +88,7 @@ def collect_health(
             "active": len(watchers),
             "items": watchers,
         },
+        "continuity": continuity,
     }
 
 
@@ -114,6 +122,15 @@ def render_health(payload: dict[str, Any]) -> str:
     )
     watchers = payload.get("watchers") or {}
     lines.append(f"Watchers: active={watchers.get('active', 0)}")
+    continuity = payload.get("continuity") or {}
+    devices = ", ".join(continuity.get("devices") or [])
+    lines.append(
+        "Continuity: "
+        f"enabled={bool(continuity.get('enabled'))} "
+        f"applies={bool(continuity.get('applies_to_device'))} "
+        f"devices={devices or 'none'} "
+        f"restartable_missing={continuity.get('restartable_missing', 0)}"
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -124,3 +141,76 @@ def _heartbeat_service_name(unit_name: str) -> str:
     if unit_name.startswith("mayor-discord-gateway"):
         return "gateway"
     return unit_name.removesuffix(".service")
+
+
+def _collect_continuity_health(settings: BemineSettings, db: BemineDB) -> dict[str, Any]:
+    enabled = config_bool("continuity", "enabled", True)
+    devices = config_list("continuity", "devices", ["cdjk"])
+    applies = enabled and settings.device_id in devices
+    rows = [dict(row) for row in db.list_managed_sessions()]
+    candidates = [
+        row
+        for row in rows
+        if str(row.get("status") or "") in {"running", "missing"}
+        and str(row.get("transport") or "") == "tmux"
+        and str(row.get("device_id") or "") in {settings.device_id, "local"}
+        and _has_restartable_command(row)
+        and _cwd_is_directory(str(row.get("cwd") or ""))
+    ]
+    missing: list[dict[str, Any]] = []
+    check_error = ""
+    if applies and candidates:
+        try:
+            tmux = TmuxAdapter()
+            for row in candidates:
+                name = str(row.get("name") or "")
+                if name and not tmux.exists(name):
+                    missing.append(_continuity_worker_summary(row))
+        except Exception as exc:
+            check_error = str(exc)
+    recent_events = [
+        {
+            "ts": row["ts"],
+            "event_type": row["event_type"],
+            "project_id": row["project_id"] or "",
+            "payload_json": row["payload_json"] or "{}",
+        }
+        for row in db.list_audit_events(category="continuity", limit=5)
+    ]
+    return {
+        "enabled": enabled,
+        "device_id": settings.device_id,
+        "devices": devices,
+        "applies_to_device": applies,
+        "tracked_workers": len(candidates),
+        "restartable_missing": len(missing),
+        "missing_workers": missing,
+        "recent_events": recent_events,
+        "check_error": check_error,
+    }
+
+
+def _has_restartable_command(row: dict[str, Any]) -> bool:
+    command = str(row.get("command") or "").strip()
+    return bool(command and command != "adopted-existing-tmux-session")
+
+
+def _cwd_is_directory(raw: str) -> bool:
+    try:
+        from pathlib import Path
+
+        path = Path(raw).expanduser()
+        return path.exists() and path.is_dir()
+    except Exception:
+        return False
+
+
+def _continuity_worker_summary(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": row.get("name") or "",
+        "runtime": row.get("runtime") or "",
+        "project_id": row.get("project_id") or "",
+        "cwd": row.get("cwd") or "",
+        "status": row.get("status") or "",
+        "updated_at": row.get("updated_at") or 0,
+    }

@@ -550,7 +550,7 @@ def resume_missing_local_workers(
     resumed: list[WorkerRecord] = []
     for row in db.list_managed_sessions():
         record = controller._row_to_record(row, exists=False)
-        if record.status != "running":
+        if record.status not in {"running", "missing"}:
             continue
         if record.transport != "tmux":
             continue
