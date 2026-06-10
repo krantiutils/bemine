@@ -36,9 +36,10 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "create a channel / post to a channel" → Discord REST via `shell_run` with
   `$MAYOR_DISCORD_BOT_TOKEN`; find the guild via `GET /users/@me/guilds`.
 - "remind me / schedule X" → `uv run bemine jobs add-reminder --help`.
-- "start/run a goal for project X" → `uv run bemine goal <project> "<goal brief>"`;
-  this starts a managed tmux worker, sends the brief, and registers a watcher.
-  Inspect goal workers/watchers with `uv run bemine goal --list`.
+- "start/run a goal for project X" → `goal_start` native tool or
+  `uv run bemine goal <project> "<goal brief>"`; this starts a managed tmux worker,
+  sends the brief, and registers a watcher. Inspect goal workers/watchers with
+  `goal_status` or `uv run bemine goal --list`.
 - "dream / learn from recent history" → `uv run bemine dream run`; daemon also runs the
   `dream` job periodically and appends one JSONL data point to `Dreams/dreams.jsonl`.
 - config questions → `bemine_config` tool or `uv run bemine config show`; NEVER guess
@@ -48,11 +49,12 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 
 ## Watching & recovering sessions
 
-- Goal that should run itself from CLI/Discord → `uv run bemine goal <project> "<brief>"`
-  (optional `--cwd`, `--runtime`, `--worker`, `--interval`). This is the preferred path
-  over manually starting a terminal and then adding a watcher. If the project is only
-  visible in fleet status, `goal` can start the worker on that device; use
-  `--target-device <host>` to force a device. Inspect with `uv run bemine goal --list`
+- Goal that should run itself from CLI/Discord → `goal_start` native tool or
+  `uv run bemine goal <project> "<brief>"` (optional `--cwd`, `--runtime`,
+  `--worker`, `--interval`). This is the preferred path over manually starting a
+  terminal and then adding a watcher. If the project is only visible in fleet status,
+  `goal` can start the worker on that device; use `target_device`/`--target-device
+  <host>` to force a device. Inspect with `goal_status`, `uv run bemine goal --list`,
   or `uv run bemine goal --status <project-or-worker> --json`.
 - cdjk line cuts / power loss: systemd restarts `bemine-daemon`; the daemon's
   `[continuity]` pass restarts Bemine-managed local tmux workers that were recorded as
