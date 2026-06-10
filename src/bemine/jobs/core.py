@@ -88,6 +88,18 @@ def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition,
                 "notify_discord": False,
             },
         ),
+        JobDefinition(
+            job_id="pa_smm_brief",
+            name="PA/SMM brief",
+            trigger_type="cron",
+            schedule=config_string("brief", "schedule", "45 8 * * *"),
+            config={
+                "type": "pa_smm_brief",
+                "limit": 100,
+                "record_backlog": True,
+                "notify_discord": False,
+            },
+        ),
     )
 
 
@@ -455,6 +467,15 @@ def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, An
 
         result = run_dream(settings, limit=int(config.get("limit") or 100))
         return render_dream(result)
+    if job_type == "pa_smm_brief":
+        from bemine.briefs import run_brief, render_brief
+
+        result = run_brief(
+            settings,
+            limit=int(config.get("limit") or 100),
+            record_backlog=bool(config.get("record_backlog", True)),
+        )
+        return render_brief(result)
     raise ValueError(f"unsupported job type: {job_type}")
 
 

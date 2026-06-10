@@ -181,6 +181,21 @@ Entries are Markdown in the Obsidian vault under `Backlog/`. Discord handles
 explicit phrases like `SMM idea: ...` and `store idea for PA: ...` without
 starting a full agent run.
 
+### PA/SMM brief
+
+Use `bemine brief run` when Bemine should turn recent evidence into PA/SMM
+nudges:
+
+```bash
+uv run bemine brief run
+uv run bemine brief run --no-backlog
+```
+
+The brief reads recent sessions, Discord messages, audit events, and tool state.
+It writes `Briefs/<date>-pa-smm.md` in the vault and, by default, appends only
+new generated items to the PA/SMM backlog. The daemon seeds a `pa_smm_brief`
+cron job (`[brief].schedule`, default `45 8 * * *`).
+
 ### Dream memory
 
 Bemine can periodically condense recent conversation, failure, and audit history

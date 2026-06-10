@@ -28,6 +28,7 @@ from .jobs import (
 )
 from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, start_goal
 from .dreams import render_dream, run_dream
+from .briefs import render_brief, run_brief
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
 from .kernel import BemineKernel
@@ -78,6 +79,7 @@ Core concepts:
   subagents     configured PA/SMM/profile Markdown injected into workers
   backlog       durable PA/SMM idea and task backlog in the vault
   dream         condense recent history into one vault data point
+  brief         generate PA/SMM brief and backlog nudges from evidence
   permissions   explicit approval path for gated credentials
   workers       safe managed live sessions over tmux
   goal          start a managed worker and watcher from one goal brief
@@ -182,6 +184,20 @@ dream job; use `dream run` for an immediate manual pass.
 Examples:
   uv run bemine dream run
   uv run bemine dream run --limit 120 --json
+"""
+
+
+BRIEF_HELP = """\
+Generate a deterministic PA/SMM brief from Bemine evidence.
+
+The brief reads recent sessions, Discord messages, audit events, and local tool
+capabilities. It writes a dated Markdown file under Briefs/ and, by default,
+adds new non-duplicate PA/SMM backlog items.
+
+Examples:
+  uv run bemine brief run
+  uv run bemine brief run --no-backlog
+  uv run bemine brief run --json
 """
 
 
@@ -614,6 +630,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum recent inbound/outbound/audit rows to inspect.",
     )
     dream_run.add_argument("--json", action="store_true", help="Emit dream data as JSON.")
+
+    brief = sub.add_parser(
+        "brief",
+        help="Generate PA/SMM brief and backlog nudges.",
+        description="Generate PA/SMM brief and backlog nudges.",
+        epilog=dedent(BRIEF_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    brief_sub = brief.add_subparsers(dest="brief_command", required=True)
+    brief_run = brief_sub.add_parser("run", help="Generate the current PA/SMM brief.")
+    brief_run.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Maximum recent message/audit/status rows to inspect.",
+    )
+    brief_run.add_argument(
+        "--no-backlog",
+        dest="record_backlog",
+        action="store_false",
+        help="Write the brief without appending generated backlog items.",
+    )
+    brief_run.set_defaults(record_backlog=True)
+    brief_run.add_argument("--json", action="store_true", help="Emit brief as JSON.")
 
     context = sub.add_parser(
         "context",
@@ -1583,6 +1623,18 @@ def main(argv: list[str] | None = None) -> None:
                 print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
             else:
                 print(render_dream(result), end="")
+    elif args.command == "brief":
+        if args.brief_command == "run":
+            result = run_brief(
+                settings,
+                limit=args.limit,
+                record_backlog=args.record_backlog,
+                db=kernel.db,
+            )
+            if args.json:
+                print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+            else:
+                print(render_brief(result), end="")
     elif args.command == "usage":
         rollup = kernel.db.usage_rollup(provider=getattr(args, "provider", None) or None)
         if getattr(args, "json", False):

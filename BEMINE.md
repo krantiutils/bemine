@@ -71,6 +71,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   daily; decisions in `Decisions/`; checklists in `Checklists/`.
 - PA/SMM ideas and tasks → `uv run bemine backlog add ...`; files live under
   `Backlog/PA.md` and `Backlog/SMM.md`.
+- PA/SMM daily brief → `uv run bemine brief run`; writes `Briefs/<date>-pa-smm.md`
+  and adds non-duplicate generated PA/SMM backlog nudges.
 - Local Discord history → `uv run bemine discord threads` and
   `uv run bemine discord transcript --query "<term>"`; these read the SQLite
   store and work even when live Discord API credentials are unavailable.
@@ -83,8 +85,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 
 ## Scheduled jobs
 
-- `uv run bemine jobs list` — what runs when (daily digest 18:00 and morning plan 08:30 go
-  to the #daily-digest channel; session watcher every 2 min).
+- `uv run bemine jobs list` — what runs when (session watcher every 2 min,
+  dream at 03:15, PA/SMM brief at 08:45, daily digest at 18:00 by default).
 - Run one now: `uv run bemine jobs run <job_id>`. Job configs live in SQLite (`jobs` table);
   `channel_id` in a job's config overrides where its output is posted.
 

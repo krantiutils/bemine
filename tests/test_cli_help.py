@@ -27,6 +27,7 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "goal          start a managed worker and watcher" in text
     assert "backlog       durable PA/SMM idea" in text
     assert "dream         condense recent history" in text
+    assert "brief         generate PA/SMM brief" in text
 
 
 def test_prime_help_explains_startup_packet() -> None:
@@ -92,6 +93,16 @@ def test_dream_help_explains_jsonl_storage() -> None:
     assert "Condense recent Bemine/Discord history" in text
     assert "Dreams/dreams.jsonl" in flat
     assert "uv run bemine dream run" in text
+
+
+def test_brief_help_explains_pa_smm_backlog_nudges() -> None:
+    text = _help("brief")
+    flat = " ".join(text.split())
+
+    assert "Generate a deterministic PA/SMM brief" in text
+    assert "Briefs/" in flat
+    assert "non-duplicate PA/SMM backlog items" in flat
+    assert "uv run bemine brief run" in text
 
 
 def test_discord_help_includes_local_transcript_commands() -> None:

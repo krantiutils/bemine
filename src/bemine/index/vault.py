@@ -15,7 +15,7 @@ class ObsidianVault:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
-        for name in ("Projects", "Daily", "Sessions", "Devices", "Handoffs", "Decisions", "Jobs", "Artifacts", "Backlog", "Dreams"):
+        for name in ("Projects", "Daily", "Sessions", "Devices", "Handoffs", "Decisions", "Jobs", "Artifacts", "Backlog", "Dreams", "Briefs"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
 
     def project_page_path(self, project_name: str) -> Path:
