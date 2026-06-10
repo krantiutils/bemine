@@ -70,7 +70,6 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "status": "status",
     "rundown": "rundown",
     "jobs": "jobs.list",
-    "backlog": "backlog.list",
     "health": "health",
     "continuity": "continuity",
     "help": "help",
@@ -91,6 +90,8 @@ def slash_command_text(settings: BemineSettings, slash_name: str, args: dict) ->
     """
     if slash_name == "goal":
         command = "goal.start"
+    elif slash_name == "backlog":
+        command = "backlog.list"
     else:
         command = _SLASH_TO_COMMAND.get(slash_name)
     if not command:
@@ -141,6 +142,34 @@ def register_slash_commands(
             callback=_handler,
         )
         tree.add_command(cmd)
+
+    async def _backlog_handler(
+        interaction: discord.Interaction,
+        owner: str = "",
+        limit: int = 20,
+    ) -> None:
+        if is_allowed_check is not None and not is_allowed_check(interaction):
+            await interaction.response.send_message("Access denied.", ephemeral=True)
+            return
+        settings = await asyncio.to_thread(settings_loader)
+        text = await asyncio.to_thread(
+            slash_command_text,
+            settings,
+            "backlog",
+            {"owner": owner, "limit": limit},
+        )
+        chunks = _discord_chunk(text, limit=1900)
+        await interaction.response.send_message(chunks[0])
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk)
+
+    _backlog_handler.__name__ = "backlog"
+    backlog_cmd = discord.app_commands.Command(
+        name="backlog",
+        description="Bemine: inspect the PA/SMM backlog",
+        callback=_backlog_handler,
+    )
+    tree.add_command(backlog_cmd)
 
     async def _goal_handler(
         interaction: discord.Interaction,

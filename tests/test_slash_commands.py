@@ -27,6 +27,31 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     assert "Discord route management:" in routes
 
 
+def test_slash_backlog_can_filter_by_owner(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    calls = {}
+
+    def fake_list_backlog_items(settings_arg, *, owner, limit):
+        calls["settings"] = settings_arg
+        calls["owner"] = owner
+        calls["limit"] = limit
+        return [f"{owner}-item"]
+
+    def fake_render_backlog_items(owner, items):
+        return f"{owner} backlog:\n" + "\n".join(items) + "\n"
+
+    monkeypatch.setattr("bemine.commands.list_backlog_items", fake_list_backlog_items)
+    monkeypatch.setattr("bemine.commands.render_backlog_items", fake_render_backlog_items)
+
+    text = slash_command_text(settings, "backlog", {"owner": "PA", "limit": 1})
+
+    assert calls["settings"] == settings
+    assert calls["owner"] == "PA"
+    assert calls["limit"] == 1
+    assert "PA backlog:" in text
+    assert "PA-item" in text
+
+
 def test_slash_pa_plan_is_deterministic(tmp_path, monkeypatch):
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     monkeypatch.setattr("bemine.pa.collect_fleet_status", lambda *a, **k: ([], []))
