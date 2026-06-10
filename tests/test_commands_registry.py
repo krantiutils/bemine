@@ -86,12 +86,14 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "recovery.poll_interval_secs=300" in out.text
     assert "discord routes:" in out.text
     assert "focus today:" in out.text
+    assert "watchers: active=0" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "project_root=/tmp/phantom" in out.text
     assert "Configured jobs:" in out.text
     assert "morning_plan" in out.text
     assert out.data["goal"]["runtime"] == "shell"
     assert out.data["dispatch"]["runtime"] == "kimi"
+    assert out.data["watchers"]["active"] == 0
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
     assert any(job["job_id"] == "morning_plan" for job in out.data["jobs"])
 

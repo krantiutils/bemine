@@ -151,6 +151,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     smm_target_channels = config_list("smm", "target_channels", ["X", "LinkedIn"])
     smm_style_path = config_string("smm", "style_path", "subagents/style.md")
     phantom_root = config_string("phantom", "project_root", "")
+    active_watchers = len(BemineKernel(settings).db.list_active_project_watchers())
     configurable_knobs = [
         f"goal.runtime={goal_runtime}",
         f"goal.interval_secs={goal_interval}",
@@ -174,6 +175,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'}",
         f"- dispatch: runtime={dispatch.get('runtime', 'unknown')} backend={dispatch.get('backend', 'unknown')} model={dispatch.get('model', 'unknown')}",
         "- focus today: `pa plan` / `what should I focus on today?`",
+        f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'}",
         f"- phantom: project_root={phantom_root or 'unset'}",
@@ -203,6 +205,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
                 "enabled": continuity_enabled,
                 "devices": continuity_devices,
             },
+            "watchers": {"active": active_watchers},
             "config_knobs": configurable_knobs,
             "dispatch": dispatch,
             "subagents": [profile.to_dict() for profile in subagents.profiles],
