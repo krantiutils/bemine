@@ -86,10 +86,12 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "recovery.poll_interval_secs=300" in out.text
     assert "discord routes:" in out.text
     assert "focus today:" in out.text
+    assert "dream: `dream run`" in out.text
     assert "watchers: active=0" in out.text
     assert "backlog: `backlog add` / `backlog list`" in out.text
     assert "subagents: PA, SMM, style" in out.text
-    assert "project_root=/tmp/phantom" in out.text
+    assert "phantom: project_root=/tmp/phantom" in out.text
+    assert "phantom status" in out.text
     assert "Configured jobs:" in out.text
     assert "morning_plan" in out.text
     assert out.data["goal"]["runtime"] == "shell"
