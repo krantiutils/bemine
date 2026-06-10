@@ -229,3 +229,42 @@ def test_usage_limit_retries_continue_with_backoff_capped_10min(tmp_path):
     assert all(g <= 600 for g in gaps)                   # never beyond 10 min
     assert max(gaps) == 600                              # reaches and caps at 10 min
     assert gaps[0] < gaps[-1]                            # actually backs off
+
+
+def test_failed_nudge_reparses_pane_for_later_reset(tmp_path):
+    import time as _t
+    s = _settings(tmp_path)
+    # Session got limited at 03:36; pane states its own reset (8:36am). First sighting
+    # before 03:47 fallback... here: nudge fails, pane STILL shows 'try again at 8:36am'
+    # -> instead of blind 10-min retries for 5 hours, re-wait until 08:36.
+    pane = "You've hit your usage limit. Try again at 8:36am."
+    tmux = _Tmux([pane])
+    clock, esc, aud = _clock(), [], []
+    deps = _deps([_pane(command="codex-aarch64-a")], tmux, clock=clock,
+                 escalations=esc, audits=aud)
+    t0 = _t.mktime((2026, 6, 11, 3, 0, 0, 0, 0, -1))
+    tick_recovery(s, deps, now=t0)                  # waits until 08:36 (parsed) — good
+    from bemine.jobs.auto_recovery import load_recovery_state, recovery_state_path
+    rec = list(load_recovery_state(recovery_state_path(s)).values())[0]
+    reset = _t.localtime(float(rec["limit_wait_until"]))
+    assert (reset.tm_hour, reset.tm_min) == (8, 36)
+
+    # Simulate a MIS-SCHEDULED wait (e.g. fallback 03:47): force wait_until to the past,
+    # nudge fires, pane unchanged and still states 8:36 -> must RE-WAIT to 8:36, not
+    # hammer every <=10min.
+    st = load_recovery_state(recovery_state_path(s))
+    key = list(st.keys())[0]
+    st[key]["limit_wait_until"] = t0 + 60   # pretend reset was 03:01
+    st[key]["next_retry_at"] = 0
+    from bemine.jobs.auto_recovery import save_recovery_state
+    save_recovery_state(recovery_state_path(s), st)
+
+    t1 = _t.mktime((2026, 6, 11, 3, 50, 0, 0, 0, -1))
+    tick_recovery(s, deps, now=t1)                  # nudges once (wait passed)
+    assert tmux.sent_text == ["continue"]
+    t2 = _t.mktime((2026, 6, 11, 3, 56, 0, 0, 0, -1))
+    tick_recovery(s, deps, now=t2)                  # pane still limited, states 8:36
+    rec2 = list(load_recovery_state(recovery_state_path(s)).values())[0]
+    reset2 = _t.localtime(float(rec2["limit_wait_until"]))
+    assert (reset2.tm_hour, reset2.tm_min) == (8, 36)   # re-waited to the stated reset
+    assert tmux.sent_text == ["continue"]               # no second blind nudge
