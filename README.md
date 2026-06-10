@@ -155,6 +155,8 @@ uv run bemine goal rai-speech-toolkit "train the first Rai TTS checkpoint from t
 The command starts a managed tmux worker in the project, sends the goal brief,
 and registers a watcher for follow-up/recovery. From Discord, say
 `goal <project>: "<brief>"`; recent channel context is folded into the brief.
+Native Discord workers can call `goal_start` for the same worker-plus-watcher
+flow and `goal_status` to inspect managed goal sessions.
 If the project is currently visible only on another device in fleet status,
 Bemine starts the worker there through SSH-backed tmux; pass `--target-device`
 to force the device. Use `uv run bemine goal --list` or

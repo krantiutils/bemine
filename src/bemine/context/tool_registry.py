@@ -11,8 +11,10 @@ from ..config import BemineSettings, config_bool, config_string
 from ..backlog import add_backlog_item, default_backlog_owner, list_backlog_items
 from ..briefs import run_brief
 from ..db import BemineDB
+from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
+from ..workers.workers import WorkerError
 
 
 ToolHandler = Callable[[Mapping[str, Any], "ToolContext"], Mapping[str, Any]]
@@ -170,6 +172,47 @@ def default_tools() -> list[BemineTool]:
                 },
             },
             handler=_brief_run,
+        ),
+        BemineTool(
+            name="goal_start",
+            description=(
+                "Start a managed Bemine goal session: create a worker, send the goal "
+                "brief, and register a watcher that keeps driving it. Use this when the "
+                "user asks Bemine to start/run a goal itself instead of merely watching "
+                "an existing session."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "brief": {"type": "string", "description": "The concrete goal brief."},
+                    "project": {
+                        "type": "string",
+                        "description": "Project name/id/path. Defaults to this channel's project when omitted.",
+                    },
+                    "cwd": {"type": "string", "description": "Explicit project root."},
+                    "runtime": {"type": "string", "description": "Worker runtime override."},
+                    "worker": {"type": "string", "description": "Worker/tmux session name."},
+                    "interval_secs": {"type": "integer", "minimum": 30, "maximum": 86400},
+                    "channel_id": {"type": "string", "description": "Discord channel id override."},
+                    "command": {"type": "string", "description": "Worker command override."},
+                    "target_device": {"type": "string", "description": "Remote device override."},
+                },
+                "required": ["brief"],
+            },
+            handler=_goal_start,
+            policy="project-write",
+        ),
+        BemineTool(
+            name="goal_status",
+            description=(
+                "List managed goal workers and active watchers, optionally filtered by "
+                "project, worker, cwd, device, status, or brief text."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            },
+            handler=_goal_status,
         ),
         BemineTool(
             name="audit_list",
@@ -403,6 +446,57 @@ def _brief_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
         db=context.db,
     )
     return {"ok": True, "result": result.to_dict()}
+
+
+def _goal_start(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    brief = str(args.get("brief") or "").strip()
+    if not brief:
+        raise ToolExecutionError("brief is required")
+
+    project = str(args.get("project") or "").strip()
+    raw_cwd = str(args.get("cwd") or "").strip()
+    cwd = Path(raw_cwd).expanduser() if raw_cwd else None
+    if not project and cwd is None:
+        cwd = context.cwd
+        project = context.project_id or context.cwd.name
+
+    session = context.db.get_bemine_session(context.session_id) or {}
+    channel_id = str(args.get("channel_id") or "").strip() or str(session.get("channel_id") or "")
+    interval = (
+        _int(args.get("interval_secs"), default=600, minimum=30, maximum=86400)
+        if args.get("interval_secs") is not None
+        else 0
+    )
+
+    try:
+        result = start_goal(
+            context.settings,
+            project=project,
+            brief=brief,
+            cwd=cwd,
+            runtime=str(args.get("runtime") or ""),
+            worker_name=str(args.get("worker") or ""),
+            interval_secs=interval,
+            channel_id=channel_id,
+            command=str(args.get("command") or ""),
+            target_device=str(args.get("target_device") or ""),
+            db=context.db,
+        )
+    except (ValueError, WorkerError) as exc:
+        raise ToolExecutionError(str(exc)) from exc
+
+    return {
+        "ok": True,
+        "worker": result.worker.to_dict(),
+        "watcher": dict(result.watcher),
+        "prompt_len": len(result.prompt),
+    }
+
+
+def _goal_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    query = str(args.get("query") or "").strip()
+    sessions = list_goal_sessions(context.settings, status=query, db=context.db)
+    return {"ok": True, "sessions": [session.to_dict() for session in sessions]}
 
 
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

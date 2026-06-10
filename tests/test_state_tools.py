@@ -115,6 +115,111 @@ def test_brief_run_tool_generates_pa_smm_brief(tmp_path, monkeypatch):
     assert calls["db"] is db
 
 
+def test_goal_start_tool_uses_current_context_defaults(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = []
+
+    class Worker:
+        name = "goal-p1"
+
+        def to_dict(self):
+            return {
+                "name": self.name,
+                "runtime": "shell",
+                "cwd": str(tmp_path),
+                "project_id": "p1",
+            }
+
+    class Result:
+        worker = Worker()
+        watcher = {"project_id": "p1", "channel_id": "c1", "interval_secs": 600}
+        prompt = "# Bemine Goal Session\ntrain"
+
+    def fake_start_goal(settings_arg, **kwargs):
+        calls.append({"settings": settings_arg, **kwargs})
+        return Result()
+
+    monkeypatch.setattr("bemine.context.tool_registry.start_goal", fake_start_goal)
+
+    out = BemineToolRegistry().execute("goal_start", {"brief": "train"}, ctx)
+
+    assert out["ok"] is True
+    assert out["worker"]["name"] == "goal-p1"
+    assert out["watcher"]["channel_id"] == "c1"
+    assert out["prompt_len"] == len(Result.prompt)
+    assert calls[0]["settings"] is settings
+    assert calls[0]["project"] == "p1"
+    assert calls[0]["brief"] == "train"
+    assert calls[0]["cwd"] == tmp_path
+    assert calls[0]["channel_id"] == "c1"
+    assert calls[0]["interval_secs"] == 0
+    assert calls[0]["db"] is db
+
+
+def test_goal_start_tool_named_project_does_not_reuse_current_cwd(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class Worker:
+        name = "goal-rai"
+
+        def to_dict(self):
+            return {"name": self.name, "runtime": "shell", "cwd": "/repo/rai"}
+
+    class Result:
+        worker = Worker()
+        watcher = {"project_id": "rai", "channel_id": "c1", "interval_secs": 45}
+        prompt = "prompt"
+
+    def fake_start_goal(settings_arg, **kwargs):
+        calls.update({"settings": settings_arg, **kwargs})
+        return Result()
+
+    monkeypatch.setattr("bemine.context.tool_registry.start_goal", fake_start_goal)
+
+    out = BemineToolRegistry().execute(
+        "goal_start",
+        {"project": "rai-speech-toolkit", "brief": "train", "interval_secs": 45},
+        ctx,
+    )
+
+    assert out["ok"] is True
+    assert calls["project"] == "rai-speech-toolkit"
+    assert calls["cwd"] is None
+    assert calls["interval_secs"] == 45
+    assert calls["db"] is db
+
+
+def test_goal_status_tool_lists_goal_sessions(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class Session:
+        def to_dict(self):
+            return {
+                "project_id": "p1",
+                "worker": {"name": "goal-p1"},
+                "watcher": {"status": "active"},
+            }
+
+    def fake_list_goal_sessions(settings_arg, **kwargs):
+        calls.update({"settings": settings_arg, **kwargs})
+        return [Session()]
+
+    monkeypatch.setattr(
+        "bemine.context.tool_registry.list_goal_sessions",
+        fake_list_goal_sessions,
+    )
+
+    out = BemineToolRegistry().execute("goal_status", {"query": "p1"}, ctx)
+
+    assert out["ok"] is True
+    assert out["sessions"][0]["project_id"] == "p1"
+    assert calls["settings"] is settings
+    assert calls["status"] == "p1"
+    assert calls["db"] is db
+
+
 def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
@@ -126,5 +231,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "usage_report",
         "backlog_add",
         "brief_run",
+        "goal_start",
+        "goal_status",
     } <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))
