@@ -944,10 +944,14 @@ def test_codex_dispatch_runs_in_project_root_with_images_and_audit(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    # Isolate from the repo's bemine.toml (its sandbox override would change --sandbox).
-    empty = tmp_path / "empty.toml"
-    empty.write_text("", encoding="utf-8")
-    monkeypatch.setenv("BEMINE_CONFIG", str(empty))
+    # Isolate from the repo's bemine.toml (its sandbox override would change --sandbox),
+    # but keep the real harness files so the SOUL/SKILL context assertions still hold.
+    isolated = tmp_path / "isolated.toml"
+    isolated.write_text(
+        '[context]\nharness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(isolated))
     monkeypatch.delenv("BEMINE_CODEX_SANDBOX", raising=False)
     state_dir = tmp_path / "state"
     project_root = tmp_path / "repo"
