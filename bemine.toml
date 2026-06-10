@@ -43,7 +43,7 @@ harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/
 #            proxy (needs the `meridian` service running on 127.0.0.1:3456).
 #   codex  — full coding agent on your ChatGPT plan; edits files / runs commands
 #            in the channel's project dir. Best reserved for coding channels.
-runtime = "kimi"
+runtime = "codex"
 
 # ----------------------------------------------------------------------------
 # Agent loop behavior (applies to kimi + claude, which run Bemine's own loop).
@@ -68,13 +68,13 @@ backend = "cli"                       # legacy CLI knob; live path ignores it
 [codex]
 # Codex runs via its app-server using your ChatGPT (Codex) plan — no API key.
 # (The Discord agent always uses the app-server; no backend knob needed here.)
-model = ""                            # empty = use Codex's own configured model
+model = "gpt-5.4"                            # empty = use Codex's own configured model
 # Sandbox for codex actions in a channel's project dir:
 #   read-only        — safest; codex can read but not change files
 #   workspace-write  — codex may edit files / run commands within the project dir
 #   danger-full-access — no sandbox (not recommended)
 sandbox = "workspace-write"
-bin = ""                              # empty = find `codex` on PATH
+bin = "/home/cdjk/.npm-global/bin/codex"  # absolute path: the systemd service PATH doesn't include ~/.npm-global/bin
 
 [claude]
 # Claude runs through the Meridian proxy, which bridges your Claude Max plan to
