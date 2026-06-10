@@ -256,6 +256,25 @@ def default_tools() -> list[BemineTool]:
             handler=_discord_transcript,
         ),
         BemineTool(
+            name="channel_routes",
+            description=(
+                "Inspect Bemine's project-to-Discord routing map. Reports configured "
+                "routes, indexed project route candidates, latest seen channel ids, and "
+                "active watcher channel bindings without mutating Discord."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Filter by channel, project id/name, cwd, runtime, or channel id.",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+            },
+            handler=_channel_routes,
+        ),
+        BemineTool(
             name="audit_list",
             description="List recent Bemine audit events, optionally filtered by category or event type.",
             input_schema={
@@ -565,6 +584,42 @@ def _discord_transcript(args: Mapping[str, Any], context: ToolContext) -> Mappin
     return {"ok": True, "messages": redact_message_rows(rows)}
 
 
+def _channel_routes(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    from ..discord.dispatch import (
+        DISPATCH_CONFIG_NAME,
+        load_project_channels,
+        project_channels_from_db,
+    )
+
+    query = str(args.get("query") or "").strip()
+    limit = _int(args.get("limit"), default=50, minimum=1, maximum=200)
+    config_path = context.settings.state_dir / DISPATCH_CONFIG_NAME
+    watchers = {
+        str(row.get("project_id") or ""): dict(row)
+        for row in context.db.list_active_project_watchers()
+    }
+
+    configured = [
+        _project_channel_route_dict(channel, context=context, watchers=watchers)
+        for channel in load_project_channels(context.settings.state_dir).values()
+    ]
+    indexed = [
+        _project_channel_route_dict(channel, context=context, watchers=watchers)
+        for channel in project_channels_from_db(context.db, limit=limit)
+    ]
+    if query:
+        configured = [row for row in configured if _route_matches(row, query)]
+        indexed = [row for row in indexed if _route_matches(row, query)]
+
+    return {
+        "ok": True,
+        "config_path": str(config_path),
+        "config_exists": config_path.exists(),
+        "configured": configured[:limit],
+        "indexed": indexed[:limit],
+    }
+
+
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
     limit = _int(args.get("limit"), default=8, minimum=1, maximum=20)
     rows = context.db.list_audit_events(
@@ -758,6 +813,31 @@ def _file_search(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, 
         "matches": [_redact(line) for line in lines],
         "stderr": _redact(proc.stderr[-2000:]),
     }
+
+
+def _project_channel_route_dict(
+    channel: Any,
+    *,
+    context: ToolContext,
+    watchers: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    project_id = channel.project_id or channel.channel_name
+    watcher = watchers.get(project_id) or {}
+    return {
+        "channel_name": channel.channel_name,
+        "cwd": str(channel.cwd),
+        "project_id": channel.project_id,
+        "project_name": channel.project_name,
+        "runtime": channel.runtime,
+        "latest_channel_id": context.db.get_channel_id_for_project(project_id) or "",
+        "watcher_channel_id": str(watcher.get("channel_id") or ""),
+        "watcher_status": str(watcher.get("status") or ""),
+    }
+
+
+def _route_matches(row: Mapping[str, Any], query: str) -> bool:
+    needle = query.casefold()
+    return any(needle in str(value or "").casefold() for value in row.values())
 
 
 def _load_env_files(*extra: Path) -> dict[str, str]:

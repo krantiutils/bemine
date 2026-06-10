@@ -260,6 +260,66 @@ def test_discord_history_tools_read_local_redacted_store(tmp_path):
     assert "letmein" not in str(transcript["messages"])
 
 
+def test_channel_routes_tool_reports_config_db_and_bindings(tmp_path):
+    import json
+
+    settings, db, ctx = _ctx(tmp_path)
+    configured_dir = tmp_path / "configured"
+    indexed_dir = tmp_path / "indexed"
+    configured_dir.mkdir()
+    indexed_dir.mkdir()
+    settings.state_dir.mkdir(parents=True, exist_ok=True)
+    (settings.state_dir / "discord-projects.json").write_text(
+        json.dumps(
+            {
+                "my-route": {
+                    "cwd": str(configured_dir),
+                    "project_id": "p_route",
+                    "project_name": "route-project",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO projects(project_id, name, cwd, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, 1.0, 2.0)
+            """,
+            ("p_index", "rai", str(indexed_dir),),
+        )
+    db.upsert_bemine_session(
+        session_id="s-route",
+        channel_id="c-route",
+        project_id="p_route",
+        runtime="kimi",
+        model="kimi-k2.6",
+        device_id="local",
+        cwd=str(configured_dir),
+        status="active",
+        summary="",
+    )
+    db.upsert_project_watcher(
+        project_id="p_route",
+        channel_id="c-watch",
+        brief="keep going",
+        interval_secs=600,
+    )
+
+    out = BemineToolRegistry().execute("channel_routes", {"query": "route"}, ctx)
+
+    assert out["ok"] is True
+    assert out["config_exists"] is True
+    assert out["configured"][0]["channel_name"] == "my-route"
+    assert out["configured"][0]["latest_channel_id"] == "c-route"
+    assert out["configured"][0]["watcher_channel_id"] == "c-watch"
+
+    indexed = BemineToolRegistry().execute("channel_routes", {"query": "rai"}, ctx)
+    assert indexed["indexed"][0]["project_id"] == "p_index"
+    assert indexed["indexed"][0]["channel_name"] == "rai"
+
+
 def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
@@ -275,5 +335,6 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "goal_status",
         "discord_threads",
         "discord_transcript",
+        "channel_routes",
     } <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))
