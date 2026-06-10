@@ -48,6 +48,14 @@ default_owner = "SMM"
 # in the Obsidian vault (`Dreams/dreams.jsonl`).
 schedule = "15 3 * * *"
 
+[brief]
+# Periodically generate a deterministic PA/SMM brief from recent sessions,
+# Discord history, audit events, and tool state. Writes `Briefs/` and nudges
+# non-duplicate PA/SMM backlog items.
+schedule = "45 8 * * *"
+status_limit = 12
+timeout_secs = 6
+
 # ----------------------------------------------------------------------------
 # Which agent answers a Discord message.
 # ----------------------------------------------------------------------------
@@ -59,7 +67,7 @@ schedule = "15 3 * * *"
 #            proxy (needs the `meridian` service running on 127.0.0.1:3456).
 #   codex  — full coding agent on your ChatGPT plan; edits files / runs commands
 #            in the channel's project dir. Best reserved for coding channels.
-runtime = "claude"
+runtime = "kimi"
 
 # ----------------------------------------------------------------------------
 # Agent loop behavior (applies to kimi + claude, which run Bemine's own loop).
@@ -71,7 +79,7 @@ harness_context_limit = 24000        # max chars of SOUL/SKILL/USER injected int
 
 [goal]
 # `bemine goal <project> "<brief>"` starts a managed worker and a watcher.
-runtime = "claude"
+runtime = "kimi"
 interval_secs = 600
 
 [continuity]
