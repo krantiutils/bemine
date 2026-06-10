@@ -64,8 +64,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - Goal-driven babysitting of a project session → `watch_control {"action":"start","brief":
   "<the user's full context verbatim>","interval_secs":600}`. Stop: `{"action":"stop"}`.
 - Always-on auto-recovery (rate-limits resent with Up+Enter, trivial confirms auto-yes'd,
-  questions answered by an LLM tier) runs in the daemon — check what it did via
-  `audit_list {"category":"recovery"}`. Tune in `bemine.toml [recovery]`.
+  usage limits held until their reset clock then nudged with `continue`, trivial confirms
+  auto-yes'd, questions answered by an LLM tier) runs in the daemon — check what it did
+  via `audit_list {"category":"recovery"}`. Tune in `bemine.toml [recovery]`.
 - A session idle > `[recovery].max_session_age_secs` (4h) is deliberately left alone.
 
 ## Memory & records
