@@ -376,14 +376,19 @@ def run_bound_agent(
             content_json=json.dumps(user_msg),
         )
 
-        final = run_codex_turn(
+        resume_tid = db.get_codex_thread_id(session_id)
+        final, new_tid = run_codex_turn(
             normalized,
             cwd=binding.cwd,
             developer_instructions=binding.system or "",
             model=None,  # let codex use its own ~/.codex/config.toml default
             sandbox=sandbox,
             codex_bin=codex_bin,
+            resume_thread_id=resume_tid,
+            progress_callback=progress_callback,
         )
+        if new_tid and new_tid != resume_tid:
+            db.set_codex_thread_id(session_id, new_tid)
 
         # Persist assistant message to session transcript
         assistant_msg = {"role": "assistant", "content": final}

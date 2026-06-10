@@ -30,6 +30,13 @@ class CodexAppServerSession:
     ``send_fn``: callable(dict) that serialises + sends one JSON line.
     ``recv_iter``: iterator of parsed JSON dicts from the server.
     ``timeout``: overall seconds to wait for turn/completed.
+    ``resume_thread_id``: if set, attempt thread/resume before thread/start.
+    ``progress``: optional callable(str) for live item event labels.
+    ``skip_initialize``: if True, skip the initialize handshake (process already
+        initialized in a previous turn).
+    ``id_alloc``: optional callable that returns the next rpc id; if provided,
+        replaces the internal counter (used by the shared-server manager so ids
+        never repeat across turns on one process).
     """
 
     def __init__(
@@ -43,6 +50,10 @@ class CodexAppServerSession:
         sandbox: str = "workspace-write",
         model: str | None = None,
         prompt: str,
+        resume_thread_id: str | None = None,
+        progress: Callable[[str], None] | None = None,
+        skip_initialize: bool = False,
+        id_alloc: Callable[[], int] | None = None,
     ) -> None:
         self._send = send_fn
         self._recv = recv_iter
@@ -52,36 +63,69 @@ class CodexAppServerSession:
         self._sandbox = sandbox
         self._model = model
         self._prompt = prompt
+        self._resume_thread_id = resume_thread_id
+        self._progress = progress
+        self._skip_initialize = skip_initialize
+        self._next_id = 0
+        if id_alloc is not None:
+            self._rpc_id = id_alloc  # type: ignore[method-assign]
+        self.thread_id: str | None = None
+
+    def _rpc_id(self) -> int:
+        self._next_id += 1
+        return self._next_id
 
     def run(self) -> str:
         """Execute the full handshake and return the final agent text."""
-        # Step 1: initialize
-        self._send({"id": 1, "method": "initialize",
-                    "params": {"clientInfo": {"name": "bemine", "version": "0.1.0"}}})
-        self._await_response(id=1)
+        # Step 1: initialize (skipped when reusing a persistent process)
+        if not self._skip_initialize:
+            init_id = self._rpc_id()
+            self._send({"id": init_id, "method": "initialize",
+                        "params": {"clientInfo": {"name": "bemine", "version": "0.1.0"}}})
+            self._await_response(id=init_id)
 
-        # Step 2: thread/start
-        thread_params: dict = {
-            "cwd": self._cwd,
-            "approvalPolicy": "never",
-            "sandbox": self._sandbox,
-        }
-        if self._developer_instructions:
-            thread_params["developerInstructions"] = self._developer_instructions
-        if self._model:
-            thread_params["model"] = self._model
-        self._send({"id": 2, "method": "thread/start", "params": thread_params})
-        resp2 = self._await_response(id=2)
-        try:
-            thread_id = resp2["result"]["thread"]["id"]
-        except (KeyError, TypeError) as exc:
-            raise CodexAppServerError(
-                f"thread/start response missing result.thread.id: {resp2}"
-            ) from exc
+        # Step 2: thread/resume or thread/start
+        thread_id: str | None = None
+        if self._resume_thread_id:
+            rid = self._rpc_id()
+            self._send({"id": rid, "method": "thread/resume",
+                        "params": {"threadId": self._resume_thread_id}})
+            try:
+                resp = self._await_response(id=rid)
+                thread_id = (
+                    ((resp.get("result") or {}).get("thread") or {}).get("id")
+                    or self._resume_thread_id
+                )
+            except CodexAppServerError as exc:
+                LOG.warning("thread/resume failed (%s); starting a fresh thread", exc)
+                thread_id = None
+
+        if thread_id is None:
+            thread_params: dict = {
+                "cwd": self._cwd,
+                "approvalPolicy": "never",
+                "sandbox": self._sandbox,
+            }
+            if self._developer_instructions:
+                thread_params["developerInstructions"] = self._developer_instructions
+            if self._model:
+                thread_params["model"] = self._model
+            start_id = self._rpc_id()
+            self._send({"id": start_id, "method": "thread/start", "params": thread_params})
+            resp_start = self._await_response(id=start_id)
+            try:
+                thread_id = resp_start["result"]["thread"]["id"]
+            except (KeyError, TypeError) as exc:
+                raise CodexAppServerError(
+                    f"thread/start response missing result.thread.id: {resp_start}"
+                ) from exc
+
+        self.thread_id = thread_id
 
         # Step 3: turn/start
+        turn_id = self._rpc_id()
         self._send({
-            "id": 3,
+            "id": turn_id,
             "method": "turn/start",
             "params": {
                 "threadId": thread_id,
@@ -142,12 +186,25 @@ class CodexAppServerSession:
                 if delta:
                     deltas.append(delta)
 
-            elif method == "item/completed":
+            elif method in ("item/started", "item/completed"):
                 item = (msg.get("params") or {}).get("item") or {}
-                if item.get("type") == "agentMessage":
-                    text = item.get("text")
-                    if text is not None:
-                        final_text = text
+                itype = item.get("type", "")
+                if itype == "agentMessage":
+                    if method == "item/completed":
+                        text = item.get("text")
+                        if text is not None:
+                            final_text = text
+                elif self._progress and method == "item/started":
+                    label = (
+                        item.get("command")
+                        or item.get("path")
+                        or item.get("query")
+                        or itype
+                    )
+                    try:
+                        self._progress(f"codex: {str(label)[:120]}")
+                    except Exception:  # noqa: BLE001
+                        pass
 
             elif method == "turn/completed":
                 # Authoritative end — prefer item/completed text, else joined deltas
@@ -251,6 +308,61 @@ def _queue_iter(q: "queue.Queue", timeout: float) -> Iterator[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Persistent shared-server manager
+# ---------------------------------------------------------------------------
+
+class _SharedServer:
+    """A persistent codex app-server process shared across turns.
+
+    One JSON-RPC ``initialize`` per process lifetime; a threading.Lock
+    serialises turns.  The rpc-id counter lives here so ids never repeat
+    across turns on one process.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.proc = None
+        self.queue: "queue.Queue | None" = None
+        self.codex_bin = ""
+        self.initialized = False
+        self.next_id = 0
+
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def kill(self) -> None:
+        if self.proc is not None:
+            try:
+                self.proc.stdin.close()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self.proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+        self.proc = None
+        self.queue = None
+        self.initialized = False
+        self.next_id = 0
+
+    def ensure(self, codex_bin: str, timeout: float, spawn) -> None:  # type: ignore[type-arg]
+        if self.alive() and self.codex_bin == codex_bin:
+            return
+        self.kill()
+        self.proc = spawn(codex_bin)
+        self.codex_bin = codex_bin
+        self.queue = queue.Queue()
+        _make_queue_reader(self.proc.stdout, self.queue, timeout).start()
+        threading.Thread(
+            target=lambda: [None for _ in self.proc.stderr],
+            daemon=True,
+        ).start()  # drain stderr
+
+
+_SHARED = _SharedServer()
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -263,15 +375,111 @@ def run_codex_turn(
     sandbox: str = "workspace-write",
     codex_bin: str = "codex",
     timeout: float = 180.0,
+    resume_thread_id: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
     _spawn=None,
-) -> str:
+    persistent: bool = True,
+) -> tuple[str, str | None]:
     """Run one Codex turn via the app-server (ChatGPT subscription).
 
-    Returns final agent text.
+    Returns ``(final_text, thread_id)`` where ``thread_id`` is the codex thread
+    used (new or resumed) — persist it to resume on the next call.
     Raises CodexAppServerError on protocol error / timeout / non-completion.
 
     ``_spawn`` is injectable for tests (callable(codex_bin) -> Popen-like).
+    ``persistent``: if True (default), reuse a long-lived shared server process
+        across turns, respawning only when the process dies.  Pass False to
+        spawn a fresh process per turn (old behaviour).
     """
+    if not persistent:
+        return _run_codex_turn_ephemeral(
+            prompt,
+            cwd=cwd,
+            developer_instructions=developer_instructions,
+            model=model,
+            sandbox=sandbox,
+            codex_bin=codex_bin,
+            timeout=timeout,
+            resume_thread_id=resume_thread_id,
+            progress_callback=progress_callback,
+            _spawn=_spawn,
+        )
+
+    # ------------------------------------------------------------------
+    # Persistent path — serialised by _SHARED.lock
+    # ------------------------------------------------------------------
+    spawn = _spawn or _spawn_appserver
+
+    with _SHARED.lock:
+        def _attempt() -> tuple[str, str | None]:
+            _SHARED.ensure(codex_bin, timeout, spawn)
+            assert _SHARED.proc is not None  # noqa: S101  (ensured above)
+            assert _SHARED.queue is not None  # noqa: S101
+
+            proc = _SHARED.proc
+            shared_q = _SHARED.queue
+
+            def _send(msg: dict) -> None:
+                line = json.dumps(msg, separators=(",", ":")) + "\n"
+                LOG.debug("→ codex: %s", line.rstrip())
+                proc.stdin.write(line)
+                proc.stdin.flush()
+
+            recv = _queue_iter(shared_q, timeout)
+
+            def _alloc_id() -> int:
+                _SHARED.next_id += 1
+                return _SHARED.next_id
+
+            session = CodexAppServerSession(
+                send_fn=_send,
+                recv_iter=recv,
+                timeout=timeout,
+                cwd=cwd,
+                developer_instructions=developer_instructions,
+                sandbox=sandbox,
+                model=model,
+                prompt=prompt,
+                resume_thread_id=resume_thread_id,
+                progress=progress_callback,
+                skip_initialize=_SHARED.initialized,
+                id_alloc=_alloc_id,
+            )
+            result = session.run()
+            _SHARED.initialized = True
+            return result, session.thread_id
+
+        try:
+            return _attempt()
+        except Exception as first_exc:  # noqa: BLE001
+            LOG.warning(
+                "Persistent codex app-server turn failed (%s); killing and retrying once.",
+                first_exc,
+            )
+            _SHARED.kill()
+            try:
+                return _attempt()
+            except Exception as retry_exc:  # noqa: BLE001
+                _SHARED.kill()
+                raise CodexAppServerError(
+                    f"codex turn failed after respawn: {retry_exc}"
+                ) from retry_exc
+
+
+def _run_codex_turn_ephemeral(
+    prompt: str,
+    *,
+    cwd: str | Path,
+    developer_instructions: str = "",
+    model: str | None = None,
+    sandbox: str = "workspace-write",
+    codex_bin: str = "codex",
+    timeout: float = 180.0,
+    resume_thread_id: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+    _spawn=None,
+) -> tuple[str, str | None]:
+    """Original per-turn spawn behaviour (persistent=False)."""
     spawn = _spawn or _spawn_appserver
     proc = spawn(codex_bin)
 
@@ -305,6 +513,8 @@ def run_codex_turn(
         sandbox=sandbox,
         model=model,
         prompt=prompt,
+        resume_thread_id=resume_thread_id,
+        progress=progress_callback,
     )
 
     try:
@@ -317,7 +527,6 @@ def run_codex_turn(
             pass
         proc.wait(timeout=5)
         stderr_thread.join(timeout=2)
-        tail = "".join(stderr_lines[-20:]).strip()
         raise
     except Exception as exc:
         try:
@@ -337,4 +546,4 @@ def run_codex_turn(
             pass
         reader_thread.join(timeout=3)
 
-    return result
+    return result, session.thread_id
