@@ -84,7 +84,26 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
     for key_str, status in current_sessions.items():
         old_data = state.known_sessions.get(key_str, {})
         was_asking = old_data.get("asks_user", False)
+        notified_started = old_data.get("notified_started", False)
         notified_done = old_data.get("notified_done", False)
+
+        # First sighting of an actively-working session: announce it so the project
+        # channel is created IMMEDIATELY (not only when it later stalls or finishes).
+        # Already-idle or asking first-sightings are covered by "done"/"needs_input".
+        if (
+            status.age_seconds < idle_threshold
+            and not status.asks_user
+            and not notified_started
+        ):
+            events.append({
+                "type": "started",
+                "device_id": status.device_id,
+                "runtime": status.runtime,
+                "session_id": status.session_id,
+                "cwd": status.cwd,
+                "age_seconds": status.age_seconds,
+            })
+            notified_started = True
 
         if status.asks_user and not was_asking:
             events.append({
@@ -128,6 +147,7 @@ def check_sessions(settings: BemineSettings, state_path: Path) -> list[dict[str,
             "asks_user": status.asks_user,
             "age_seconds": status.age_seconds,
             "last_seen": now,
+            "notified_started": notified_started,
             "notified_done": notified_done,
         }
     
@@ -161,6 +181,11 @@ def render_events(events: list[dict[str, Any]]) -> str:
             lines.append(
                 f"\u2705 **Finished** — `{event['session_id']}` on {event['device_id']} "
                 f"(`{event['cwd'] or 'unknown'}`)"
+            )
+        elif event["type"] == "started":
+            lines.append(
+                "\U0001f680 **Started** — `" + str(event.get("runtime", "")) + "` working in `"
+                + str(event.get("cwd") or "unknown") + "` on " + str(event.get("device_id", ""))
             )
         elif event["type"] == "needs_input":
             lines.append(
@@ -391,6 +416,8 @@ def _rearm_undelivered(state_path: Path, undelivered: list[dict[str, Any]]) -> N
             continue
         if ev.get("type") == "done":
             entry["notified_done"] = False
+        elif ev.get("type") == "started":
+            entry["notified_started"] = False
         elif ev.get("type") == "needs_input":
             entry["asks_user"] = False
     state.save(state_path)

@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from bemine.config import BemineSettings
 from bemine.index.status import SessionStatus
@@ -67,7 +66,6 @@ def test_render_events_formats_and_empty():
 def test_session_watcher_job_empty_output_does_not_crash_notify(tmp_path, monkeypatch):
     """Regression: a notify_discord job with empty output (no events) must not crash on
     an unbound `sent` (UnboundLocalError) — it should succeed and not notify."""
-    from bemine.db import BemineDB
     from bemine.kernel import BemineKernel
     from bemine.jobs.core import run_job_by_id, seed_default_jobs
 
@@ -169,3 +167,57 @@ def test_undelivered_event_is_rearmed_for_retry(tmp_path):
                                      "runtime": "claude", "session_id": "sX"}])
     saved = json.loads(state_path.read_text())["known_sessions"][key]
     assert saved["notified_done"] is False
+
+
+def test_undelivered_started_event_is_rearmed_for_retry(tmp_path):
+    import json
+    from bemine.jobs.session_watcher import _rearm_undelivered, WatcherState
+    state_path = tmp_path / "state.json"
+    key = json.dumps({"d": "mbp", "r": "claude", "s": "sX"}, sort_keys=True)
+    WatcherState(
+        known_sessions={key: {"notified_started": True, "asks_user": False}},
+        last_check=0,
+    ).save(state_path)
+
+    _rearm_undelivered(state_path, [{
+        "type": "started", "device_id": "mbp", "runtime": "claude", "session_id": "sX",
+    }])
+
+    saved = json.loads(state_path.read_text())["known_sessions"][key]
+    assert saved["notified_started"] is False
+
+
+def test_started_event_on_first_sighting_of_active_session(tmp_path, monkeypatch):
+    # A NEW actively-working session must emit a "started" event on first sighting, so its
+    # project channel is created immediately (not only when it later stalls or finishes).
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(sw, "collect_fleet_status",
+                        lambda *a, **k: ([_status("fresh")], []))
+    events = sw.check_sessions(settings, state_path)
+    assert any(e["type"] == "started" for e in events)
+    # Second pass: same session, no duplicate "started".
+    events2 = sw.check_sessions(settings, state_path)
+    assert not any(e["type"] == "started" for e in events2)
+
+
+def test_no_started_event_for_already_idle_first_sighting(tmp_path, monkeypatch):
+    # First sighting of an ALREADY-idle session fires "done" (existing behavior), not
+    # "started" — don't double-announce.
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    state_path = tmp_path / "state.json"
+    monkeypatch.setattr(sw, "collect_fleet_status",
+                        lambda *a, **k: ([_status_age("idle1", 4000)], []))
+    events = sw.check_sessions(settings, state_path)
+    kinds = [e["type"] for e in events]
+    assert "started" not in kinds
+    assert "done" in kinds
+
+
+def test_render_started_event():
+    text = sw.render_events([{
+        "type": "started", "session_id": "s", "device_id": "mbp",
+        "runtime": "codex", "cwd": "/x/nllb-better",
+    }])
+    assert "nllb-better" in text
+    assert "Started" in text or "started" in text
