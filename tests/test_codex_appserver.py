@@ -373,3 +373,35 @@ def test_run_codex_turn_error_raises():
             cwd="/tmp",
             _spawn=_make_fake_spawn(server_msgs),
         )
+
+
+def test_mcp_startup_failure_notification_is_nonfatal():
+    """A failing optional MCP server (e.g. proton_bridge timing out) arrives as an
+    mcpServer/startupStatus/updated notification with an error — codex itself continues,
+    so the turn must too. Regression: this used to raise and kill every turn."""
+    server_msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "tid-mcp"}}},
+        {"id": 3, "result": {}},
+        {"method": "mcpServer/startupStatus/updated",
+         "params": {"error": "MCP client for `proton_bridge` timed out after 30 seconds."}},
+        {"method": "item/agentMessage/delta", "params": {"delta": "pong"}},
+        {"method": "turn/completed", "params": {}},
+    ]
+    sent, session = _session(server_msgs, prompt="ping", cwd="/tmp", timeout=30.0)
+    assert session.run() == "pong"
+
+
+def test_real_notification_error_still_raises():
+    server_msgs = [
+        {"id": 1, "result": {}},
+        {"id": 2, "result": {"thread": {"id": "tid-err"}}},
+        {"id": 3, "result": {}},
+        {"method": "turn/error", "params": {"error": "model exploded"}},
+    ]
+    sent, session = _session(server_msgs, prompt="ping", cwd="/tmp", timeout=30.0)
+    try:
+        session.run()
+        assert False, "expected CodexAppServerError"
+    except CodexAppServerError as exc:
+        assert "model exploded" in str(exc)
