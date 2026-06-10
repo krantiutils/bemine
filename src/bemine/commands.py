@@ -135,11 +135,12 @@ def _usage(settings: BemineSettings, args: Mapping) -> CommandResult:
 def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.context.subagents import load_subagent_context
     from bemine.discord.dispatch import dispatch_status_payload
-    from bemine.jobs import default_jobs
+    from bemine.jobs import render_jobs
+
+    kernel = BemineKernel(settings)
 
     subagents = load_subagent_context()
     dispatch = dispatch_status_payload(settings)
-    jobs = list(default_jobs(settings))
     goal_runtime = config_string("goal", "runtime", "claude") or "claude"
     goal_interval = config_int("goal", "interval_secs", 600)
     continuity_enabled = config_bool("continuity", "enabled", True)
@@ -177,11 +178,13 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- phantom: project_root={phantom_root or 'unset'}",
         "Config knobs:",
         *[f"- {item}" for item in configurable_knobs],
-        "Built-in jobs:",
     ]
-    summary_lines.extend(
-        f"- {job.job_id} ({job.name}): `{job.schedule}`" for job in jobs
-    )
+    jobs = [dict(row) for row in kernel.db.list_jobs()]
+    summary_lines.append("Configured jobs:")
+    if jobs:
+        summary_lines.extend(render_jobs(jobs).strip().splitlines()[1:])
+    else:
+        summary_lines.append("- none")
     summary_lines.extend(
         [
             "",
@@ -203,10 +206,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
             "dispatch": dispatch,
             "subagents": [profile.to_dict() for profile in subagents.profiles],
             "phantom": {"project_root": phantom_root},
-            "jobs": [
-                {"job_id": job.job_id, "schedule": job.schedule, "name": job.name}
-                for job in jobs
-            ],
+            "jobs": jobs,
         },
     )
 
