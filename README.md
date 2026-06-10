@@ -233,7 +233,7 @@ context>, check every 10m". When the project's session is waiting on input, Bemi
 drives it toward your brief (sending keystrokes over SSH for remote devices) and only
 messages you when blocked — your reply in the channel is relayed straight back in.
 Every action is echoed to the channel. Stop with "stop watching"; inspect with
-`bemine watch list`.
+`bemine watch list` or the native `watchers_status` tool.
 
 ### Self-deploy
 
