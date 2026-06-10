@@ -192,7 +192,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- dream: `dream run` / `uv run bemine dream run` to condense recent history",
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
-        "- backlog: `backlog add` / `backlog list` / `show backlog` / `remember this for SMM|PA: ...`",
+        "- backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM`)",
         f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom install`)",
