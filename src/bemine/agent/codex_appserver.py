@@ -13,6 +13,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Iterator
 
+from bemine.index.status import _redact
+
 LOG = logging.getLogger("bemine.agent.codex_appserver")
 
 
@@ -194,17 +196,8 @@ class CodexAppServerSession:
                         text = item.get("text")
                         if text is not None:
                             final_text = text
-                elif self._progress and method == "item/started":
-                    label = (
-                        item.get("command")
-                        or item.get("path")
-                        or item.get("query")
-                        or itype
-                    )
-                    try:
-                        self._progress(f"codex: {str(label)[:120]}")
-                    except Exception:  # noqa: BLE001
-                        pass
+                else:
+                    self._emit_progress(_progress_label(method, item))
 
             elif method == "turn/completed":
                 # Authoritative end — prefer item/completed text, else joined deltas
@@ -221,10 +214,22 @@ class CodexAppServerSession:
                         "codex notification (non-fatal) %s: %s",
                         method, msg["params"]["error"],
                     )
+                    self._emit_progress(
+                        f"codex warning: {_compact_progress(method)}: "
+                        f"{_compact_progress(str(msg['params']['error']))}"
+                    )
                     continue
                 raise CodexAppServerError(
                     f"codex notification error ({method}): {msg['params']['error']}"
                 )
+
+    def _emit_progress(self, label: str) -> None:
+        if not self._progress or not label:
+            return
+        try:
+            self._progress(label)
+        except Exception:  # noqa: BLE001
+            pass
 
     def _maybe_handle_approval_request(self, msg: dict) -> None:
         """If msg looks like a server-initiated approval request, deny it."""
@@ -241,6 +246,38 @@ class CodexAppServerSession:
                 self._send({"id": msg_id, "result": {"decision": "deny"}})
             except Exception as exc:  # noqa: BLE001
                 LOG.debug("could not send denial: %s", exc)
+
+
+def _progress_label(method: str, item: dict) -> str:
+    item_type = str(item.get("type") or "")
+    if not item_type:
+        return ""
+    if item_type == "commandExecution":
+        command = _compact_progress(str(item.get("command") or "shell command"))
+        if method == "item/started":
+            return f"codex shell started: {command}"
+        exit_code = item.get("exitCode", item.get("exit_code"))
+        if exit_code in {0, "0"}:
+            return f"codex shell done: {command}"
+        if exit_code is None:
+            return f"codex shell completed: {command}"
+        return f"codex shell exit {exit_code}: {command}"
+    if item_type == "fileChange":
+        path = _compact_progress(str(item.get("path") or item.get("file") or "file"))
+        action = "started" if method == "item/started" else "completed"
+        return f"codex file {action}: {path}"
+    label = _compact_progress(
+        str(item.get("name") or item.get("path") or item.get("query") or item_type)
+    )
+    action = "started" if method == "item/started" else "completed"
+    return f"codex {item_type} {action}: {label}"
+
+
+def _compact_progress(value: str, *, limit: int = 180) -> str:
+    text = " ".join(_redact(value).split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
 
 
 # ---------------------------------------------------------------------------

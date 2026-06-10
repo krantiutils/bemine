@@ -882,9 +882,10 @@ class MayorDiscordGateway:
             await reporter.finish(note="↻ Interrupted.")
             raise
         except Exception as exc:
-            await reporter.finish(note=None)
+            error = _redact(str(exc))
+            await reporter.finish(note=f"Dispatch failed: {error}")
             await _acknowledge_message(message, emoji=WARNING_REACTION)
-            await responder.send(f"Dispatch failed: {exc}")
+            await responder.send(f"Dispatch failed: {error}")
             return
         # If a newer message superseded this run, don't post a stale answer.
         if cancel_event.is_set():

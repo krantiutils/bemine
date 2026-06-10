@@ -13,6 +13,7 @@ import bemine.discord.gateway as gw
 from bemine.discord.gateway import (
     ACK_REACTION,
     SUCCESS_REACTION,
+    WARNING_REACTION,
     WORKING_REACTION,
     _acknowledge_message,
     _best_effort_typing,
@@ -319,6 +320,36 @@ def test_novel_plain_message_routes_to_agent(tmp_path: Path, monkeypatch) -> Non
     assert message.replies == ["AGENT REPLY"]
     assert WORKING_REACTION in message.reactions
     assert SUCCESS_REACTION in message.reactions
+
+
+def test_dispatch_failure_finishes_progress_as_failed(tmp_path: Path, monkeypatch) -> None:
+    notes: list[str | None] = []
+
+    class FakeReporter:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __call__(self, _text: str) -> None:
+            pass
+
+        async def finish(self, *, note: str | None = None) -> None:
+            notes.append(note)
+
+    def fake_run(settings, message, normalized, saved_attachments=None,
+                 progress_callback=None, cancel_event=None):
+        raise RuntimeError("boom sk-kimi-abcdefghijklmnopqrstuvwxyz")
+
+    monkeypatch.setattr(gw, "_ProgressReporter", FakeReporter)
+    monkeypatch.setattr(gw, "run_bound_agent", fake_run)
+
+    gateway = _make_gateway(tmp_path)
+    message = _PassthroughMessage("hello")
+
+    asyncio.run(gateway._handle_allowed_message(message))
+
+    assert notes == ["Dispatch failed: boom <token>"]
+    assert message.replies == ["Dispatch failed: boom <token>"]
+    assert WARNING_REACTION in message.reactions
 
 
 def test_empty_message_does_not_route_to_agent(tmp_path: Path, monkeypatch) -> None:
