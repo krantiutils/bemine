@@ -19,6 +19,29 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     assert "goal sessions" in goals.lower()
 
 
+def test_slash_dispatch_reports_runtime(tmp_path, monkeypatch):
+    config = tmp_path / "bemine.toml"
+    config.write_text(
+        """
+[dispatch]
+runtime = "kimi"
+
+[kimi]
+model = "kimi-k2.6"
+backend = "native"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+
+    text = slash_command_text(settings, "dispatch", {})
+
+    assert "Dispatch runtime:" in text
+    assert "- runtime: kimi" in text
+    assert "- backend: native" in text
+
+
 def test_slash_unknown_command(tmp_path):
     settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
     text = slash_command_text(settings, "nope", {})

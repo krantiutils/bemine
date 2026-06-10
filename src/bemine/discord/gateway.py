@@ -67,6 +67,7 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "rundown": "rundown",
     "jobs": "jobs.list",
     "health": "health",
+    "dispatch": "dispatch.status",
     "goals": "goals.list",
     "usage": "usage",
     "capabilities": "capabilities",
