@@ -72,6 +72,8 @@ journalctl --user -u mayor-discord-gateway -n 100 --no-pager
   `bemine goal <project> "<brief>"` when the user wants Bemine to start and run
   a goal itself instead of manually opening a terminal first. It resolves local
   projects first, then fleet status, and can start remote tmux workers via SSH.
+  Inspect active goal state with `bemine goal --list` or
+  `bemine goal --status <project-or-worker> --json`.
 - cdjk continuity: `src/bemine/workers/workers.py::resume_missing_local_workers`
   and `BemineDaemon._continuity_tick()` restart recorded `running` local managed
   tmux workers after line cuts/reboots. Configured under `[continuity]`.

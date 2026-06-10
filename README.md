@@ -155,7 +155,9 @@ and registers a watcher for follow-up/recovery. From Discord, say
 `goal <project>: "<brief>"`; recent channel context is folded into the brief.
 If the project is currently visible only on another device in fleet status,
 Bemine starts the worker there through SSH-backed tmux; pass `--target-device`
-to force the device.
+to force the device. Use `uv run bemine goal --list` or
+`uv run bemine goal --status <project-or-worker> --json` to inspect goal
+workers and watchers together.
 
 On `cdjk`, `[continuity]` makes the daemon restart managed local workers after
 line cuts or reboot: if a `bemine goal` worker was recorded as `running` but its

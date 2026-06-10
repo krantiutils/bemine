@@ -38,6 +38,7 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "remind me / schedule X" → `uv run bemine jobs add-reminder --help`.
 - "start/run a goal for project X" → `uv run bemine goal <project> "<goal brief>"`;
   this starts a managed tmux worker, sends the brief, and registers a watcher.
+  Inspect goal workers/watchers with `uv run bemine goal --list`.
 - "dream / learn from recent history" → `uv run bemine dream run`; daemon also runs the
   `dream` job periodically and appends one JSONL data point to `Dreams/dreams.jsonl`.
 - config questions → `bemine_config` tool or `uv run bemine config show`; NEVER guess
@@ -49,7 +50,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   (optional `--cwd`, `--runtime`, `--worker`, `--interval`). This is the preferred path
   over manually starting a terminal and then adding a watcher. If the project is only
   visible in fleet status, `goal` can start the worker on that device; use
-  `--target-device <host>` to force a device.
+  `--target-device <host>` to force a device. Inspect with `uv run bemine goal --list`
+  or `uv run bemine goal --status <project-or-worker> --json`.
 - cdjk line cuts / power loss: systemd restarts `bemine-daemon`; the daemon's
   `[continuity]` pass restarts Bemine-managed local tmux workers that were recorded as
   `running` but whose tmux session disappeared. This only applies to managed workers

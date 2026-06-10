@@ -26,7 +26,7 @@ from .jobs import (
     seed_default_jobs,
     upsert_reminder_job,
 )
-from .goals import render_goal_start, start_goal
+from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, start_goal
 from .dreams import render_dream, run_dream
 from .mail_bridge import check_proton_bridge, render_proton_bridge_status
 from .kimi_handler import KimiHandler, render_kimi_status, usage_payload
@@ -287,6 +287,8 @@ Examples:
   uv run bemine goal rai-speech-toolkit "train the first Rai TTS checkpoint"
   uv run bemine goal rai-speech-toolkit "eval against neptts-bench" --cwd ~/github/rai-speech-toolkit
   uv run bemine goal rai-speech-toolkit "resume training" --target-device mbp
+  uv run bemine goal --list
+  uv run bemine goal --status rai --json
   uv run bemine goal streaming-tts "find where this project exists across machines" --runtime claude --json
 """
 
@@ -928,8 +930,27 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=dedent(GOAL_HELP),
         formatter_class=HELP_FORMATTER,
     )
-    goal.add_argument("project", help="Project name/id/path, e.g. rai-speech-toolkit.")
-    goal.add_argument("brief", help="Goal brief to send to the worker and watcher.")
+    goal.add_argument(
+        "project",
+        nargs="?",
+        help="Project name/id/path, e.g. rai-speech-toolkit.",
+    )
+    goal.add_argument(
+        "brief",
+        nargs="?",
+        help="Goal brief to send to the worker and watcher.",
+    )
+    goal.add_argument(
+        "--list",
+        action="store_true",
+        help="List managed goal workers and active watchers.",
+    )
+    goal.add_argument(
+        "--status",
+        default="",
+        metavar="PROJECT_OR_WORKER",
+        help="Filter goal session list by project id, worker, cwd, device, or brief.",
+    )
     goal.add_argument(
         "--cwd",
         default="",
@@ -967,7 +988,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Override worker command. Defaults from runtime.",
     )
-    goal.add_argument("--json", action="store_true", help="Emit goal start as JSON.")
+    goal.add_argument("--json", action="store_true", help="Emit JSON.")
 
     creds = sub.add_parser(
         "credentials",
@@ -1744,6 +1765,25 @@ def main(argv: list[str] | None = None) -> None:
             result = CredentialProxy(kernel.db).check(args.request_id, actor=args.actor)
             print(json.dumps(result, sort_keys=True))
     elif args.command == "goal":
+        if args.list or args.status:
+            sessions = list_goal_sessions(
+                settings,
+                status=args.status,
+                db=kernel.db,
+            )
+            if args.json:
+                print(
+                    json.dumps(
+                        [session.to_dict() for session in sessions],
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(render_goal_sessions(sessions), end="")
+            return
+        if not args.project or not args.brief:
+            raise SystemExit("goal requires PROJECT and brief, or use --list/--status.")
         try:
             result = start_goal(
                 settings,

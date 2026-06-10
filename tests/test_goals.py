@@ -7,7 +7,7 @@ from pathlib import Path
 from bemine.config import BemineSettings
 from bemine.cli import main
 from bemine.db import BemineDB
-from bemine.goals import start_goal
+from bemine.goals import list_goal_sessions, render_goal_sessions, start_goal
 from bemine.index.status import SessionStatus
 from bemine.workers.workers import WorkerController, resume_missing_local_workers
 
@@ -103,6 +103,49 @@ def test_resume_missing_local_workers_restarts_running_cdjk_worker(
             ).fetchall()
         ]
     assert "worker_resumed_after_outage" in events
+
+
+def test_list_goal_sessions_joins_goal_worker_and_active_watcher(tmp_path: Path) -> None:
+    project = tmp_path / "rai-speech-toolkit"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    db.upsert_managed_session(
+        name="goal-rai",
+        runtime="shell",
+        transport="tmux",
+        device_id="cdjk",
+        project_id="proj_rai",
+        cwd=str(project),
+        command="cat",
+        status="running",
+    )
+    db.upsert_project_watcher(
+        project_id="proj_rai",
+        channel_id="chan-rai",
+        brief="train Rai checkpoint",
+        interval_secs=600,
+    )
+    tmux = FakeTmux()
+    tmux.sessions.add("goal-rai")
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    sessions = list_goal_sessions(settings, db=db, controller=controller)
+
+    assert len(sessions) == 1
+    assert sessions[0].project_id == "proj_rai"
+    assert sessions[0].worker is not None
+    assert sessions[0].worker.name == "goal-rai"
+    assert sessions[0].watcher is not None
+    assert sessions[0].watcher["channel_id"] == "chan-rai"
+    assert list_goal_sessions(settings, status="checkpoint", db=db, controller=controller)
+    rendered = render_goal_sessions(sessions)
+    assert "goal-rai" in rendered
+    assert "chan-rai" in rendered
 
 
 def test_start_goal_resolves_remote_project_from_fleet_status(
@@ -220,6 +263,43 @@ def test_cli_goal_with_command_option_starts_worker_and_watcher(
     assert payload["worker"]["name"] == "goal-demo"
     assert payload["worker"]["command"] == "cat"
     assert payload["watcher"]["brief"] == "smoke goal"
+
+
+def test_cli_goal_list_json_reports_empty_sessions(tmp_path: Path, capsys) -> None:
+    main(
+        [
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--vault",
+            str(tmp_path / "vault"),
+            "--device",
+            "testbox",
+            "goal",
+            "--list",
+            "--json",
+        ]
+    )
+
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_cli_goal_requires_project_and_brief_for_start(tmp_path: Path) -> None:
+    try:
+        main(
+            [
+                "--state-dir",
+                str(tmp_path / "state"),
+                "--vault",
+                str(tmp_path / "vault"),
+                "--device",
+                "testbox",
+                "goal",
+            ]
+        )
+    except SystemExit as exc:
+        assert "goal requires PROJECT and brief" in str(exc)
+    else:
+        raise AssertionError("goal without project/brief should exit")
 
 
 class FakeTmux:

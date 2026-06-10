@@ -71,6 +71,8 @@ def test_goal_help_explains_worker_plus_watcher_flow() -> None:
     assert "starts a tmux-backed worker" in flat
     assert "registers a watcher" in flat
     assert "--target-device" in text
+    assert "--list" in text
+    assert "--status" in text
     assert "uv run bemine goal rai-speech-toolkit" in text
 
 

@@ -35,6 +35,20 @@ class GoalTarget:
     device_id: str
 
 
+@dataclass(frozen=True)
+class GoalSession:
+    project_id: str
+    worker: WorkerRecord | None
+    watcher: dict | None
+
+    def to_dict(self) -> dict:
+        return {
+            "project_id": self.project_id,
+            "worker": self.worker.to_dict() if self.worker else None,
+            "watcher": dict(self.watcher) if self.watcher else None,
+        }
+
+
 def start_goal(
     settings: BemineSettings,
     *,
@@ -113,6 +127,49 @@ def start_goal(
     return GoalStartResult(worker=worker, watcher=watcher, prompt=prompt)
 
 
+def list_goal_sessions(
+    settings: BemineSettings,
+    *,
+    status: str = "",
+    db: BemineDB | None = None,
+    controller: WorkerController | None = None,
+) -> list[GoalSession]:
+    db = db or BemineDB(settings.db_path)
+    controller = controller or WorkerController(settings, db=db)
+    workers = controller.list()
+    watchers = {
+        str(row["project_id"]): dict(row)
+        for row in db.list_active_project_watchers()
+    }
+    sessions: list[GoalSession] = []
+    seen_projects: set[str] = set()
+    for worker in workers:
+        watcher = watchers.get(worker.project_id)
+        if not watcher and not worker.name.startswith("goal-"):
+            continue
+        sessions.append(
+            GoalSession(
+                project_id=worker.project_id,
+                worker=worker,
+                watcher=watcher,
+            )
+        )
+        seen_projects.add(worker.project_id)
+    for project_id, watcher in watchers.items():
+        if project_id in seen_projects:
+            continue
+        sessions.append(GoalSession(project_id=project_id, worker=None, watcher=watcher))
+    query = status.strip().casefold()
+    if query:
+        sessions = [
+            session
+            for session in sessions
+            if _goal_session_matches(session, query)
+        ]
+    sessions.sort(key=_goal_session_sort_key)
+    return sessions
+
+
 def render_goal_start(result: GoalStartResult) -> str:
     watcher = result.watcher
     return (
@@ -123,6 +180,33 @@ def render_goal_start(result: GoalStartResult) -> str:
         f"every {watcher.get('interval_secs', '?')}s "
         f"channel={watcher.get('channel_id') or 'none'}\n"
     )
+
+
+def render_goal_sessions(sessions: list[GoalSession]) -> str:
+    if not sessions:
+        return "No goal sessions found.\n"
+    lines = ["Goal sessions:"]
+    for session in sessions:
+        lines.append(f"- project `{session.project_id}`")
+        if session.worker:
+            live = "live" if session.worker.exists else "not-live"
+            lines.append(
+                f"  worker: `{session.worker.name}` [{session.worker.runtime}] "
+                f"{session.worker.status}/{live} device={session.worker.device_id} "
+                f"`{session.worker.cwd}`"
+            )
+        else:
+            lines.append("  worker: none registered")
+        if session.watcher:
+            lines.append(
+                f"  watcher: {session.watcher.get('status', 'unknown')} "
+                f"every {session.watcher.get('interval_secs', '?')}s "
+                f"channel={session.watcher.get('channel_id') or 'none'}"
+            )
+        else:
+            lines.append("  watcher: none active")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _resolve_goal_target(
@@ -256,6 +340,36 @@ def _project_matches_cwd(project: str, cwd: str) -> bool:
         str(path).casefold(),
     }
     return project in variants
+
+
+def _goal_session_matches(session: GoalSession, query: str) -> bool:
+    values = [session.project_id]
+    if session.worker:
+        values.extend(
+            [
+                session.worker.name,
+                session.worker.cwd,
+                Path(session.worker.cwd).name,
+                session.worker.device_id,
+                session.worker.runtime,
+            ]
+        )
+    if session.watcher:
+        values.extend(
+            [
+                str(session.watcher.get("channel_id") or ""),
+                str(session.watcher.get("brief") or ""),
+                str(session.watcher.get("status") or ""),
+            ]
+        )
+    return any(query in value.casefold() for value in values if value)
+
+
+def _goal_session_sort_key(session: GoalSession) -> tuple[int, str]:
+    tick = 0
+    if session.watcher:
+        tick = int(float(session.watcher.get("last_tick_at") or 0))
+    return (tick, session.project_id)
 
 
 def _goal_prompt(*, project: str, brief: str, worker: WorkerRecord) -> str:
