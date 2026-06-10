@@ -16,11 +16,13 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     goals = slash_command_text(settings, "goals", {})
     continuity = slash_command_text(settings, "continuity", {})
     help_text = slash_command_text(settings, "help", {})
+    routes = slash_command_text(settings, "routes", {})
 
     assert "Bemine health:" in health
     assert "goal sessions" in goals.lower()
     assert "Bemine continuity:" in continuity
     assert "Bemine help:" in help_text
+    assert "Discord route management:" in routes
 
 
 def test_slash_pa_plan_is_deterministic(tmp_path, monkeypatch):

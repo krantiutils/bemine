@@ -104,7 +104,7 @@ Core concepts:
   watch         per-project watchers that drive a session toward a goal
   deploy        test-gated self-deploy of Bemine with auto-rollback
   audit         query the operational event log
-  discord       project channel routing and Discord sync
+  discord       project channel routing, route inspection, and Discord sync
 
 Self-discovery: `bemine <command> --help` is the contract for every command.
 The full operator manual for agents lives in AGENTS.md at the repo root.
@@ -296,11 +296,13 @@ DISCORD_HELP = """\
 Manage Discord project routing.
 
 Project channels route messages into the corresponding project root. The sync
-command creates/updates Discord channels from indexed projects. Local transcript
-commands inspect the SQLite message store without requiring live Discord API
-credentials.
+command creates/updates Discord channels from indexed projects. The routes
+command inspects configured and indexed project-channel bindings without
+mutating Discord. Local transcript commands inspect the SQLite message store
+without requiring live Discord API credentials.
 
 Examples:
+  uv run bemine discord routes --query rai
   uv run bemine discord write-project-channels --limit 200
   uv run bemine discord sync-project-channels --guild-id "$MAYOR_DISCORD_GUILD_ID"
   uv run bemine discord refresh-channel-names --guild-id "$MAYOR_DISCORD_GUILD_ID"
@@ -1474,6 +1476,19 @@ def build_parser() -> argparse.ArgumentParser:
     write_channels.add_argument(
         "--limit", type=int, default=200, help="Maximum indexed projects to write."
     )
+    routes = discord_sub.add_parser(
+        "routes",
+        help="Inspect configured and indexed Discord project routes.",
+    )
+    routes.add_argument(
+        "--query",
+        default="",
+        help="Filter by channel, project id/name, cwd, runtime, or watcher state.",
+    )
+    routes.add_argument(
+        "--limit", type=int, default=50, help="Maximum route rows to print."
+    )
+    routes.add_argument("--json", action="store_true", help="Emit JSON.")
     sync_channels = discord_sub.add_parser(
         "sync-project-channels",
         help="Create/update Discord project channels from indexed projects.",
@@ -2392,6 +2407,16 @@ def main(argv: list[str] | None = None) -> None:
                     {"path": str(path), "projects": len(channels)}, sort_keys=True
                 )
             )
+        elif args.discord_command == "routes":
+            result = run_command(
+                "discord.routes",
+                settings,
+                {"query": args.query, "limit": args.limit},
+            )
+            if args.json:
+                print(json.dumps(result.data, indent=2, sort_keys=True))
+            else:
+                print(result.text, end="")
         elif args.discord_command == "sync-project-channels":
             from bemine.discord.config import Settings as DiscordSettings
             from bemine.discord.dispatch import (

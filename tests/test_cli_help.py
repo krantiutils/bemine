@@ -29,6 +29,7 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "health        deploy/services/jobs/watchers health packet" in text
     assert "continuity    line-cut recovery status packet" in text
     assert "help          self-documenting capability and config summary" in text
+    assert "discord       project channel routing, route inspection, and Discord sync" in text
     assert "backlog       durable PA/SMM idea" in text
     assert "pa            plan daily focus" in text
     assert "smm           draft Ampixa-style social posts" in text

@@ -9,7 +9,7 @@ def _settings(tmp_path):
 
 def test_registry_lists_deterministic_ops():
     names = set(registry().keys())
-    assert {"status", "rundown", "jobs.list", "usage", "capabilities", "continuity", "help"} <= names
+    assert {"status", "rundown", "jobs.list", "usage", "capabilities", "continuity", "help", "discord.routes"} <= names
 
 
 def test_run_command_is_pure_and_deterministic(tmp_path):
@@ -75,3 +75,10 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "project_root=/tmp/phantom" in out.text
     assert out.data["goal"]["runtime"] == "shell"
     assert out.data["dispatch"]["runtime"] == "kimi"
+
+
+def test_run_command_discord_routes_smoke(tmp_path):
+    settings = _settings(tmp_path)
+    out = run_command("discord.routes", settings, {})
+    assert "Discord route management:" in out.text
+    assert isinstance(out.data, dict)
