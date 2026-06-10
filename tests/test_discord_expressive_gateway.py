@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 from bemine.discord.dispatch import (
     DispatchProgress,
@@ -121,6 +122,14 @@ def test_dispatch_progress_text_uses_runtime_summary() -> None:
     )
 
     assert _dispatch_progress_text(progress) == "💻 shell: `pwd`"
+
+
+def test_direct_observability_command_aliases() -> None:
+    assert gw._direct_observability_command("health?") == "health"
+    assert gw._direct_observability_command("mayor dispatch status") == "dispatch.status"
+    assert gw._direct_observability_command("what model are we using?") == "dispatch.status"
+    assert gw._direct_observability_command("goals") == "goals.list"
+    assert gw._direct_observability_command('goal rai: "train"') == ""
 
 
 def test_discord_chunk_closes_and_reopens_markdown_fences() -> None:
@@ -320,6 +329,28 @@ def test_novel_plain_message_routes_to_agent(tmp_path: Path, monkeypatch) -> Non
     assert message.replies == ["AGENT REPLY"]
     assert WORKING_REACTION in message.reactions
     assert SUCCESS_REACTION in message.reactions
+
+
+def test_dispatch_status_plain_text_uses_local_command(tmp_path: Path, monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_run_command(name, settings, args):
+        calls.append(name)
+        return SimpleNamespace(text="Dispatch runtime:\n- runtime: kimi", data={})
+
+    def fail_run_agent(*args, **kwargs):
+        raise AssertionError("plain dispatch status should not start an agent")
+
+    monkeypatch.setattr(gw, "run_command", fake_run_command)
+    monkeypatch.setattr(gw, "run_bound_agent", fail_run_agent)
+
+    gateway = _make_gateway(tmp_path)
+    message = _PassthroughMessage("what model are we using?")
+
+    asyncio.run(gateway._handle_allowed_message(message))
+
+    assert calls == ["dispatch.status"]
+    assert message.replies == ["Dispatch runtime:\n- runtime: kimi"]
 
 
 def test_dispatch_failure_finishes_progress_as_failed(tmp_path: Path, monkeypatch) -> None:

@@ -702,6 +702,13 @@ class MayorDiscordGateway:
             text = render_status(statuses, errors, limit=8)
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
+        direct_command = _direct_observability_command(normalized_lower)
+        if direct_command:
+            text = await asyncio.to_thread(
+                lambda: run_command(direct_command, BemineSettings.load(), {}).text
+            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
+            return
         if normalized_lower in {
             "!mayor rundown",
             "mayor rundown",
@@ -999,6 +1006,31 @@ def _message_channel_name(message: discord.Message) -> str:
 
 def _message_category_name(message: discord.Message) -> str:
     return _channel_category_name(message.channel)
+
+
+def _direct_observability_command(normalized_lower: str) -> str:
+    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip())
+    variants = {
+        text,
+        text.removeprefix("!mayor ").removeprefix("mayor "),
+        text.removeprefix("!bemine ").removeprefix("bemine "),
+    }
+    if variants & {"health", "health status"}:
+        return "health"
+    if variants & {
+        "dispatch",
+        "dispatch status",
+        "model",
+        "model status",
+        "what model are we using",
+        "what is the model we are using",
+        "what model are we running",
+        "what model are we running right now",
+    }:
+        return "dispatch.status"
+    if variants & {"goals", "goal status", "goals status"}:
+        return "goals.list"
+    return ""
 
 
 def _mentioned_channels(message: discord.Message) -> list[tuple[str, str]]:
