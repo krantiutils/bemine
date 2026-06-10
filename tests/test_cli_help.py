@@ -25,6 +25,7 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "permissions   explicit approval path" in text
     assert "workers       safe managed live sessions over tmux" in text
     assert "goal          start a managed worker and watcher" in text
+    assert "health        deploy/services/jobs/watchers health packet" in text
     assert "backlog       durable PA/SMM idea" in text
     assert "dream         condense recent history" in text
     assert "brief         generate PA/SMM brief" in text
@@ -122,3 +123,11 @@ def test_systemd_help_includes_status() -> None:
     assert "status" in text
     assert "Show systemd unit state" in text
     assert "uv run bemine systemd status" in text
+
+
+def test_health_help_explains_aggregate_packet() -> None:
+    text = _help("health")
+
+    assert "Summarize Bemine deploy" in text
+    assert "systemd services" in text
+    assert "uv run bemine health --json" in text

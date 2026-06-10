@@ -131,6 +131,7 @@ uv run bemine jobs add-reminder evening_review "0 18 * * *" --text "Review activ
 uv run bemine jobs run daily_digest --no-notify
 uv run bemine jobs run morning_plan --no-notify
 uv run bemine-daemon --once --json
+uv run bemine health
 ```
 
 Persistent startup uses user systemd units:
@@ -138,6 +139,7 @@ Persistent startup uses user systemd units:
 ```bash
 uv run bemine systemd render
 uv run bemine systemd install --now
+uv run bemine health
 uv run bemine systemd status
 ```
 
@@ -288,7 +290,8 @@ MAYOR_DISCORD_ALLOW_ALL_USERS=false
 
 Routine management currently means daemon-backed cron jobs plus Discord
 notifications. Use `jobs add-reminder` for recurring personal reminders and
-`jobs list` to see next runs.
+`health` for the deploy/service/job/watchers packet. Use `jobs list` to see
+next runs.
 
 Proton Mail Bridge is treated as a local integration point. Bemine can verify
 that Bridge is installed, the process is running, and IMAP/SMTP ports are open:

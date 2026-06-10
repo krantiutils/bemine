@@ -90,6 +90,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 
 ## Scheduled jobs
 
+- `uv run bemine health` — one packet for deploy phase, daemon/gateway units,
+  heartbeats, job failures, and active watchers. Use this before drilling down.
 - `uv run bemine systemd status` — daemon/gateway unit state plus heartbeat SHA.
 - `uv run bemine jobs list` — what runs when (session watcher every 2 min,
   dream at 03:15, PA/SMM brief at 08:45, daily digest at 18:00 by default).
