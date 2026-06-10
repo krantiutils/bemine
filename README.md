@@ -30,6 +30,8 @@ Functional now:
   duplicate heads, and query the audit log.
 - Per-project Discord channels route messages to Kimi's Bemine-owned tool loop by default, with Codex and Claude selectable per project.
 - Attachments are saved and listed in the prompt. Codex project channels also pass image attachments with `--image`.
+- Native workers can inspect local Discord channel/thread history with `discord_threads`
+  and `discord_transcript`.
 - `bemine-daemon` runs `daily_digest` and reminder jobs from systemd.
 - `bemine mail bridge-status` verifies Proton Bridge process and local IMAP/SMTP ports.
 - `bemine context show` renders redacted operator runbooks such as `~/deploy.md`.
