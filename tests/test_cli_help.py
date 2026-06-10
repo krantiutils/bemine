@@ -114,3 +114,11 @@ def test_discord_help_includes_local_transcript_commands() -> None:
     assert "refresh-channel-names" in text
     assert "without requiring live Discord API credentials" in flat
     assert "uv run bemine discord transcript" in text
+
+
+def test_systemd_help_includes_status() -> None:
+    text = _help("systemd")
+
+    assert "status" in text
+    assert "Show systemd unit state" in text
+    assert "uv run bemine systemd status" in text

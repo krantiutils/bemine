@@ -43,7 +43,7 @@ from .context.rituals import (
     summary_from_args,
 )
 from .index.status import collect_fleet_status, render_status
-from .jobs.systemd import install_user_units, render_user_units
+from .jobs.systemd import install_user_units, render_user_units, user_unit_status
 from .workers.tmux_adapter import TmuxAdapter
 from .workers.workers import (
     WorkerController,
@@ -1186,7 +1186,7 @@ def build_parser() -> argparse.ArgumentParser:
         "systemd",
         help="Install persistent systemd user units.",
         description="Install or render user-level systemd units for bemine-daemon and mayor-discord-gateway.",
-        epilog="Examples:\n  uv run bemine systemd install --now\n  uv run bemine systemd render",
+        epilog="Examples:\n  uv run bemine systemd status\n  uv run bemine systemd install --now\n  uv run bemine systemd render",
         formatter_class=HELP_FORMATTER,
     )
     systemd_sub = systemd.add_subparsers(dest="systemd_command", required=True)
@@ -1209,6 +1209,10 @@ def build_parser() -> argparse.ArgumentParser:
     systemd_render.add_argument(
         "--json", action="store_true", help="Emit rendered unit text as JSON."
     )
+    systemd_status = systemd_sub.add_parser(
+        "status", help="Show systemd unit state and Bemine heartbeats."
+    )
+    systemd_status.add_argument("--json", action="store_true", help="Emit JSON.")
 
     discord = sub.add_parser(
         "discord",
@@ -1365,6 +1369,14 @@ def _audit_payload_summary(payload: object) -> str:
         if key in payload:
             return f"{key}={payload[key]}"
     return ""
+
+
+def _heartbeat_service_name(unit_name: str) -> str:
+    if unit_name.startswith("bemine-daemon"):
+        return "daemon"
+    if unit_name.startswith("mayor-discord-gateway"):
+        return "gateway"
+    return unit_name.removesuffix(".service")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1961,8 +1973,6 @@ def main(argv: list[str] | None = None) -> None:
                 for row in rows:
                     print(f"{row['project_id']}\t{row['status']}\t"
                           f"every {row['interval_secs']}s\tchannel={row['channel_id']}")
-                print(f"{row['project_id']}\t{row['status']}\t"
-                      f"every {row['interval_secs']}s\tchannel={row['channel_id']}")
     elif args.command == "daemon":
         daemon = BemineDaemon(settings, poll_seconds=args.poll_seconds)
         if args.once:
@@ -2007,6 +2017,28 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 for unit in units:
                     print(f"# {unit.name}\n{unit.text}")
+        elif args.systemd_command == "status":
+            from bemine.deploy.heartbeat import read_heartbeat
+
+            rows = []
+            for status in user_unit_status():
+                item = status.as_dict()
+                hb = read_heartbeat(settings, _heartbeat_service_name(status.name))
+                item["heartbeat"] = hb or {}
+                rows.append(item)
+            if args.json:
+                print(json.dumps(rows, indent=2, sort_keys=True))
+            else:
+                for item in rows:
+                    hb = item.get("heartbeat") or {}
+                    sha = str(hb.get("sha") or "")
+                    sha_text = sha[:8] if sha else "none"
+                    pid = item.get("main_pid") or 0
+                    print(
+                        f"{item['name']}: active={item['active_state']} "
+                        f"sub={item['sub_state']} enabled={item['unit_file_state']} "
+                        f"pid={pid} heartbeat={sha_text}"
+                    )
     elif args.command == "discord":
         if args.discord_command == "write-project-channels":
             from bemine.discord.dispatch import (

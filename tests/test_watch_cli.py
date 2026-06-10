@@ -24,9 +24,11 @@ def test_cli_watch_start_status_stop(tmp_path, capsys):
     assert row["status"] == "active"
     assert row["interval_secs"] == 120
     assert row["channel_id"] == "c1"
+    capsys.readouterr()
 
     main(base + ["watch", "list"])
-    assert "channel:demo" in capsys.readouterr().out
+    listed_text = capsys.readouterr().out
+    assert listed_text.count("channel:demo") == 1
 
     main(base + ["watch", "list", "--json"])
     listed = json.loads(capsys.readouterr().out)
