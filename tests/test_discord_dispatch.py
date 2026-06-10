@@ -7,6 +7,7 @@ from pathlib import Path
 
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
+from bemine.discord.store import Store
 from bemine.workers.native_runtime import _sanitize_message_history
 from bemine.context.tool_registry import BemineToolRegistry
 from bemine.discord.dispatch import (
@@ -22,6 +23,7 @@ from bemine.discord.dispatch import (
     dispatch_status_payload,
     infer_project_route,
     load_project_channels,
+    plan_project_channel_sync,
     project_channels_from_db,
     render_dispatch_status,
     resolve_project_channel,
@@ -174,6 +176,105 @@ def test_project_channels_from_db_make_per_project_names_unique(
     assert "neptts-bench" in names
     assert "aux" in names
     assert {channel.runtime for channel in channels} == {""}
+
+
+def test_plan_project_channel_sync_uses_local_channel_cache(tmp_path: Path) -> None:
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="testbox",
+    )
+    db = BemineDB(settings.db_path)
+    rai = tmp_path / "rai"
+    streaming = tmp_path / "streaming-tts"
+    rai.mkdir()
+    streaming.mkdir()
+    with db.connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO projects(project_id, name, cwd, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, 1.0, ?)
+            """,
+            [
+                ("proj_rai", "rai", str(rai), 20.0),
+                ("proj_streaming", "streaming-tts", str(streaming), 10.0),
+            ],
+        )
+    store = Store(settings.db_path)
+    store.record_channel_metadata(
+        channel_id="chan-rai",
+        guild_id="guild-1",
+        channel_name="rai",
+        category_name=PROJECT_CATEGORY_NAME,
+        channel_type=0,
+    )
+    store.record_channel_metadata(
+        channel_id="chan-old",
+        guild_id="guild-1",
+        channel_name="old-project",
+        category_name=PROJECT_CATEGORY_NAME,
+        channel_type=0,
+    )
+
+    plan = plan_project_channel_sync(settings, prune=True)
+
+    assert plan["dry_run"] is True
+    assert plan["project_count"] == 2
+    assert plan["alias_count"] == 1
+    assert {row["channel_name"] for row in plan["existing"]} == {"rai"}
+    assert {row["channel_name"] for row in plan["would_create"]} == {
+        "streaming-tts",
+        "tts",
+    }
+    assert {row["channel_name"] for row in plan["would_prune"]} == {"old-project"}
+
+
+def test_cli_discord_sync_project_channels_dry_run_outputs_plan(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from bemine.cli import main
+
+    state_dir = tmp_path / "state"
+    vault_dir = tmp_path / "vault"
+    settings = BemineSettings.load(
+        state_dir=state_dir,
+        vault_dir=vault_dir,
+        device_id="testbox",
+    )
+    db = BemineDB(settings.db_path)
+    project = tmp_path / "rai"
+    project.mkdir()
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO projects(project_id, name, cwd, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, 1.0, 2.0)
+            """,
+            ("proj_rai", "rai", str(project)),
+        )
+    Store(settings.db_path).record_channel_metadata(
+        channel_id="chan-old",
+        guild_id="guild-1",
+        channel_name="old-project",
+        category_name=PROJECT_CATEGORY_NAME,
+        channel_type=0,
+    )
+
+    main([
+        "--state-dir", str(state_dir),
+        "--vault", str(vault_dir),
+        "--device", "testbox",
+        "discord",
+        "sync-project-channels",
+        "--dry-run",
+        "--prune",
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["dry_run"] is True
+    assert payload["would_create"][0]["channel_name"] == "rai"
+    assert payload["would_prune"][0]["channel_name"] == "old-project"
 
 
 def test_kimi_dispatch_uses_cli_with_generated_config_and_audit(

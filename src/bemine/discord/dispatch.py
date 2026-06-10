@@ -20,6 +20,7 @@ from bemine.config import BemineSettings, config_path, config_string
 from bemine.db import BemineDB
 from bemine.context.harness_context import load_harness_context
 from bemine.context.subagents import load_subagent_context
+from bemine.discord.store import Store
 from bemine.kimi_handler import (
     KimiHandler,
     JsonTransport,
@@ -316,8 +317,7 @@ async def sync_project_channels_to_discord(
     prune: bool = False,
 ) -> dict[str, Any]:
     db = BemineDB(settings.db_path)
-    channels = project_channels_from_db(db, limit=limit)
-    aliases = _project_aliases(channels)
+    channels, aliases = _desired_project_channels(db, limit=limit)
     config_path = write_project_channel_config(
         settings.state_dir,
         channels,
@@ -422,6 +422,57 @@ async def sync_project_channels_to_discord(
         "skipped": skipped,
         "config_path": str(config_path),
         "project_count": len(channels),
+    }
+
+
+def plan_project_channel_sync(
+    settings: BemineSettings,
+    *,
+    limit: int = 200,
+    prune: bool = False,
+) -> dict[str, Any]:
+    db = BemineDB(settings.db_path)
+    channels, aliases = _desired_project_channels(db, limit=limit)
+    desired = _desired_channel_entries(channels, aliases)
+    desired_names = {str(row["channel_name"]) for row in desired}
+    cached_channels = [
+        row
+        for row in Store(settings.db_path).channel_metadata()
+        if _is_project_category_name(str(row.get("category_name") or ""))
+        and int(row.get("channel_type") or 0) == 0
+    ]
+    existing_by_name = {
+        str(row.get("channel_name") or ""): row
+        for row in cached_channels
+        if str(row.get("channel_name") or "")
+    }
+    existing_names = set(existing_by_name)
+    would_create = [
+        row for row in desired
+        if str(row["channel_name"]) not in existing_names
+    ]
+    existing_matches = [
+        _cached_channel_entry(existing_by_name[name])
+        for name in sorted(desired_names & existing_names)
+    ]
+    stale = [
+        _cached_channel_entry(row)
+        for name, row in sorted(existing_by_name.items())
+        if name not in desired_names
+    ]
+    return {
+        "dry_run": True,
+        "metadata_source": "local_discord_channels_cache",
+        "config_path": str(settings.state_dir / DISPATCH_CONFIG_NAME),
+        "prune": prune,
+        "project_count": len(channels),
+        "alias_count": len(aliases),
+        "desired_count": len(desired),
+        "existing_count": len(existing_by_name),
+        "would_create": would_create,
+        "existing": existing_matches,
+        "stale": stale,
+        "would_prune": stale if prune else [],
     }
 
 
@@ -2450,6 +2501,51 @@ def _project_channel_payload(channel: ProjectChannel) -> dict[str, str]:
     if channel.project_name:
         payload["project_name"] = channel.project_name
     return payload
+
+
+def _desired_project_channels(
+    db: BemineDB,
+    *,
+    limit: int,
+) -> tuple[list[ProjectChannel], dict[str, ProjectChannel]]:
+    channels = project_channels_from_db(db, limit=limit)
+    return channels, _project_aliases(channels)
+
+
+def _desired_channel_entries(
+    channels: list[ProjectChannel],
+    aliases: Mapping[str, ProjectChannel],
+) -> list[dict[str, str]]:
+    entries = [
+        {**_project_channel_payload(channel), "kind": "project"}
+        for channel in channels
+    ]
+    for alias_name, channel in sorted(aliases.items()):
+        entries.append(
+            {
+                **_project_channel_payload(
+                    ProjectChannel(
+                        channel_name=alias_name,
+                        cwd=channel.cwd,
+                        project_id=channel.project_id,
+                        project_name=channel.project_name,
+                        runtime=channel.runtime,
+                    )
+                ),
+                "kind": "alias",
+                "alias_for": channel.channel_name,
+            }
+        )
+    return sorted(entries, key=lambda row: row["channel_name"])
+
+
+def _cached_channel_entry(row: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "channel_id": str(row.get("channel_id") or ""),
+        "channel_name": str(row.get("channel_name") or ""),
+        "category_name": str(row.get("category_name") or ""),
+        "guild_id": str(row.get("guild_id") or ""),
+    }
 
 
 def _project_aliases(channels: list[ProjectChannel]) -> dict[str, ProjectChannel]:

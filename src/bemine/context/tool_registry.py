@@ -372,6 +372,22 @@ def default_tools() -> list[BemineTool]:
             handler=_channel_routes,
         ),
         BemineTool(
+            name="channel_sync_plan",
+            description=(
+                "Dry-run project Discord channel sync from local state. Reports desired "
+                "project/alias channels, cached existing project channels, would-create, "
+                "stale, and would-prune lists without mutating Discord."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    "prune": {"type": "boolean"},
+                },
+            },
+            handler=_channel_sync_plan,
+        ),
+        BemineTool(
             name="audit_list",
             description="List recent Bemine audit events, optionally filtered by category or event type.",
             input_schema={
@@ -775,6 +791,18 @@ def _channel_routes(args: Mapping[str, Any], context: ToolContext) -> Mapping[st
         "configured": configured[:limit],
         "indexed": indexed[:limit],
     }
+
+
+def _channel_sync_plan(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    from ..discord.dispatch import plan_project_channel_sync
+
+    limit = _int(args.get("limit"), default=200, minimum=1, maximum=200)
+    prune = bool(args.get("prune", False))
+    return {"ok": True, "plan": plan_project_channel_sync(
+        context.settings,
+        limit=limit,
+        prune=prune,
+    )}
 
 
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

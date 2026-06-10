@@ -501,6 +501,38 @@ def test_channel_routes_tool_reports_config_db_and_bindings(tmp_path):
     assert indexed["indexed"][0]["channel_name"] == "rai"
 
 
+def test_channel_sync_plan_tool_returns_dry_run_plan(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    def fake_plan_project_channel_sync(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return {
+            "dry_run": True,
+            "would_create": [{"channel_name": "rai"}],
+            "would_prune": [],
+        }
+
+    monkeypatch.setattr(
+        "bemine.discord.dispatch.plan_project_channel_sync",
+        fake_plan_project_channel_sync,
+    )
+
+    out = BemineToolRegistry().execute(
+        "channel_sync_plan",
+        {"limit": 10, "prune": True},
+        ctx,
+    )
+
+    assert out["ok"] is True
+    assert out["plan"]["dry_run"] is True
+    assert out["plan"]["would_create"][0]["channel_name"] == "rai"
+    assert calls["settings"] is settings
+    assert calls["limit"] == 10
+    assert calls["prune"] is True
+
+
 def test_new_tools_convert_with_real_names(tmp_path):
     from bemine.providers._anthropic_adapter import convert_tools_to_anthropic
     schemas = BemineToolRegistry().openai_schemas()
@@ -522,5 +554,6 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "discord_threads",
         "discord_transcript",
         "channel_routes",
+        "channel_sync_plan",
     } <= names
     assert all(t["name"] for t in convert_tools_to_anthropic(schemas))

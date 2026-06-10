@@ -1257,6 +1257,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Delete project-category channels that are no longer tracked.",
     )
+    sync_channels.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan desired/create/prune project channels from local cache without Discord mutation.",
+    )
     refresh_names = discord_sub.add_parser(
         "refresh-channel-names",
         help="Fetch live Discord channel names into the local transcript index.",
@@ -2076,8 +2081,19 @@ def main(argv: list[str] | None = None) -> None:
             )
         elif args.discord_command == "sync-project-channels":
             from bemine.discord.config import Settings as DiscordSettings
-            from bemine.discord.dispatch import sync_project_channels_to_discord
+            from bemine.discord.dispatch import (
+                plan_project_channel_sync,
+                sync_project_channels_to_discord,
+            )
 
+            if args.dry_run:
+                result = plan_project_channel_sync(
+                    settings,
+                    limit=args.limit,
+                    prune=args.prune,
+                )
+                print(json.dumps(result, indent=2, sort_keys=True))
+                return
             discord_settings = DiscordSettings.load()
             guild_id = (
                 args.guild_id.strip()
