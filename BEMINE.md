@@ -41,8 +41,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `uv run bemine goal <project> "<goal brief>"`; this starts a managed tmux worker,
   sends the brief, and registers a watcher. Inspect goal workers/watchers with
   `goal_status` or `uv run bemine goal --list`.
-- "dream / learn from recent history" → `uv run bemine dream run`; daemon also runs the
-  `dream` job periodically and appends one JSONL data point to `Dreams/dreams.jsonl`.
+- "dream / learn from recent history" → `dream_run` native tool or
+  `uv run bemine dream run`; daemon also runs the `dream` job periodically and appends
+  one JSONL data point to `Dreams/dreams.jsonl`.
 - config questions → `bemine_config` tool or `uv run bemine config show`; NEVER guess
   runtime/model identity.
 - phone/ADB questions → `capabilities_status` native tool or `uv run bemine capabilities`;
@@ -86,8 +87,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   names, then `uv run bemine discord threads` and
   `uv run bemine discord transcript --query "<term>"`; transcript reads work even when
   live Discord API credentials are unavailable.
-- Periodic self-improvement memory → `uv run bemine dream run`; data points append to
-  `Dreams/dreams.jsonl` and are audit-logged as `dream/dream_recorded`.
+- Periodic self-improvement memory → `dream_run` native tool or
+  `uv run bemine dream run`; data points append to `Dreams/dreams.jsonl` and are
+  audit-logged as `dream/dream_recorded`.
 - End substantial work with `uv run bemine handoff "<what changed>" --next "<next>"
   --test "uv run pytest -q"` — this also writes the `Daily/` note.
 - Operational history → `audit_list` / `uv run bemine audit list` (categories: deploy,

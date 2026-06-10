@@ -61,6 +61,7 @@ preference (specific tool > shell):
 | `shell_run` | run any shell command (scope per `[policy].shell`) — your general hands |
 | `tmux_list` / `tmux_capture` / `tmux_send` | find, read, and drive live tmux agent sessions |
 | `watch_control` | start/stop/status a per-project WATCHER (drives a session toward a brief) |
+| `dream_run` | record one self-improvement memory datapoint in the vault |
 | `goal_start` / `goal_status` | start or inspect managed goal workers plus watchers |
 | `discord_threads` / `discord_transcript` | search local Discord channels/threads and read redacted transcripts |
 | `channel_routes` | inspect project-to-Discord route config, DB candidates, and watcher bindings |
