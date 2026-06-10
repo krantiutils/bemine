@@ -66,6 +66,7 @@ preference (specific tool > shell):
 | `watch_control` | start/stop/status a per-project WATCHER (drives a session toward a brief) |
 | `watchers_status` | list active project watchers across Bemine |
 | `dream_run` | record one self-improvement memory datapoint in the vault |
+| `smm_drafts` | draft Ampixa-style social posts from SMM backlog/brief/style assets |
 | `goal_start` / `goal_status` | start or inspect managed goal workers plus watchers |
 | `workers_status` | list Bemine-managed workers and duplicate active heads |
 | `discord_refresh_channels` | refresh live Discord channel/thread names into the local store |

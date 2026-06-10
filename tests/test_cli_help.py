@@ -28,6 +28,7 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "goal          start a managed worker and watcher" in text
     assert "health        deploy/services/jobs/watchers health packet" in text
     assert "backlog       durable PA/SMM idea" in text
+    assert "smm           draft Ampixa-style social posts" in text
     assert "dream         condense recent history" in text
     assert "brief         generate PA/SMM brief" in text
 
@@ -86,6 +87,16 @@ def test_backlog_help_explains_vault_storage() -> None:
     assert "Capture or list durable PA/SMM backlog items." in text
     assert "Obsidian vault under Backlog/<owner>.md" in flat
     assert "uv run bemine backlog add" in text
+
+
+def test_smm_help_explains_draft_inputs_and_assets() -> None:
+    text = _help("smm")
+    flat = " ".join(text.split())
+
+    assert "Draft Ampixa-style social posts from existing SMM evidence." in text
+    assert "SMM backlog items" in flat
+    assert "assets/ampixa" in flat
+    assert "uv run bemine smm draft" in text
 
 
 def test_phantom_help_explains_phone_install_flow() -> None:

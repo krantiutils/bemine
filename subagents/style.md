@@ -17,7 +17,8 @@ Claims discipline:
 Visual assets:
 - Declared site logo/fav icon: `https://ampixa.com/assets/logo.png`.
 - Local copy: `assets/ampixa/logo.png`.
-- Wordmarks on the site: `/assets/wordmark.svg` and `/assets/wordmark-dev.svg`.
+- Local wordmarks: `assets/ampixa/wordmark.svg` and `assets/ampixa/wordmark-dev.svg`.
+- Source wordmarks on the site: `/assets/wordmark.svg` and `/assets/wordmark-dev.svg`.
 
 Post shape:
 - Lead with the concrete artifact.

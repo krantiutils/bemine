@@ -23,6 +23,7 @@ from ..index.status import _redact, collect_fleet_status
 from ..jobs import run_job_by_id
 from ..phantom import phantom_install, phantom_status
 from ..security.credentials import CredentialInventory
+from ..smm import draft_smm_posts
 from ..workers.workers import WorkerController, WorkerError
 
 
@@ -261,6 +262,34 @@ def default_tools() -> list[BemineTool]:
                 },
             },
             handler=_brief_run,
+        ),
+        BemineTool(
+            name="smm_drafts",
+            description=(
+                "Draft Ampixa-style social posts from SMM backlog, latest PA/SMM brief, "
+                "and local style/assets. Returns hook, body, proof, target channels, "
+                "and image prompt; set write=true to save drafts into the vault."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Optional topic/evidence to draft from first.",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project label, e.g. rai-speech-toolkit.",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 10},
+                    "write": {
+                        "type": "boolean",
+                        "description": "Write drafts into the Obsidian vault.",
+                    },
+                },
+            },
+            handler=_smm_drafts,
+            policy="project-write",
         ),
         BemineTool(
             name="dream_run",
@@ -768,6 +797,20 @@ def _brief_run(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
         limit=limit,
         record_backlog=record_backlog,
         db=context.db,
+    )
+    return {"ok": True, "result": result.to_dict()}
+
+
+def _smm_drafts(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    limit = _int(args.get("limit"), default=3, minimum=1, maximum=10)
+    result = draft_smm_posts(
+        context.settings,
+        topic=str(args.get("topic") or "").strip(),
+        project=str(args.get("project") or "").strip(),
+        limit=limit,
+        write=bool(args.get("write", False)),
+        db=context.db,
+        project_root=context.cwd if (context.cwd / "subagents" / "style.md").exists() else Path.cwd(),
     )
     return {"ok": True, "result": result.to_dict()}
 

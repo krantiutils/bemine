@@ -87,6 +87,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `Backlog/PA.md` and `Backlog/SMM.md`.
 - PA/SMM daily brief → `uv run bemine brief run`; writes `Briefs/<date>-pa-smm.md`
   and adds non-duplicate generated PA/SMM backlog nudges.
+- SMM post ideas/copy → `smm_drafts` native tool or `uv run bemine smm draft`;
+  this turns SMM backlog/brief signals into Ampixa-style draft posts with proof,
+  target channels, and image prompts using `subagents/style.md` + `assets/ampixa/`.
 - Local Discord history → `discord_threads` / `discord_transcript` native tools, or
   `discord_refresh_channels` / `uv run bemine discord refresh-channel-names` to
   backfill readable server channel names, then `uv run bemine discord threads` and

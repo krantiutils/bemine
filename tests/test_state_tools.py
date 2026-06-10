@@ -256,6 +256,47 @@ def test_brief_run_tool_generates_pa_smm_brief(tmp_path, monkeypatch):
     assert calls["db"] is db
 
 
+def test_smm_drafts_tool_uses_shared_drafter(tmp_path, monkeypatch):
+    settings, db, ctx = _ctx(tmp_path)
+    calls = {}
+
+    class Result:
+        def to_dict(self):
+            return {
+                "generated_at": "2026-06-11T00:00:00+00:00",
+                "drafts": [{"project": "rai", "hook": "rai shipped"}],
+                "assets": [],
+                "style_path": str(tmp_path / "subagents" / "style.md"),
+                "style_exists": True,
+                "path": "",
+            }
+
+    def fake_draft_smm_posts(settings_arg, **kwargs):
+        calls["settings"] = settings_arg
+        calls.update(kwargs)
+        return Result()
+
+    (tmp_path / "subagents").mkdir()
+    (tmp_path / "subagents" / "style.md").write_text("# style\n", encoding="utf-8")
+    monkeypatch.setattr("bemine.context.tool_registry.draft_smm_posts", fake_draft_smm_posts)
+
+    out = BemineToolRegistry().execute(
+        "smm_drafts",
+        {"topic": "Rai checkpoint", "project": "rai", "limit": 2, "write": True},
+        ctx,
+    )
+
+    assert out["ok"] is True
+    assert out["result"]["drafts"][0]["hook"] == "rai shipped"
+    assert calls["settings"] is settings
+    assert calls["topic"] == "Rai checkpoint"
+    assert calls["project"] == "rai"
+    assert calls["limit"] == 2
+    assert calls["write"] is True
+    assert calls["db"] is db
+    assert calls["project_root"] == tmp_path
+
+
 def test_dream_run_tool_records_dream(tmp_path, monkeypatch):
     settings, db, ctx = _ctx(tmp_path)
 
@@ -754,6 +795,7 @@ def test_new_tools_convert_with_real_names(tmp_path):
         "usage_report",
         "backlog_add",
         "brief_run",
+        "smm_drafts",
         "dream_run",
         "goal_start",
         "goal_status",
