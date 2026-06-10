@@ -9,6 +9,9 @@ from bemine.config import BemineSettings, config_bool, config_int, config_list, 
 from bemine.config import config_path as bemine_config_path
 from bemine.config import load_bemine_config, render_toml_config
 from bemine.kernel import BemineKernel
+from bemine.context.subagents import load_subagent_context, render_subagent_context
+from bemine.phantom import phantom_build, phantom_install, phantom_status
+from bemine.phantom import render_phantom_build, render_phantom_install, render_phantom_status
 
 
 @dataclass(frozen=True)
@@ -136,6 +139,62 @@ def _config_show(settings: BemineSettings, args: Mapping) -> CommandResult:
     )
 
 
+def _subagents_list(settings: BemineSettings, args: Mapping) -> CommandResult:
+    context = load_subagent_context()
+    return CommandResult(text=render_subagent_context(context), data=context.to_dict())
+
+
+def _subagents_show(settings: BemineSettings, args: Mapping) -> CommandResult:
+    name = str(args.get("name") or "").strip()
+    if not name:
+        raise ValueError("subagents.show requires name")
+    context = load_subagent_context()
+    normalized = name.casefold()
+    profile = next(
+        (
+            item
+            for item in context.profiles
+            if item.name.casefold() == normalized or item.path.name.casefold() == normalized
+        ),
+        None,
+    )
+    if profile is None:
+        raise ValueError(f"Unknown subagent profile: {name}")
+    return CommandResult(text=profile.text.rstrip() + "\n", data=profile.to_dict())
+
+
+def _phantom_status(settings: BemineSettings, args: Mapping) -> CommandResult:
+    project_root = str(args.get("project_root") or "").strip() or None
+    serial = str(args.get("serial") or "").strip()
+    java_home = str(args.get("java_home") or "").strip() or None
+    payload = phantom_status(project_root=project_root, serial=serial, java_home=java_home)
+    return CommandResult(text=render_phantom_status(payload), data=payload)
+
+
+def _phantom_build(settings: BemineSettings, args: Mapping) -> CommandResult:
+    project_root = str(args.get("project_root") or "").strip() or None
+    java_home = str(args.get("java_home") or "").strip() or None
+    timeout = int(args.get("timeout") or 600)
+    payload = phantom_build(project_root=project_root, java_home=java_home, timeout=timeout)
+    return CommandResult(text=render_phantom_build(payload), data=payload)
+
+
+def _phantom_install(settings: BemineSettings, args: Mapping) -> CommandResult:
+    project_root = str(args.get("project_root") or "").strip() or None
+    serial = str(args.get("serial") or "").strip()
+    java_home = str(args.get("java_home") or "").strip() or None
+    timeout = int(args.get("timeout") or 600)
+    payload = phantom_install(
+        project_root=project_root,
+        serial=serial,
+        build=bool(args.get("build")),
+        dry_run=bool(args.get("dry_run")),
+        java_home=java_home,
+        timeout=timeout,
+    )
+    return CommandResult(text=render_phantom_install(payload), data=payload)
+
+
 def _capabilities(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.capabilities import build_capability_manifest, render_capability_manifest
 
@@ -169,11 +228,17 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     session_fallback_channel = config_string("jobs", "session_fallback_channel", "session-updates")
     session_auto_create_channels = config_bool("jobs", "session_auto_create_channels", True)
     recovery_poll_interval = config_int("recovery", "poll_interval_secs", 300)
+    subagents_files = config_list("subagents", "files", [])
+    subagents_context_limit = config_int("subagents", "context_limit", 12000)
     backlog_default_owner = config_string("backlog", "default_owner", "SMM")
     backlog_owners = config_list("backlog", "owners", ["PA", "SMM"])
     smm_target_channels = config_list("smm", "target_channels", ["X", "LinkedIn"])
     smm_style_path = config_string("smm", "style_path", "subagents/style.md")
     phantom_root = config_string("phantom", "project_root", "")
+    phantom_application_id = config_string("phantom", "application_id", "dev.phantom.service")
+    phantom_accessibility_service = config_string("phantom", "accessibility_service", ".PhantomAccessibilityService")
+    phantom_java_home = config_string("phantom", "java_home", "")
+    phantom_android_home = config_string("phantom", "android_home", "")
     active_watchers = len(BemineKernel(settings).db.list_active_project_watchers())
     configurable_knobs = [
         f"goal.runtime={goal_runtime}",
@@ -183,11 +248,17 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"jobs.session_auto_create_channels={session_auto_create_channels}",
         f"jobs.session_fallback_channel={session_fallback_channel}",
         f"recovery.poll_interval_secs={recovery_poll_interval}",
+        f"subagents.files={', '.join(subagents_files) or 'none'}",
+        f"subagents.context_limit={subagents_context_limit}",
         f"backlog.default_owner={backlog_default_owner}",
         f"backlog.owners={', '.join(backlog_owners) or 'none'}",
         f"smm.target_channels={', '.join(smm_target_channels) or 'none'}",
         f"smm.style_path={smm_style_path}",
         f"phantom.project_root={phantom_root or 'unset'}",
+        f"phantom.application_id={phantom_application_id}",
+        f"phantom.accessibility_service={phantom_accessibility_service}",
+        f"phantom.java_home={phantom_java_home or 'unset'}",
+        f"phantom.android_home={phantom_android_home or 'unset'}",
     ]
     summary_lines = [
         "Bemine help:",
@@ -211,7 +282,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- config: `config show` / `what config is set?`",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM`)",
-        f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom install`)",
+        f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom build` / `phantom install`)",
         "Config knobs:",
         *[f"- {item}" for item in configurable_knobs],
     ]
@@ -245,6 +316,14 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
             "config": {
                 "path": str(bemine_config_path()),
                 "config": load_bemine_config(),
+            },
+            "subagent_config": {
+                "files": subagents_files,
+                "context_limit": subagents_context_limit,
+            },
+            "subagents": {
+                "files": subagents_files,
+                "context_limit": subagents_context_limit,
             },
             "watchers": {"active": active_watchers},
             "config_knobs": configurable_knobs,
@@ -356,6 +435,11 @@ _SPECS = (
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),
     CommandSpec("config.show", "Show parsed Bemine config", _config_show),
+    CommandSpec("subagents.list", "List configured subagent profiles", _subagents_list),
+    CommandSpec("subagents.show", "Show one configured subagent profile", _subagents_show),
+    CommandSpec("phantom.status", "Inspect Phantom Android app readiness", _phantom_status),
+    CommandSpec("phantom.build", "Build the Phantom Android APK", _phantom_build),
+    CommandSpec("phantom.install", "Install the Phantom APK on the phone", _phantom_install),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),
 )

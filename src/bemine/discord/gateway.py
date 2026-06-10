@@ -789,6 +789,22 @@ class MayorDiscordGateway:
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
+        subagents_args = _direct_subagents_command(normalized_lower)
+        if subagents_args is not None:
+            command_name = subagents_args.pop("command", "subagents.list")
+            text = await asyncio.to_thread(
+                lambda: run_command(command_name, BemineSettings.load(), subagents_args).text
+            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
+            return
+        phantom_args = _direct_phantom_command(normalized_lower)
+        if phantom_args is not None:
+            command_name = phantom_args.pop("command", "phantom.status")
+            text = await asyncio.to_thread(
+                lambda: run_command(command_name, BemineSettings.load(), phantom_args).text
+            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
+            return
         backlog_args = _direct_backlog_command(normalized_lower)
         if backlog_args is not None:
             command_name = backlog_args.pop("command", "backlog.list")
@@ -1133,6 +1149,80 @@ def _direct_backlog_command(normalized_lower: str) -> dict[str, str] | None:
         "what's in smm backlog",
     }:
         return {"owner": "SMM"}
+    return None
+
+
+def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
+    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip().lower())
+    variants = {
+        text,
+        text.removeprefix("!mayor ").removeprefix("mayor "),
+        text.removeprefix("!bemine ").removeprefix("bemine "),
+    }
+    if variants & {
+        "subagents",
+        "subagents list",
+        "list subagents",
+        "show subagents",
+        "what subagents are configured",
+        "what subagents do you have",
+        "what subagent profiles are loaded",
+    }:
+        return {"command": "subagents.list"}
+    if variants & {
+        "show pa subagent",
+        "show pa profile",
+        "show pa.md",
+        "what is pa.md",
+        "what is the pa subagent",
+    }:
+        return {"command": "subagents.show", "name": "PA"}
+    if variants & {
+        "show smm subagent",
+        "show smm profile",
+        "show smm.md",
+        "what is smm.md",
+        "what is the smm subagent",
+    }:
+        return {"command": "subagents.show", "name": "SMM"}
+    if variants & {
+        "show style",
+        "show style subagent",
+        "show style.md",
+        "what is style.md",
+        "what is the style subagent",
+    }:
+        return {"command": "subagents.show", "name": "style"}
+    return None
+
+
+def _direct_phantom_command(normalized_lower: str) -> dict[str, str] | None:
+    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip().lower())
+    variants = {
+        text,
+        text.removeprefix("!mayor ").removeprefix("mayor "),
+        text.removeprefix("!bemine ").removeprefix("bemine "),
+    }
+    if variants & {
+        "phantom",
+        "phantom status",
+        "phone status",
+        "what is phantom status",
+        "what is phantom install state",
+    }:
+        return {"command": "phantom.status"}
+    if variants & {
+        "phantom build",
+        "build phantom",
+        "build phantom apk",
+    }:
+        return {"command": "phantom.build"}
+    if variants & {
+        "phantom install",
+        "install phantom",
+        "install phantom app",
+    }:
+        return {"command": "phantom.install"}
     return None
 
 

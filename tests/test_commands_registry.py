@@ -10,7 +10,23 @@ def _settings(tmp_path):
 
 def test_registry_lists_deterministic_ops():
     names = set(registry().keys())
-    assert {"status", "rundown", "jobs.list", "backlog.list", "config.show", "usage", "capabilities", "continuity", "help", "discord.routes"} <= names
+    assert {
+        "status",
+        "rundown",
+        "jobs.list",
+        "backlog.list",
+        "config.show",
+        "subagents.list",
+        "subagents.show",
+        "phantom.status",
+        "phantom.build",
+        "phantom.install",
+        "usage",
+        "capabilities",
+        "continuity",
+        "help",
+        "discord.routes",
+    } <= names
 
 
 def test_run_command_is_pure_and_deterministic(tmp_path):
@@ -44,6 +60,44 @@ def test_run_command_config_show(tmp_path, monkeypatch):
     assert out.data["config"]["backlog"]["default_owner"] == "PA"
 
 
+def test_run_command_subagents_list_and_show(tmp_path, monkeypatch):
+    config = tmp_path / "bemine.toml"
+    profile_dir = tmp_path / "subagents"
+    profile_dir.mkdir()
+    (profile_dir / "PA.md").write_text("# PA\nplan the day", encoding="utf-8")
+    (profile_dir / "SMM.md").write_text("# SMM\npost ideas", encoding="utf-8")
+    config.write_text(
+        """
+[subagents]
+files = ["subagents/PA.md", "subagents/SMM.md"]
+context_limit = 1000
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    settings = _settings(tmp_path)
+
+    listed = run_command("subagents.list", settings, {})
+    shown = run_command("subagents.show", settings, {"name": "SMM"})
+
+    assert "Subagent profiles:" in listed.text
+    assert listed.data["profiles"][0]["name"] == "PA"
+    assert "post ideas" in shown.text
+    assert shown.data["name"] == "SMM"
+
+
+def test_run_command_phantom_status_smoke(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    payload = {"ok": True, "status": "ready"}
+    monkeypatch.setattr("bemine.commands.phantom_status", lambda **kwargs: payload)
+    monkeypatch.setattr("bemine.commands.render_phantom_status", lambda data: "phantom ok\n")
+
+    out = run_command("phantom.status", settings, {})
+
+    assert out.text == "phantom ok\n"
+    assert out.data == payload
+
+
 def test_run_command_backlog_list(tmp_path):
     settings = _settings(tmp_path)
     out = run_command("backlog.list", settings, {})
@@ -69,6 +123,10 @@ owners = ["PA", "SMM"]
 
 [phantom]
 project_root = "/tmp/phantom"
+application_id = "dev.phantom.service"
+accessibility_service = ".PhantomAccessibilityService"
+java_home = "/usr/lib/jvm/java-17-openjdk-amd64"
+android_home = "/home/cdjk/Android/Sdk"
 
 [dispatch]
 runtime = "kimi"
@@ -79,6 +137,7 @@ backend = "native"
 
 [subagents]
 files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
+context_limit = 1000
 """,
         encoding="utf-8",
     )
@@ -116,11 +175,18 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`" in out.text
     assert "backlog.default_owner=PA" in out.text
     assert "backlog.owners=PA, SMM" in out.text
+    assert "subagents.files=subagents/PA.md, subagents/SMM.md, subagents/style.md" in out.text
+    assert "subagents.context_limit=1000" in out.text
+    assert "phantom.application_id=dev.phantom.service" in out.text
+    assert "phantom.accessibility_service=.PhantomAccessibilityService" in out.text
+    assert "phantom.java_home=/usr/lib/jvm/java-17-openjdk-amd64" in out.text
+    assert "phantom.android_home=/home/cdjk/Android/Sdk" in out.text
     assert "config: `config show` / `what config is set?`" in out.text
     assert "social posts:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text
     assert "phantom status" in out.text
+    assert "phantom build" in out.text
     assert "Configured jobs:" in out.text
     assert "morning_plan" in out.text
     assert out.data["goal"]["runtime"] == "shell"
@@ -129,8 +195,11 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert out.data["backlog"]["owners"] == ["PA", "SMM"]
     assert out.data["config"]["path"].endswith("bemine.toml")
     assert out.data["config"]["config"]["backlog"]["default_owner"] == "PA"
+    assert out.data["subagent_config"]["context_limit"] == 1000
     assert out.data["watchers"]["active"] == 0
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
+    assert "subagents.files=subagents/PA.md, subagents/SMM.md, subagents/style.md" in out.data["config_knobs"]
+    assert "phantom.application_id=dev.phantom.service" in out.data["config_knobs"]
     assert any(job["job_id"] == "morning_plan" for job in out.data["jobs"])
 
 
