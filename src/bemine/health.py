@@ -145,6 +145,45 @@ def render_health(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def render_continuity(payload: dict[str, Any]) -> str:
+    continuity = payload.get("continuity") or {}
+    lines = [f"Bemine continuity: {payload['status']}"]
+    devices = ", ".join(continuity.get("devices") or [])
+    lines.append(
+        "Scope: "
+        f"device={continuity.get('device_id') or 'unknown'} "
+        f"enabled={bool(continuity.get('enabled'))} "
+        f"applies={bool(continuity.get('applies_to_device'))} "
+        f"devices={devices or 'none'}"
+    )
+    lines.append(
+        "Tracked: "
+        f"workers={continuity.get('tracked_workers', 0)} "
+        f"restartable_missing={continuity.get('restartable_missing', 0)}"
+    )
+    if continuity.get("check_error"):
+        lines.append(f"Check error: {continuity['check_error']}")
+    missing_workers = continuity.get("missing_workers") or []
+    if missing_workers:
+        lines.append("Missing workers:")
+        for worker in missing_workers:
+            lines.append(
+                f"- {worker.get('name') or 'unknown'} [{worker.get('runtime') or '?'}] "
+                f"{worker.get('status') or 'unknown'} `{worker.get('cwd') or ''}`"
+            )
+    recent_events = continuity.get("recent_events") or []
+    if recent_events:
+        lines.append("Recent continuity events:")
+        for event in recent_events[:5]:
+            lines.append(
+                f"- {event.get('event_type') or 'unknown'} "
+                f"project={event.get('project_id') or 'none'} "
+                f"ts={event.get('ts') or ''}"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _heartbeat_service_name(unit_name: str) -> str:
     if unit_name.startswith("bemine-daemon"):
         return "daemon"

@@ -67,6 +67,7 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "rundown": "rundown",
     "jobs": "jobs.list",
     "health": "health",
+    "continuity": "continuity",
     "dispatch": "dispatch.status",
     "pa": "pa.plan",
     "goals": "goals.list",
@@ -1059,6 +1060,9 @@ def _direct_observability_command(normalized_lower: str) -> str:
     }
     if variants & {"health", "health status"}:
         return "health"
+    if variants & {"continuity", "continuity status", "line cuts", "line cut status",
+                   "power loss", "power loss status"}:
+        return "continuity"
     if variants & {
         "dispatch",
         "dispatch status",

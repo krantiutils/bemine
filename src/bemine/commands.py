@@ -53,6 +53,13 @@ def _health(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_health(payload), data=payload)
 
 
+def _continuity(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.health import collect_health, render_continuity
+
+    payload = collect_health(settings)
+    return CommandResult(text=render_continuity(payload), data=payload["continuity"])
+
+
 def _dispatch_status(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.discord.dispatch import dispatch_status_payload, render_dispatch_status
 
@@ -130,6 +137,7 @@ _SPECS = (
     CommandSpec("rundown", "Project rundown", _rundown),
     CommandSpec("jobs.list", "List scheduled jobs", _jobs_list),
     CommandSpec("health", "Bemine service/job/deploy health", _health),
+    CommandSpec("continuity", "cdjk line-cut recovery status", _continuity),
     CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
     CommandSpec("goal.start", "Start a managed goal session", _goal_start),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),

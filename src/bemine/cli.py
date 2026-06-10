@@ -27,7 +27,7 @@ from .jobs import (
     upsert_reminder_job,
 )
 from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, start_goal
-from .health import collect_health, render_health
+from .health import collect_health, render_continuity, render_health
 from .dreams import render_dream, run_dream
 from .briefs import render_brief, run_brief
 from .pa import build_pa_plan, render_pa_plan
@@ -86,6 +86,7 @@ Core concepts:
   handoff       shutdown packet persisted to vault + audit log
   status        recent sessions by last interaction and ask-state
   health        deploy/services/jobs/watchers health packet
+  continuity    line-cut recovery status packet
   rundown       project summaries from SQLite/Obsidian
   capabilities  safe credential/capability manifest for workers
   phantom       inspect/build/install the Phantom Android accessibility app
@@ -622,6 +623,15 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HELP_FORMATTER,
     )
     health.add_argument("--json", action="store_true", help="Emit JSON.")
+
+    continuity = sub.add_parser(
+        "continuity",
+        help="Show cdjk line-cut recovery status.",
+        description="Show the continuity pass that restarts Bemine-managed local tmux workers after line cuts or power loss on cdjk.",
+        epilog="Examples:\n  uv run bemine continuity\n  uv run bemine continuity --json",
+        formatter_class=HELP_FORMATTER,
+    )
+    continuity.add_argument("--json", action="store_true", help="Emit JSON.")
 
     capabilities = sub.add_parser(
         "capabilities",
@@ -1807,6 +1817,12 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             print(render_health(payload), end="")
+    elif args.command == "continuity":
+        payload = collect_health(settings, db=kernel.db)
+        if args.json:
+            print(json.dumps(payload["continuity"], indent=2, sort_keys=True))
+        else:
+            print(render_continuity(payload), end="")
     elif args.command == "capabilities":
         inventory = CredentialInventory(
             kernel.db,
