@@ -159,6 +159,8 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     session_fallback_channel = config_string("jobs", "session_fallback_channel", "session-updates")
     session_auto_create_channels = config_bool("jobs", "session_auto_create_channels", True)
     recovery_poll_interval = config_int("recovery", "poll_interval_secs", 300)
+    backlog_default_owner = config_string("backlog", "default_owner", "SMM")
+    backlog_owners = config_list("backlog", "owners", ["PA", "SMM"])
     smm_target_channels = config_list("smm", "target_channels", ["X", "LinkedIn"])
     smm_style_path = config_string("smm", "style_path", "subagents/style.md")
     phantom_root = config_string("phantom", "project_root", "")
@@ -171,6 +173,8 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"jobs.session_auto_create_channels={session_auto_create_channels}",
         f"jobs.session_fallback_channel={session_fallback_channel}",
         f"recovery.poll_interval_secs={recovery_poll_interval}",
+        f"backlog.default_owner={backlog_default_owner}",
+        f"backlog.owners={', '.join(backlog_owners) or 'none'}",
         f"smm.target_channels={', '.join(smm_target_channels) or 'none'}",
         f"smm.style_path={smm_style_path}",
         f"phantom.project_root={phantom_root or 'unset'}",
@@ -193,6 +197,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
         "- backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`",
+        f"- backlog config: default_owner={backlog_default_owner} owners={', '.join(backlog_owners) or 'none'}",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM`)",
         f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom install`)",
@@ -221,6 +226,10 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
             "continuity": {
                 "enabled": continuity_enabled,
                 "devices": continuity_devices,
+            },
+            "backlog": {
+                "default_owner": backlog_default_owner,
+                "owners": backlog_owners,
             },
             "watchers": {"active": active_watchers},
             "config_knobs": configurable_knobs,

@@ -52,6 +52,10 @@ interval_secs = 123
 enabled = false
 devices = ["cdjk", "mbp"]
 
+[backlog]
+default_owner = "PA"
+owners = ["PA", "SMM"]
+
 [phantom]
 project_root = "/tmp/phantom"
 
@@ -99,6 +103,8 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "dream: `dream run`" in out.text
     assert "watchers: active=0" in out.text
     assert "backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`" in out.text
+    assert "backlog.default_owner=PA" in out.text
+    assert "backlog.owners=PA, SMM" in out.text
     assert "social posts:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text
@@ -107,6 +113,8 @@ files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
     assert "morning_plan" in out.text
     assert out.data["goal"]["runtime"] == "shell"
     assert out.data["dispatch"]["runtime"] == "kimi"
+    assert out.data["backlog"]["default_owner"] == "PA"
+    assert out.data["backlog"]["owners"] == ["PA", "SMM"]
     assert out.data["watchers"]["active"] == 0
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
     assert any(job["job_id"] == "morning_plan" for job in out.data["jobs"])
