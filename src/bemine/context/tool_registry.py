@@ -19,7 +19,7 @@ from ..goals import list_goal_sessions, start_goal
 from ..health import collect_health
 from ..index.status import _redact, collect_fleet_status
 from ..security.credentials import CredentialInventory
-from ..workers.workers import WorkerError
+from ..workers.workers import WorkerController, WorkerError
 
 
 ToolHandler = Callable[[Mapping[str, Any], "ToolContext"], Mapping[str, Any]]
@@ -256,6 +256,25 @@ def default_tools() -> list[BemineTool]:
                 "properties": {"query": {"type": "string"}},
             },
             handler=_goal_status,
+        ),
+        BemineTool(
+            name="workers_status",
+            description=(
+                "List Bemine-managed workers and duplicate active heads. Use this for "
+                "worker/session inventory before sending, transferring, or recovering "
+                "managed tmux workers."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Filter by worker, project, cwd, runtime, device, status, or command.",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+            },
+            handler=_workers_status,
         ),
         BemineTool(
             name="discord_threads",
@@ -617,6 +636,18 @@ def _goal_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, 
     return {"ok": True, "sessions": [session.to_dict() for session in sessions]}
 
 
+def _workers_status(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    query = str(args.get("query") or "").strip()
+    limit = _int(args.get("limit"), default=50, minimum=1, maximum=100)
+    records = WorkerController(context.settings, db=context.db).list()
+    rows = [record.to_dict() for record in records]
+    if query:
+        rows = [row for row in rows if _route_matches(row, query)]
+    rows = rows[:limit]
+    duplicates = _worker_duplicate_groups(rows)
+    return {"ok": True, "workers": rows, "duplicates": duplicates}
+
+
 def _discord_threads(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
     query = str(args.get("query") or "").strip()
     limit = _int(args.get("limit"), default=12, minimum=1, maximum=50)
@@ -896,6 +927,19 @@ def _project_channel_route_dict(
 def _route_matches(row: Mapping[str, Any], query: str) -> bool:
     needle = query.casefold()
     return any(needle in str(value or "").casefold() for value in row.values())
+
+
+def _worker_duplicate_groups(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        if str(row.get("status") or "") not in {"running", "adopted"}:
+            continue
+        grouped.setdefault(str(row.get("project_id") or ""), []).append(row)
+    return [
+        {"project_id": project_id, "heads": [dict(row) for row in heads]}
+        for project_id, heads in sorted(grouped.items())
+        if len(heads) > 1
+    ]
 
 
 def _load_env_files(*extra: Path) -> dict[str, str]:

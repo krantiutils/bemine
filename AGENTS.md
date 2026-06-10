@@ -63,6 +63,7 @@ preference (specific tool > shell):
 | `watch_control` | start/stop/status a per-project WATCHER (drives a session toward a brief) |
 | `dream_run` | record one self-improvement memory datapoint in the vault |
 | `goal_start` / `goal_status` | start or inspect managed goal workers plus watchers |
+| `workers_status` | list Bemine-managed workers and duplicate active heads |
 | `discord_threads` / `discord_transcript` | search local Discord channels/threads and read redacted transcripts |
 | `channel_routes` | inspect project-to-Discord route config, DB candidates, and watcher bindings |
 | `deploy_control` | request/status the self-deploy of Bemine's own committed code |
