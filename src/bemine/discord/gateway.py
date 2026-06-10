@@ -4,7 +4,9 @@ import asyncio
 import argparse
 import logging
 import re
+import shlex
 import threading
+from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -14,9 +16,11 @@ import discord
 from discord.ext import commands
 
 from bemine.capabilities import build_capability_manifest, render_capability_manifest
+from bemine.backlog import add_backlog_item
 from bemine.commands import run_command
 from bemine.config import BemineSettings, config_int, config_string
 from bemine.security.credentials import CredentialInventory, PermissionGate
+from bemine.goals import render_goal_start, start_goal
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
 from bemine.index.status import _redact, collect_fleet_status, render_status
@@ -43,6 +47,14 @@ WARNING_REACTION = "⚠️"
 APPROVAL_CODE_RE = re.compile(
     r"\b((?:!?(?:mayor|bemine)\s+)?approve\s+\S+\s+)(\d{6,8})\b",
     re.IGNORECASE,
+)
+GOAL_PREFIX_RE = re.compile(r"^\s*(?:!?(?:mayor|bemine)\s+)?goal\s+", re.IGNORECASE)
+BACKLOG_RE = re.compile(
+    r"^\s*(?:!?(?:mayor|bemine)\s+)?(?:(?P<owner1>pa|smm)\s+"
+    r"(?P<kind1>idea|task|backlog)|(?:store|save|remember)\s+(?:this\s+)?"
+    r"(?P<kind2>idea|task|backlog)\s+for\s+(?P<owner2>pa|smm))\s*[:\-]\s*"
+    r"(?P<text>.+)\s*$",
+    re.IGNORECASE | re.DOTALL,
 )
 
 # ---------------------------------------------------------------------------
@@ -437,6 +449,161 @@ def maybe_consume_watcher_reply(settings, db, *, channel_id: str, text: str) -> 
     return True
 
 
+@dataclass(frozen=True)
+class GoalCommand:
+    project: str
+    brief: str
+
+
+@dataclass(frozen=True)
+class BacklogCommand:
+    owner: str
+    text: str
+    kind: str
+
+
+def parse_goal_command(text: str) -> GoalCommand | None:
+    match = GOAL_PREFIX_RE.match(text or "")
+    if not match:
+        return None
+    body = text[match.end():].strip()
+    if not body:
+        return None
+    if ":" in body:
+        project, brief = body.split(":", 1)
+    else:
+        try:
+            parts = shlex.split(body)
+        except ValueError:
+            parts = body.split(None, 1)
+        if len(parts) < 2:
+            return None
+        project = parts[0]
+        brief = body[len(project):]
+    project = project.strip().strip("`#")
+    brief = _strip_wrapping_quotes(brief.strip())
+    if not project or not brief:
+        return None
+    return GoalCommand(project=project, brief=brief)
+
+
+def parse_backlog_command(text: str) -> BacklogCommand | None:
+    match = BACKLOG_RE.match(text or "")
+    if not match:
+        return None
+    owner = (match.group("owner1") or match.group("owner2") or "").upper()
+    kind = (match.group("kind1") or match.group("kind2") or "idea").lower()
+    item_text = _strip_wrapping_quotes((match.group("text") or "").strip())
+    if not owner or not item_text:
+        return None
+    return BacklogCommand(owner=owner, kind=kind, text=item_text)
+
+
+def maybe_add_backlog_from_discord_message(
+    settings: BemineSettings,
+    db,
+    message: discord.Message,
+    text: str,
+):
+    command = parse_backlog_command(text)
+    if command is None:
+        return None
+    route = infer_project_route(
+        channel_name=_message_channel_name(message),
+        category_name=_message_category_name(message),
+        content=str(message.content or ""),
+        state_dir=settings.state_dir,
+        repo_dir=Path.cwd(),
+        mentioned_channels=_mentioned_channels(message),
+        allow_default=False,
+    )
+    project_id = route.project.project_id if route and route.project.project_id else ""
+    return add_backlog_item(
+        settings,
+        owner=command.owner,
+        text=f"{command.kind}: {command.text}",
+        source=f"discord:{getattr(message.author, 'id', '')}",
+        project=project_id,
+        db=db,
+    )
+
+
+def maybe_start_goal_from_discord_message(
+    settings: BemineSettings,
+    db,
+    message: discord.Message,
+    text: str,
+    *,
+    conversation_context: str = "",
+):
+    command = parse_goal_command(text)
+    if command is None:
+        return None
+    brief = _goal_brief_with_context(command.brief, conversation_context)
+    return start_goal(
+        settings,
+        project=command.project,
+        brief=brief,
+        cwd=_goal_cwd_hint(settings, message, command.project),
+        channel_id=str(message.channel.id),
+        db=db,
+    )
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
+
+
+def _goal_brief_with_context(brief: str, conversation_context: str) -> str:
+    context = conversation_context.strip()
+    if not context:
+        return brief
+    if len(context) > 4000:
+        context = context[-4000:].lstrip()
+    return "\n\n".join(
+        [
+            brief,
+            "Recent Discord context to consider before acting:",
+            context,
+        ]
+    )
+
+
+def _goal_cwd_hint(
+    settings: BemineSettings,
+    message: discord.Message,
+    project: str,
+) -> Path | None:
+    route = infer_project_route(
+        channel_name=_message_channel_name(message),
+        category_name=_message_category_name(message),
+        content=str(message.content or ""),
+        state_dir=settings.state_dir,
+        repo_dir=Path.cwd(),
+        mentioned_channels=_mentioned_channels(message),
+        allow_default=False,
+    )
+    if route is None:
+        return None
+    key = project.casefold()
+    current_project_names = {
+        "this",
+        "here",
+        "current",
+        "project",
+        route.project.channel_name.casefold(),
+        (route.project.project_name or "").casefold(),
+        (route.project.project_id or "").casefold(),
+        route.project.cwd.name.casefold(),
+    }
+    if key in current_project_names:
+        return route.project.cwd
+    return None
+
+
 class MayorDiscordGateway:
     def __init__(self, settings: Settings) -> None:
         settings.require_token()
@@ -623,6 +790,38 @@ class MayorDiscordGateway:
             channel_key = str(message.channel.id)
             from bemine.db import BemineDB as _BemineDB
             _wdb = _BemineDB(self.settings.db_path)
+            conversation_context = self._conversation_context(message)
+            try:
+                backlog_entry = await asyncio.to_thread(
+                    maybe_add_backlog_from_discord_message,
+                    BemineSettings.load(),
+                    _wdb,
+                    message,
+                    normalized,
+                )
+            except Exception as exc:
+                await responder.send(f"Backlog capture failed: {exc}")
+                return
+            if backlog_entry is not None:
+                await responder.send(
+                    f"Added `{backlog_entry.owner}` backlog item: `{backlog_entry.path}`"
+                )
+                return
+            try:
+                goal_result = await asyncio.to_thread(
+                    maybe_start_goal_from_discord_message,
+                    BemineSettings.load(),
+                    _wdb,
+                    message,
+                    normalized,
+                    conversation_context=conversation_context,
+                )
+            except Exception as exc:
+                await responder.send(f"Goal start failed: {exc}")
+                return
+            if goal_result is not None:
+                await responder.send(render_goal_start(goal_result))
+                return
             if await asyncio.to_thread(
                 maybe_consume_watcher_reply, BemineSettings.load(), _wdb,
                 channel_id=channel_key, text=normalized,

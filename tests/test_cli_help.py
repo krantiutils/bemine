@@ -24,6 +24,9 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "capabilities  safe credential/capability manifest" in text
     assert "permissions   explicit approval path" in text
     assert "workers       safe managed live sessions over tmux" in text
+    assert "goal          start a managed worker and watcher" in text
+    assert "backlog       durable PA/SMM idea" in text
+    assert "dream         condense recent history" in text
 
 
 def test_prime_help_explains_startup_packet() -> None:
@@ -58,3 +61,32 @@ def test_permissions_and_tmux_help_surface_safety_rules() -> None:
     assert "Do not inject text into arbitrary raw TTYs" in tmux_flat
     assert "adopt existing tmux sessions" in workers_flat
     assert "Raw Codex/Claude/Kimi terminals" in workers_flat
+
+
+def test_goal_help_explains_worker_plus_watcher_flow() -> None:
+    text = _help("goal")
+    flat = " ".join(text.split())
+
+    assert "Start a managed goal session." in text
+    assert "starts a tmux-backed worker" in flat
+    assert "registers a watcher" in flat
+    assert "--target-device" in text
+    assert "uv run bemine goal rai-speech-toolkit" in text
+
+
+def test_backlog_help_explains_vault_storage() -> None:
+    text = _help("backlog")
+    flat = " ".join(text.split())
+
+    assert "Capture or list durable PA/SMM backlog items." in text
+    assert "Obsidian vault under Backlog/<owner>.md" in flat
+    assert "uv run bemine backlog add" in text
+
+
+def test_dream_help_explains_jsonl_storage() -> None:
+    text = _help("dream")
+    flat = " ".join(text.split())
+
+    assert "Condense recent Bemine/Discord history" in text
+    assert "Dreams/dreams.jsonl" in flat
+    assert "uv run bemine dream run" in text

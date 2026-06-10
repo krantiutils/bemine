@@ -141,6 +141,52 @@ uv run bemine systemd install --now
 systemctl --user status bemine-daemon mayor-discord-gateway
 ```
 
+### Goal sessions
+
+Use `bemine goal` when Bemine should start the work itself instead of waiting for
+you to open a terminal first:
+
+```bash
+uv run bemine goal rai-speech-toolkit "train the first Rai TTS checkpoint from the 14 rulebooks"
+```
+
+The command starts a managed tmux worker in the project, sends the goal brief,
+and registers a watcher for follow-up/recovery. From Discord, say
+`goal <project>: "<brief>"`; recent channel context is folded into the brief.
+If the project is currently visible only on another device in fleet status,
+Bemine starts the worker there through SSH-backed tmux; pass `--target-device`
+to force the device.
+
+On `cdjk`, `[continuity]` makes the daemon restart managed local workers after
+line cuts or reboot: if a `bemine goal` worker was recorded as `running` but its
+tmux session disappeared, the daemon starts it again from the recorded cwd and
+command. This deliberately does not restart adopted/manual sessions.
+
+### PA/SMM backlog
+
+Use `bemine backlog` for durable idea/task capture:
+
+```bash
+uv run bemine backlog add "post the Rai checkpoint chart" --owner SMM
+uv run bemine backlog list --owner PA
+```
+
+Entries are Markdown in the Obsidian vault under `Backlog/`. Discord handles
+explicit phrases like `SMM idea: ...` and `store idea for PA: ...` without
+starting a full agent run.
+
+### Dream memory
+
+Bemine can periodically condense recent conversation, failure, and audit history
+into one append-only data point:
+
+```bash
+uv run bemine dream run
+```
+
+The daemon seeds a `dream` cron job (`[dream].schedule`, default `15 3 * * *`)
+that appends JSONL records to `Dreams/dreams.jsonl` in the Obsidian vault.
+
 ### Watcher mode
 
 Enable a watcher from a project's Discord channel: "watch this, goal: <your full

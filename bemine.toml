@@ -32,6 +32,22 @@ ignored_roots = ["~/gt"]              # repos under these paths are never indexe
 operator_files = ["~/deploy.md"]
 harness_files = ["/home/cdjk/bm/SOUL.md", "/home/cdjk/bm/AGENTS.md", "/home/cdjk/bm/SKILL.md", "/home/cdjk/bm/USER.md"]
 
+[subagents]
+# Focused operating contracts injected into dispatched-agent prompts. Keep these
+# files short and specific; add a profile only when it changes real behavior.
+files = ["subagents/PA.md", "subagents/SMM.md", "subagents/style.md"]
+context_limit = 12000
+
+[backlog]
+# Durable idea/task inboxes for focused subagents.
+owners = ["PA", "SMM"]
+default_owner = "SMM"
+
+[dream]
+# Periodically condense recent conversation/audit history into one JSONL data point
+# in the Obsidian vault (`Dreams/dreams.jsonl`).
+schedule = "15 3 * * *"
+
 # ----------------------------------------------------------------------------
 # Which agent answers a Discord message.
 # ----------------------------------------------------------------------------
@@ -52,6 +68,19 @@ runtime = "claude"
 max_output_tokens = 4096              # max length of a single reply
 max_tool_iterations = 16             # tool-step budget per message (it still answers at the limit)
 harness_context_limit = 24000        # max chars of SOUL/SKILL/USER injected into context
+
+[goal]
+# `bemine goal <project> "<brief>"` starts a managed worker and a watcher.
+runtime = "claude"
+interval_secs = 600
+
+[continuity]
+# cdjk can lose power/network because of line cuts. On daemon startup/poll, restart
+# Bemine-managed local tmux workers that were recorded as running but whose tmux
+# session disappeared. Adopted sessions are not restarted because their original
+# command is unknown.
+enabled = true
+devices = ["cdjk"]
 
 # ----------------------------------------------------------------------------
 # Per-runtime settings. Subscriptions/keys are used — no pay-per-token API keys.

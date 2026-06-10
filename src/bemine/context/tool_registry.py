@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from ..config import BemineSettings, config_bool, config_string
+from ..backlog import add_backlog_item, default_backlog_owner, list_backlog_items
 from ..db import BemineDB
 from ..index.status import _redact, collect_fleet_status
 
@@ -111,6 +112,34 @@ def default_tools() -> list[BemineTool]:
                 "properties": {"provider": {"type": "string"}},
             },
             handler=_usage_report,
+        ),
+        BemineTool(
+            name="backlog_add",
+            description=(
+                "Add a durable PA/SMM backlog item to the Obsidian vault. Use when the "
+                "user asks to store an idea, social post angle, follow-up, or PA task."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "owner": {"type": "string", "description": "PA or SMM"},
+                },
+                "required": ["text"],
+            },
+            handler=_backlog_add,
+        ),
+        BemineTool(
+            name="backlog_list",
+            description="List open PA/SMM backlog items from the Obsidian vault.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "owner": {"type": "string", "description": "PA or SMM"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                },
+            },
+            handler=_backlog_list,
         ),
         BemineTool(
             name="audit_list",
@@ -302,6 +331,31 @@ def _jobs_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, An
 def _usage_report(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
     provider = str(args.get("provider") or "").strip() or None
     return {"providers": context.db.usage_rollup(provider=provider)}
+
+
+def _backlog_add(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    text = str(args.get("text") or "").strip()
+    if not text:
+        raise ToolExecutionError("text is required")
+    owner = str(args.get("owner") or "").strip() or default_backlog_owner()
+    entry = add_backlog_item(
+        context.settings,
+        owner=owner,
+        text=text,
+        source=f"tool:{context.session_id}",
+        project=context.project_id,
+        db=context.db,
+    )
+    return {"ok": True, "entry": entry.to_dict()}
+
+
+def _backlog_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:
+    owner = str(args.get("owner") or "").strip() or default_backlog_owner()
+    limit = _int(args.get("limit"), default=20, minimum=1, maximum=50)
+    return {
+        "owner": owner.upper(),
+        "items": list_backlog_items(context.settings, owner=owner, limit=limit),
+    }
 
 
 def _audit_list(args: Mapping[str, Any], context: ToolContext) -> Mapping[str, Any]:

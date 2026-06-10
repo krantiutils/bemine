@@ -43,12 +43,28 @@ def test_cli_prime_scans_and_renders_worker_startup_packet(tmp_path: Path) -> No
     project = tmp_path / "repo" / "alpha"
     project.mkdir(parents=True)
     _fake_codex_session(tmp_path, project)
+    config = tmp_path / "bemine.toml"
+    subagents = tmp_path / "subagents"
+    subagents.mkdir()
+    (subagents / "PA.md").write_text("# PA\nplan", encoding="utf-8")
+    config.write_text(
+        f"""
+[context]
+harness_files = ["{Path.cwd() / "SOUL.md"}", "{Path.cwd() / "SKILL.md"}"]
+
+[subagents]
+files = ["subagents/PA.md"]
+""",
+        encoding="utf-8",
+    )
 
     result = subprocess.run(
         [
             sys.executable,
             "-m",
             "bemine.cli",
+            "--config",
+            str(config),
             "--state-dir",
             str(tmp_path / "state"),
             "--vault",
@@ -80,6 +96,7 @@ def test_cli_prime_scans_and_renders_worker_startup_packet(tmp_path: Path) -> No
     assert payload["statuses"][0]["session_id"] == "codex:prime-session"
     assert any(path.endswith("SOUL.md") for path in payload["harness_files"])
     assert any(path.endswith("SKILL.md") for path in payload["harness_files"])
+    assert payload["subagent_files"] == [str(subagents / "PA.md")]
 
 
 def test_cli_handoff_writes_vault_files_and_audit_event(tmp_path: Path) -> None:

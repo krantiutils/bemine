@@ -199,6 +199,36 @@ class WorkerController:
             status="running",
         )
 
+    def start_on_device(
+        self,
+        *,
+        name: str,
+        runtime: str,
+        cwd: Path,
+        command: str = "",
+        target_device: str = "",
+    ) -> WorkerRecord:
+        target_device = target_device.strip() or self.settings.device_id
+        if self._is_local_device(target_device):
+            return self.start(name=name, runtime=runtime, cwd=cwd, command=command)
+        name = _validate_name(name)
+        cwd = cwd.expanduser()
+        runtime = _normalize_runtime(runtime)
+        command = command.strip() or DEFAULT_RUNTIME_COMMANDS.get(runtime, runtime)
+        target_tmux = self._tmux_for_device(target_device)
+        if target_tmux.exists(name):
+            raise WorkerError(f"tmux session already exists: {name}")
+        target_tmux.start(name, _command_in_cwd(cwd, command))
+        return self._record(
+            name=name,
+            runtime=runtime,
+            cwd=cwd,
+            command=command,
+            status="running",
+            transport=self._transport_for_device(target_device),
+            device_id=target_device,
+        )
+
     def adopt(
         self,
         *,
@@ -501,6 +531,56 @@ class WorkerController:
             project_id=record.project_id,
             payload_json=json.dumps({**record.to_dict(), **payload}, sort_keys=True),
         )
+
+
+def resume_missing_local_workers(
+    settings: BemineSettings,
+    *,
+    db: BemineDB | None = None,
+    tmux: TmuxLike | None = None,
+) -> list[WorkerRecord]:
+    """Restart Bemine-managed local tmux workers that were running before a reboot.
+
+    This is intentionally limited to `status=running` local tmux sessions. Adopted
+    sessions are opaque; Bemine cannot safely reconstruct their original command.
+    """
+    db = db or BemineDB(settings.db_path)
+    tmux = tmux or TmuxAdapter()
+    controller = WorkerController(settings, db=db, tmux=tmux)
+    resumed: list[WorkerRecord] = []
+    for row in db.list_managed_sessions():
+        record = controller._row_to_record(row, exists=False)
+        if record.status != "running":
+            continue
+        if record.transport != "tmux":
+            continue
+        if record.device_id not in {settings.device_id, "local"}:
+            continue
+        if tmux.exists(record.name):
+            continue
+        cwd = Path(record.cwd).expanduser()
+        if not cwd.exists() or not cwd.is_dir():
+            continue
+        command = record.command.strip()
+        if not command or command == "adopted-existing-tmux-session":
+            continue
+        tmux.start(record.name, _command_in_cwd(cwd.resolve(), command))
+        restarted = controller._record(
+            name=record.name,
+            runtime=record.runtime,
+            cwd=cwd.resolve(),
+            command=command,
+            status="running",
+            transport="tmux",
+            device_id=settings.device_id,
+        )
+        controller._audit(
+            "worker_resumed_after_outage",
+            restarted,
+            {"previous_device_id": record.device_id},
+        )
+        resumed.append(restarted)
+    return resumed
 
 
 def render_workers(records: list[WorkerRecord]) -> str:
