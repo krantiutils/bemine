@@ -113,6 +113,7 @@ def test_smm_help_explains_draft_inputs_and_assets() -> None:
     assert "Draft Ampixa-style social posts from existing SMM evidence." in text
     assert "SMM backlog items" in flat
     assert "assets/ampixa" in flat
+    assert "uv run bemine smm status" in text
     assert "uv run bemine smm draft" in text
 
 

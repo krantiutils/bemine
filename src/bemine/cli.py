@@ -37,7 +37,12 @@ from .health import collect_health, render_continuity, render_health
 from .dreams import dream_status, render_dream, render_dream_status, run_dream
 from .briefs import brief_status, render_brief, render_brief_status, run_brief
 from .pa import build_pa_plan, render_pa_plan
-from .smm import draft_smm_posts, render_smm_drafts
+from .smm import (
+    draft_smm_posts,
+    render_smm_draft_status,
+    render_smm_drafts,
+    smm_draft_status,
+)
 from .phantom import (
     phantom_build,
     phantom_install,
@@ -221,8 +226,11 @@ The draft command reads SMM backlog items, the latest PA/SMM brief, and the loca
 Ampixa style/assets (`subagents/style.md`, `assets/ampixa/*`). It returns
 structured post drafts with hook, body, proof, target channels, and an image
 prompt that follows the Ampixa visual language.
+Use `smm status` to inspect the latest written draft file and asset readiness
+without generating new copy.
 
 Examples:
+  uv run bemine smm status
   uv run bemine smm draft
   uv run bemine smm draft "Rai checkpoint eval passed" --project rai-speech-toolkit
   uv run bemine smm draft --write --json
@@ -839,6 +847,13 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HELP_FORMATTER,
     )
     smm_sub = smm.add_subparsers(dest="smm_command", required=True)
+    smm_status = smm_sub.add_parser(
+        "status",
+        help="Show latest SMM draft freshness and asset readiness.",
+    )
+    smm_status.add_argument(
+        "--json", action="store_true", help="Emit SMM draft status as JSON."
+    )
     smm_draft = smm_sub.add_parser(
         "draft",
         help="Create structured post drafts from SMM backlog/brief evidence.",
@@ -2003,7 +2018,13 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 print(render_pa_plan(result), end="")
     elif args.command == "smm":
-        if args.smm_command == "draft":
+        if args.smm_command == "status":
+            status = smm_draft_status(settings)
+            if args.json:
+                print(json.dumps(status, indent=2, sort_keys=True))
+            else:
+                print(render_smm_draft_status(status), end="")
+        elif args.smm_command == "draft":
             result = draft_smm_posts(
                 settings,
                 topic=args.topic,

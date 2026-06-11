@@ -102,8 +102,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "what should I focus on today?" / PA planning → `pa_plan` native tool or
   `uv run bemine pa plan`; this prioritizes health issues, failed jobs, waiting
   sessions, active watchers, recovery escalations, and PA backlog with evidence.
-- SMM post ideas/copy → `smm_drafts` native tool or `uv run bemine smm draft`;
-  this turns SMM backlog/brief signals into Ampixa-style draft posts with proof,
+- SMM post ideas/copy → `smm status` / `when was the last SMM draft?` to
+  inspect freshness; `smm_drafts` native tool or `uv run bemine smm draft` to
+  turn SMM backlog/brief signals into Ampixa-style draft posts with proof,
   target channels, and image prompts using `subagents/style.md` + `assets/ampixa/`.
 - Local Discord history → `discord_threads` / `discord_transcript` native tools, or
   `discord_refresh_channels` / `uv run bemine discord refresh-channel-names` to

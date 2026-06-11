@@ -8,7 +8,12 @@ from bemine.backlog import add_backlog_item
 from bemine.cli import main
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
-from bemine.smm import collect_ampixa_assets, draft_smm_posts
+from bemine.smm import (
+    collect_ampixa_assets,
+    draft_smm_posts,
+    render_smm_draft_status,
+    smm_draft_status,
+)
 
 
 def _settings(tmp_path: Path) -> tuple[BemineSettings, BemineDB]:
@@ -39,7 +44,9 @@ def _empty_config(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("BEMINE_CONFIG", str(config_path))
 
 
-def test_collect_ampixa_assets_reports_expected_files(tmp_path: Path, monkeypatch) -> None:
+def test_collect_ampixa_assets_reports_expected_files(
+    tmp_path: Path, monkeypatch
+) -> None:
     _empty_config(tmp_path, monkeypatch)
     root = _project_root(tmp_path)
 
@@ -100,9 +107,19 @@ def test_draft_smm_posts_uses_topic_backlog_brief_assets_and_writes_vault(
     assert result.drafts[0].project == "rai-speech-toolkit"
     assert "Nepali and regional speech" in result.drafts[0].body
     assert "#DC143C" in result.drafts[0].asset_prompt
-    assert result.path == settings.vault_dir / "SMM" / "Drafts" / "2026-06-11-smm-drafts.md"
+    assert (
+        result.path
+        == settings.vault_dir / "SMM" / "Drafts" / "2026-06-11-smm-drafts.md"
+    )
     assert result.path.exists()
     assert "Rai checkpoint benchmark" in result.path.read_text(encoding="utf-8")
+    status = smm_draft_status(settings, project_root=root)
+    assert status["count"] == 1
+    assert status["latest"]["path"] == str(result.path)
+    assert status["latest"]["generated_at"] == "2026-06-11T00:00:00+00:00"
+    assert status["latest"]["drafts"] == 2
+    assert status["missing_assets"] == []
+    assert "SMM draft status:" in render_smm_draft_status(status)
     rows = db.list_audit_events(category="smm", limit=1)
     assert rows[0]["event_type"] == "smm_drafts_recorded"
 
@@ -156,17 +173,19 @@ def test_cli_smm_draft_json(tmp_path: Path, capsys, monkeypatch) -> None:
     )
     monkeypatch.chdir(root)
 
-    main([
-        "--state-dir",
-        str(settings.state_dir),
-        "--vault",
-        str(settings.vault_dir),
-        "smm",
-        "draft",
-        "--limit",
-        "1",
-        "--json",
-    ])
+    main(
+        [
+            "--state-dir",
+            str(settings.state_dir),
+            "--vault",
+            str(settings.vault_dir),
+            "smm",
+            "draft",
+            "--limit",
+            "1",
+            "--json",
+        ]
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert len(payload["drafts"]) == 1
