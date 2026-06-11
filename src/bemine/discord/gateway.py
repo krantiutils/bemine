@@ -1360,6 +1360,8 @@ def _direct_phantom_command(normalized_lower: str) -> dict[str, str] | None:
         "phantom status",
         "show phantom",
         "phone status",
+        "what is phantom",
+        "what is the phantom app",
         "what phantom is configured",
         "what phantom status is",
         "what is phantom status",
