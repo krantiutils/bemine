@@ -1416,6 +1416,12 @@ def _direct_smm_command(normalized_lower: str) -> dict[str, str] | None:
         "last smm draft",
         "latest smm draft",
         "are smm drafts fresh",
+        "ampixa assets",
+        "smm assets",
+        "social assets",
+        "asset status",
+        "what ampixa assets are installed",
+        "what smm assets do we have",
     }:
         return {"command": "smm.status"}
     if variants & {

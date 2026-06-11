@@ -219,9 +219,11 @@ def test_run_command_smm_status_reads_latest_draft(tmp_path, monkeypatch):
     out = run_command("smm.status", settings, {})
 
     assert "SMM draft status:" in out.text
+    assert "assets:" in out.text
     assert out.data["count"] == 1
     assert out.data["latest"]["path"] == str(path)
     assert out.data["latest"]["drafts"] == 1
+    assert out.data["assets"][0]["source_url"].startswith("https://ampixa.com/assets/")
 
 
 def test_run_command_help_summarizes_configurable_surfaces(tmp_path, monkeypatch):
@@ -320,6 +322,7 @@ context_limit = 1000
     assert "config: `config show` / `what config is set?`" in out.text
     assert "social posts: `smm status` / `smm draft`" in out.text
     assert "social posts ask:" in out.text
+    assert "what Ampixa assets are installed?" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "style convention:" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text
