@@ -1336,6 +1336,8 @@ def _direct_smm_command(normalized_lower: str) -> dict[str, str] | None:
         "what should smm post about",
         "what should smm post today",
         "give me a post idea",
+        "show me post ideas",
+        "show me social post ideas",
         "post ideas",
     }:
         return {"command": "smm.draft"}
