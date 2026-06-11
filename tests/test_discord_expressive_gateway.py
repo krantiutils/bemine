@@ -148,7 +148,9 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_subagents_command("what subagents are configured?") == {"command": "subagents.list"}
     assert gw._direct_subagents_command("show PA subagent") == {"command": "subagents.show", "name": "PA"}
     assert gw._direct_subagents_command("what is PA?") == {"command": "subagents.show", "name": "PA"}
+    assert gw._direct_subagents_command("what does PA do?") == {"command": "subagents.show", "name": "PA"}
     assert gw._direct_subagents_command("show SMM") == {"command": "subagents.show", "name": "SMM"}
+    assert gw._direct_subagents_command("what does SMM do?") == {"command": "subagents.show", "name": "SMM"}
     assert gw._direct_subagents_command("what is the style convention?") == {"command": "subagents.show", "name": "style"}
     assert gw._direct_smm_command("what should I post?") == {"command": "smm.draft"}
     assert gw._direct_smm_command("what should I post today?") == {"command": "smm.draft"}
@@ -158,6 +160,7 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_phantom_command("phantom") == {"command": "phantom.status"}
     assert gw._direct_phantom_command("show phantom") == {"command": "phantom.status"}
     assert gw._direct_phantom_command("what is Phantom?") == {"command": "phantom.status"}
+    assert gw._direct_phantom_command("what does Phantom do?") == {"command": "phantom.status"}
     assert gw._direct_phantom_command("phantom status") == {"command": "phantom.status"}
     assert gw._direct_phantom_command("phantom install") == {"command": "phantom.install"}
     assert gw._direct_observability_command("what jobs are scheduled?") == "jobs.list"

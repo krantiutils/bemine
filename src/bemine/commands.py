@@ -299,9 +299,9 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- config: `config show` / `what config is set?`",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
         "- social posts ask: `what should I post?` / `what should I post today?` / `what should I post this week?` / `show me post ideas` / `what should SMM post?` / `draft a post`",
-        f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM|style` / `what is PA?` / `what is SMM?` / `/subagents list` / `/subagents show`)",
+        f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM|style` / `what is PA?` / `what does PA do?` / `what is SMM?` / `what does SMM do?` / `/subagents list` / `/subagents show`)",
         "- style convention: `subagents show style` / `what is the style convention?` / `what style should SMM follow?`",
-        f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom build` / `phantom install` / `what is Phantom?` / `/phantom status` / `/phantom build` / `/phantom install`)",
+        f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom build` / `phantom install` / `what is Phantom?` / `what does Phantom do?` / `/phantom status` / `/phantom build` / `/phantom install`)",
         "Config knobs:",
         *[f"- {item}" for item in configurable_knobs],
     ]

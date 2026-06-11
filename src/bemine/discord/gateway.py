@@ -1291,6 +1291,8 @@ def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
         "show pa.md",
         "show pa",
         "what is pa",
+        "what does pa do",
+        "what is pa for",
         "what is pa.md",
         "what is the pa subagent",
     }:
@@ -1301,6 +1303,8 @@ def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
         "show smm.md",
         "show smm",
         "what is smm",
+        "what does smm do",
+        "what is smm for",
         "what is smm.md",
         "what is the smm subagent",
     }:
@@ -1363,6 +1367,8 @@ def _direct_phantom_command(normalized_lower: str) -> dict[str, str] | None:
         "show phantom",
         "phone status",
         "what is phantom",
+        "what does phantom do",
+        "what is phantom for",
         "what is the phantom app",
         "what phantom is configured",
         "what phantom status is",
