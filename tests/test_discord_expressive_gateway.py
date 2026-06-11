@@ -134,6 +134,7 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("mayor dispatch status") == "dispatch.status"
     assert gw._direct_observability_command("what model are we using?") == "dispatch.status"
     assert gw._direct_observability_command("what should I focus on today?".lower()) == "pa.plan"
+    assert gw._direct_observability_command("what should I focus on this week?") == "pa.plan"
     assert gw._direct_observability_command("what should I do next?") == "pa.plan"
     assert gw._direct_observability_command("what should I focus on tomorrow?") == "pa.plan"
     assert gw._direct_observability_command("goals") == "goals.list"
@@ -151,6 +152,7 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_subagents_command("what is the style convention?") == {"command": "subagents.show", "name": "style"}
     assert gw._direct_smm_command("what should I post?") == {"command": "smm.draft"}
     assert gw._direct_smm_command("what should I post today?") == {"command": "smm.draft"}
+    assert gw._direct_smm_command("what should I post this week?") == {"command": "smm.draft"}
     assert gw._direct_smm_command("show me post ideas") == {"command": "smm.draft"}
     assert gw._direct_smm_command("draft a post") == {"command": "smm.draft"}
     assert gw._direct_phantom_command("phantom") == {"command": "phantom.status"}
