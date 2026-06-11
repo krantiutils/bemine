@@ -12,6 +12,7 @@ from bemine.kernel import BemineKernel
 from bemine.context.subagents import load_subagent_context, render_subagent_context
 from bemine.phantom import phantom_build, phantom_install, phantom_status
 from bemine.phantom import render_phantom_build, render_phantom_install, render_phantom_status
+from bemine.smm import draft_smm_posts, render_smm_drafts
 
 
 @dataclass(frozen=True)
@@ -195,6 +196,22 @@ def _phantom_install(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_phantom_install(payload), data=payload)
 
 
+def _smm_draft(settings: BemineSettings, args: Mapping) -> CommandResult:
+    topic = str(args.get("topic") or "").strip()
+    project = str(args.get("project") or "").strip()
+    limit = int(args.get("limit") or 0)
+    write = bool(args.get("write"))
+    payload = draft_smm_posts(
+        settings,
+        topic=topic,
+        project=project,
+        limit=limit,
+        write=write,
+        project_root=None,
+    )
+    return CommandResult(text=render_smm_drafts(payload), data=payload.to_dict())
+
+
 def _capabilities(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.capabilities import build_capability_manifest, render_capability_manifest
 
@@ -281,6 +298,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- backlog config: default_owner={backlog_default_owner} owners={', '.join(backlog_owners) or 'none'}",
         "- config: `config show` / `what config is set?`",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
+        "- social posts ask: `what should I post?` / `what should SMM post?` / `draft a post`",
         f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM|style` / `/subagents list` / `/subagents show`)",
         "- style convention: `subagents show style` / `what is the style convention?` / `what style should SMM follow?`",
         f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom build` / `phantom install` / `/phantom status` / `/phantom build` / `/phantom install`)",
@@ -437,6 +455,7 @@ _SPECS = (
     CommandSpec("phantom.status", "Inspect Phantom Android app readiness", _phantom_status),
     CommandSpec("phantom.build", "Build the Phantom Android APK", _phantom_build),
     CommandSpec("phantom.install", "Install the Phantom APK on the phone", _phantom_install),
+    CommandSpec("smm.draft", "Draft Ampixa-style social posts", _smm_draft),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),
 )

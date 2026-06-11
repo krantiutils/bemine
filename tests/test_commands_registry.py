@@ -21,6 +21,7 @@ def test_registry_lists_deterministic_ops():
         "phantom.status",
         "phantom.build",
         "phantom.install",
+        "smm.draft",
         "usage",
         "capabilities",
         "continuity",
@@ -183,6 +184,7 @@ context_limit = 1000
     assert "phantom.android_home=/home/cdjk/Android/Sdk" in out.text
     assert "config: `config show` / `what config is set?`" in out.text
     assert "social posts:" in out.text
+    assert "social posts ask:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "style convention:" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text

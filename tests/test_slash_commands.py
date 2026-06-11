@@ -18,6 +18,7 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     health = slash_command_text(settings, "health", {})
     goals = slash_command_text(settings, "goals", {})
     config = slash_command_text(settings, "config", {})
+    smm = slash_command_text(settings, "smm", {})
     subagents = slash_command_text(settings, "subagents.list", {})
     phantom = slash_command_text(settings, "phantom.status", {})
     phantom_build = slash_command_text(settings, "phantom.build", {})
@@ -30,6 +31,7 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     assert "goal sessions" in goals.lower()
     assert "[identity]" in config
     assert "device_id = \"cdjk\"" in config
+    assert "SMM draft" in smm or "drafts" in smm.lower()
     assert "Subagent profiles:" in subagents or "No subagent profiles configured." in subagents
     assert "Phantom" in phantom
     assert "Phantom" in phantom_build

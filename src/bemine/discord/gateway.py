@@ -71,6 +71,7 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "rundown": "rundown",
     "jobs": "jobs.list",
     "config": "config.show",
+    "smm": "smm.draft",
     "subagents": "subagents.list",
     "phantom": "phantom.status",
     "health": "health",
@@ -903,6 +904,14 @@ class MayorDiscordGateway:
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
+        smm_args = _direct_smm_command(normalized_lower)
+        if smm_args is not None:
+            command_name = smm_args.pop("command", "smm.draft")
+            text = await asyncio.to_thread(
+                lambda: run_command(command_name, BemineSettings.load(), smm_args).text
+            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
+            return
         phantom_args = _direct_phantom_command(normalized_lower)
         if phantom_args is not None:
             command_name = phantom_args.pop("command", "phantom.status")
@@ -1303,6 +1312,29 @@ def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
         "what style should i follow",
     }:
         return {"command": "subagents.show", "name": "style"}
+    return None
+
+
+def _direct_smm_command(normalized_lower: str) -> dict[str, str] | None:
+    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip().lower())
+    variants = {
+        text,
+        text.removeprefix("!mayor ").removeprefix("mayor "),
+        text.removeprefix("!bemine ").removeprefix("bemine "),
+    }
+    if variants & {
+        "smm",
+        "smm draft",
+        "draft a post",
+        "draft post",
+        "what should i post",
+        "what should i post about",
+        "what should smm post",
+        "what should smm post about",
+        "give me a post idea",
+        "post ideas",
+    }:
+        return {"command": "smm.draft"}
     return None
 
 
