@@ -4,7 +4,7 @@ from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.deploy.heartbeat import write_heartbeat
 from bemine.deploy.state import DeployState, state_path
-from bemine.health import collect_health, render_health
+from bemine.health import collect_health, render_continuity, render_health
 from bemine.jobs.systemd import UnitStatus
 
 
@@ -115,10 +115,17 @@ def test_health_reports_continuity_restartable_missing_worker(tmp_path, monkeypa
 
     assert payload["ok"] is False
     assert payload["continuity"]["applies_to_device"] is True
+    assert payload["continuity"]["mode"] == "startup/poll recovery, not a shutdown hook"
+    assert "Bemine-managed local tmux workers" in payload["continuity"]["covers"]
+    assert "adopted/manual tmux sessions" in payload["continuity"]["excludes"]
     assert payload["continuity"]["restartable_missing"] == 1
     assert payload["continuity"]["missing_workers"][0]["name"] == "goal-restart"
     assert any("continuity has 1 restartable missing worker" in issue for issue in payload["issues"])
     assert "Continuity:" in render_health(payload)
+    rendered = render_continuity(payload)
+    assert "Mode: startup/poll recovery, not a shutdown hook" in rendered
+    assert "Covers: Bemine-managed local tmux workers with restartable commands" in rendered
+    assert "Excludes: adopted/manual tmux sessions, remote device sessions, arbitrary terminals" in rendered
 
 
 def test_health_summarizes_recent_recovery_events(tmp_path):
