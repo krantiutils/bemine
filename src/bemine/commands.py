@@ -279,7 +279,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     ]
     summary_lines = [
         "Bemine help:",
-        "- ask: help, status, health, continuity, goal, watch, jobs, routes, dispatch, pa, smm, subagents, phantom, backlog, capabilities, audit, config, what are you, what is Bemine?",
+        "- ask: help, status, health, continuity, goal, watch, jobs, routes, dispatch, pa, smm, subagents, phantom, backlog, capabilities, audit, config, what are you, what is Bemine?, what is this for?",
         "Configured surfaces:",
         f"- device: `{settings.device_id}`",
         f"- state: `{settings.state_dir}`",

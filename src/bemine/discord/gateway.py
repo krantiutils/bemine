@@ -1415,6 +1415,7 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "what are you",
         "what is bemine",
         "what is this",
+        "what is this for",
         "list commands",
         "commands",
     }:
