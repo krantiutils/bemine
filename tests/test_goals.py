@@ -572,6 +572,74 @@ def test_resume_nudge_answers_kimi_upgrade_prompt_with_skip(tmp_path: Path) -> N
     assert any("continue" in text.lower() for text in sent)
 
 
+def test_worker_start_resolves_runtime_binary_for_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from bemine.workers import workers as workers_mod
+
+    monkeypatch.setattr(
+        workers_mod, "_resolve_runtime_bin", lambda runtime_key: f"/abs/{runtime_key}"
+    )
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    record = controller.start(name="goal-path", runtime="claude", cwd=project)
+
+    started = tmux.started_commands["goal-path"]
+    # the daemon's systemd PATH lacks ~/.local/bin etc.; post-reboot the first
+    # tmux server inherits it, so bare CLI names would die "command not found"
+    assert "exec /abs/claude --dangerously-skip-permissions" in started
+    row = db.get_managed_session("goal-path")
+    assert row is not None
+    assert row["command"] == "claude --dangerously-skip-permissions"
+    assert record.runtime_session_id in started
+
+
+def test_resume_resolves_runtime_binary_for_launch(tmp_path: Path, monkeypatch) -> None:
+    from bemine.workers import workers as workers_mod
+
+    monkeypatch.setattr(
+        workers_mod, "_resolve_runtime_bin", lambda runtime_key: f"/abs/{runtime_key}"
+    )
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="kimi", command="kimi")
+    db.set_worker_runtime_session("goal-resume", "70fa9938-8d44-49d6-8a4d-61b2e3307b20")
+    tmux = FakeTmux()
+
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
+
+    started = tmux.started_commands["goal-resume"]
+    assert "exec /abs/kimi --session 70fa9938-8d44-49d6-8a4d-61b2e3307b20" in started
+
+
+def test_launchable_command_leaves_custom_and_absolute_commands(tmp_path) -> None:
+    from bemine.workers.workers import _launchable_command
+
+    assert _launchable_command("kimi", "cat") == "cat"
+    assert _launchable_command("claude", "/x/claude --flag") == "/x/claude --flag"
+
+
 def test_worker_start_does_not_pin_custom_commands(tmp_path: Path) -> None:
     project = tmp_path / "repo"
     project.mkdir()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import time
 import uuid
@@ -11,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Protocol
 
-from ..config import BemineSettings
+from ..config import BemineSettings, config_string
 from ..db import BemineDB
 from .tmux_adapter import TmuxAdapter
 from ..util import project_id_from_cwd
@@ -195,6 +196,7 @@ class WorkerController:
         if self.tmux.exists(name):
             raise WorkerError(f"tmux session already exists: {name}")
         launch_command, runtime_session_id = _pin_runtime_session(runtime, command)
+        launch_command = _launchable_command(runtime, launch_command)
         self.tmux.start(name, _command_in_cwd(cwd, launch_command))
         return self._record(
             name=name,
@@ -560,6 +562,42 @@ def _command_binary(command: str) -> str:
     return Path(parts[0]).name if parts else ""
 
 
+# install dirs the systemd user PATH typically lacks
+RUNTIME_BIN_PROBE_DIRS = (".local/bin", ".npm-global/bin", "bin")
+
+
+def _resolve_runtime_bin(runtime_key: str) -> str:
+    configured = config_string(runtime_key, "bin", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_file():
+            return str(path)
+    found = shutil.which(runtime_key)
+    if found:
+        return found
+    for rel in RUNTIME_BIN_PROBE_DIRS:
+        candidate = Path.home() / rel / runtime_key
+        if candidate.is_file():
+            return str(candidate)
+    return runtime_key
+
+
+def _launchable_command(runtime_key: str, command: str) -> str:
+    """Swap a bare runtime CLI name for its absolute path at launch time.
+
+    The daemon runs under systemd with a minimal PATH; after a reboot it is
+    the first thing to start the tmux server, which then inherits that PATH —
+    a bare `claude`/`codex`/`kimi` dies with "command not found". The DB keeps
+    the bare command; resolution happens fresh on every launch."""
+    parts = command.split()
+    if not parts or parts[0] != runtime_key:
+        return command
+    resolved = _resolve_runtime_bin(runtime_key)
+    if resolved == runtime_key:
+        return command
+    return " ".join([resolved, *parts[1:]])
+
+
 def _pin_runtime_session(runtime: str, command: str) -> tuple[str, str]:
     """Pin a deterministic conversation id at launch where the CLI supports it.
 
@@ -817,6 +855,7 @@ def resume_missing_local_workers(
         session_id = resumed_session
         if not resumed_session:
             launch_command, session_id = _pin_runtime_session(runtime_key, command)
+        launch_command = _launchable_command(runtime_key, launch_command)
         tmux.start(record.name, _command_in_cwd(cwd.resolve(), launch_command))
         if resumed_session:
             _send_resume_nudge(tmux, record.name, sleep=nudge_sleep)
