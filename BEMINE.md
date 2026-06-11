@@ -143,7 +143,14 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   drilling down.
 - `uv run bemine systemd status` — daemon/gateway unit state plus heartbeat SHA.
 - `uv run bemine jobs list` — what runs when (session watcher every 2 min,
-  dream at 03:15, PA/SMM brief at 08:45, daily digest at 18:00 by default).
+  dream at 03:15, selftest at 04:30, PA/SMM brief at 08:45, daily digest at
+  18:00 by default).
+- The nightly `selftest` job runs IN the daemon: runtime preflights (installed +
+  authenticated per CLI), absolute-bin resolution (the post-reboot PATH trap),
+  recovery classification/reset-parsing, and a real tmux kill→resume continuity
+  loop. A failure marks the job failed, which surfaces as a health issue. Run it
+  now: `uv run bemine jobs run selftest`. Health also shows a `Runtimes:` line —
+  `kimi*=UNUSABLE` means the goal-default runtime is broken (e.g. needs /login).
 - Run one now: `job_run` native tool or `uv run bemine jobs run <job_id>`. Job configs
   live in SQLite (`jobs` table); `channel_id` in a job's config overrides where its
   output is posted.

@@ -23,9 +23,19 @@ def test_health_ok_when_services_heartbeats_and_jobs_are_clean(tmp_path):
         settings,
         db=db,
         unit_statuses=[
-            UnitStatus("bemine-daemon.service", "loaded", "active", "running", "enabled", 111),
-            UnitStatus("mayor-discord-gateway.service", "loaded", "active", "running", "enabled", 222),
+            UnitStatus(
+                "bemine-daemon.service", "loaded", "active", "running", "enabled", 111
+            ),
+            UnitStatus(
+                "mayor-discord-gateway.service",
+                "loaded",
+                "active",
+                "running",
+                "enabled",
+                222,
+            ),
         ],
+        runtime_rows=[],
         now=123.0,
     )
 
@@ -63,8 +73,17 @@ def test_health_reports_service_and_job_issues(tmp_path):
         settings,
         db=db,
         unit_statuses=[
-            UnitStatus("bemine-daemon.service", "loaded", "active", "running", "enabled", 111),
-            UnitStatus("mayor-discord-gateway.service", "loaded", "failed", "failed", "enabled", 0),
+            UnitStatus(
+                "bemine-daemon.service", "loaded", "active", "running", "enabled", 111
+            ),
+            UnitStatus(
+                "mayor-discord-gateway.service",
+                "loaded",
+                "failed",
+                "failed",
+                "enabled",
+                0,
+            ),
         ],
     )
 
@@ -108,8 +127,17 @@ def test_health_reports_continuity_restartable_missing_worker(tmp_path, monkeypa
         settings,
         db=db,
         unit_statuses=[
-            UnitStatus("bemine-daemon.service", "loaded", "active", "running", "enabled", 111),
-            UnitStatus("mayor-discord-gateway.service", "loaded", "active", "running", "enabled", 222),
+            UnitStatus(
+                "bemine-daemon.service", "loaded", "active", "running", "enabled", 111
+            ),
+            UnitStatus(
+                "mayor-discord-gateway.service",
+                "loaded",
+                "active",
+                "running",
+                "enabled",
+                222,
+            ),
         ],
     )
 
@@ -120,12 +148,21 @@ def test_health_reports_continuity_restartable_missing_worker(tmp_path, monkeypa
     assert "adopted/manual tmux sessions" in payload["continuity"]["excludes"]
     assert payload["continuity"]["restartable_missing"] == 1
     assert payload["continuity"]["missing_workers"][0]["name"] == "goal-restart"
-    assert any("continuity has 1 restartable missing worker" in issue for issue in payload["issues"])
+    assert any(
+        "continuity has 1 restartable missing worker" in issue
+        for issue in payload["issues"]
+    )
     assert "Continuity:" in render_health(payload)
     rendered = render_continuity(payload)
     assert "Mode: startup/poll recovery, not a shutdown hook" in rendered
-    assert "Covers: Bemine-managed local tmux workers with restartable commands" in rendered
-    assert "Excludes: adopted/manual tmux sessions, remote device sessions, arbitrary terminals" in rendered
+    assert (
+        "Covers: Bemine-managed local tmux workers with restartable commands"
+        in rendered
+    )
+    assert (
+        "Excludes: adopted/manual tmux sessions, remote device sessions, arbitrary terminals"
+        in rendered
+    )
 
 
 def test_health_summarizes_recent_recovery_events(tmp_path):
@@ -160,8 +197,17 @@ def test_health_summarizes_recent_recovery_events(tmp_path):
         settings,
         db=db,
         unit_statuses=[
-            UnitStatus("bemine-daemon.service", "loaded", "active", "running", "enabled", 111),
-            UnitStatus("mayor-discord-gateway.service", "loaded", "active", "running", "enabled", 222),
+            UnitStatus(
+                "bemine-daemon.service", "loaded", "active", "running", "enabled", 111
+            ),
+            UnitStatus(
+                "mayor-discord-gateway.service",
+                "loaded",
+                "active",
+                "running",
+                "enabled",
+                222,
+            ),
         ],
     )
 
@@ -169,4 +215,7 @@ def test_health_summarizes_recent_recovery_events(tmp_path):
     assert payload["recovery"]["escalations"] == 1
     assert payload["recovery"]["limit_waits"] == 1
     assert payload["recovery"]["recovered"] == 1
-    assert "Recovery: recent=3 escalations=1 limit_waits=1 recovered=1" in render_health(payload)
+    assert (
+        "Recovery: recent=3 escalations=1 limit_waits=1 recovered=1"
+        in render_health(payload)
+    )
