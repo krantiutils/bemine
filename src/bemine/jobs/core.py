@@ -459,6 +459,12 @@ class BemineDaemon:
                 link_worker_runtime_sessions(self.settings)
             except Exception:
                 pass
+            try:
+                from bemine.jobs.failover import tick_device_failover
+
+                tick_device_failover(self.settings)
+            except Exception:
+                pass
             resumed = resume_missing_local_workers(self.settings) or []
             if not resumed:
                 return
