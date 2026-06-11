@@ -1575,6 +1575,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delete project-category channels that are no longer tracked.",
     )
     sync_channels.add_argument(
+        "--archive-stale",
+        action="store_true",
+        help="Move untracked project channels to the Bemine Archive category "
+        "(history preserved; ignored when --prune is set).",
+    )
+    sync_channels.add_argument(
         "--dry-run",
         action="store_true",
         help="Plan desired/create/prune project channels from local cache without Discord mutation.",
@@ -2539,6 +2545,7 @@ def main(argv: list[str] | None = None) -> None:
                     settings,
                     limit=args.limit,
                     prune=args.prune,
+                    archive_stale=args.archive_stale,
                 )
                 print(json.dumps(result, indent=2, sort_keys=True))
                 return
@@ -2557,6 +2564,7 @@ def main(argv: list[str] | None = None) -> None:
                     guild_id,
                     limit=args.limit,
                     prune=args.prune,
+                    archive_stale=args.archive_stale,
                 )
             )
             print(json.dumps(result, indent=2, sort_keys=True))
