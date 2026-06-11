@@ -260,6 +260,19 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_backlog_command("show backlog") == {"owner": "SMM"}
     assert gw._direct_backlog_command("what's in my backlog?") == {"owner": "SMM"}
     assert gw._direct_backlog_command("what's in PA backlog?") == {"owner": "PA"}
+    assert gw._direct_backlog_command("backlog status") == {"command": "backlog.status"}
+    assert gw._direct_backlog_command("backlog health") == {"command": "backlog.status"}
+    assert gw._direct_backlog_command("how many backlog items?") == {
+        "command": "backlog.status"
+    }
+    assert gw._direct_backlog_command("how many PA backlog items?") == {
+        "command": "backlog.status",
+        "owner": "PA",
+    }
+    assert gw._direct_backlog_command("how many SMM backlog items?") == {
+        "command": "backlog.status",
+        "owner": "SMM",
+    }
     assert gw._direct_observability_command('goal rai: "train"') == ""
 
 
