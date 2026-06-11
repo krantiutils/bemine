@@ -141,9 +141,11 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("what backlog owners are configured?") == "config.show"
     assert gw._direct_observability_command("what is the default backlog owner?") == "config.show"
     assert gw._direct_subagents_command("subagents") == {"command": "subagents.list"}
+    assert gw._direct_subagents_command("show subagents") == {"command": "subagents.list"}
     assert gw._direct_subagents_command("what subagents are configured?") == {"command": "subagents.list"}
     assert gw._direct_subagents_command("show PA subagent") == {"command": "subagents.show", "name": "PA"}
     assert gw._direct_phantom_command("phantom") == {"command": "phantom.status"}
+    assert gw._direct_phantom_command("show phantom") == {"command": "phantom.status"}
     assert gw._direct_phantom_command("phantom status") == {"command": "phantom.status"}
     assert gw._direct_phantom_command("phantom install") == {"command": "phantom.install"}
     assert gw._direct_observability_command("what jobs are scheduled?") == "jobs.list"

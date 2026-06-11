@@ -1270,6 +1270,7 @@ def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
         "subagents list",
         "list subagents",
         "show subagents",
+        "show subagent profiles",
         "what subagents are configured",
         "what subagents do you have",
         "what subagent profiles are loaded",
@@ -1312,7 +1313,10 @@ def _direct_phantom_command(normalized_lower: str) -> dict[str, str] | None:
     if variants & {
         "phantom",
         "phantom status",
+        "show phantom",
         "phone status",
+        "what phantom is configured",
+        "what phantom status is",
         "what is phantom status",
         "what is phantom install state",
     }:
