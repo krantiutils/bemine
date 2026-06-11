@@ -1446,6 +1446,8 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "focus plan",
         "what should i focus on",
         "what should i focus on today",
+        "what should i do next",
+        "what should i focus on tomorrow",
     }:
         return "pa.plan"
     if variants & {"goals", "goal status", "goals status"}:
