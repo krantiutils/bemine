@@ -412,3 +412,110 @@ def test_parse_reset_epoch_handles_current_cli_phrasings(tmp_path):
     reset = _parse_reset_epoch("try again at 3:47am", now)
     assert reset is not None
     assert (_t.localtime(reset).tm_hour, _t.localtime(reset).tm_min) == (3, 47)
+
+
+def _attended_pane(*, activity, command="claude"):
+    pane = _pane(activity=activity, command=command)
+    pane["attached"] = 1
+    return pane
+
+
+def test_attended_active_pane_defers_trivial_confirm(tmp_path):
+    s = _settings(tmp_path)
+    tmux = _Tmux(["Do you want to proceed? (y/n)"])
+    clock, esc, aud = _clock(), [], []
+    now = 2000.0
+    deps = _deps(
+        [_attended_pane(activity=int(now) - 30)],
+        tmux,
+        clock=clock,
+        escalations=esc,
+        audits=aud,
+    )
+    tick_recovery(s, deps, now=now)
+    # someone is at the keyboard: do not type into their session
+    assert tmux.sent_text == [] and tmux.sent_keys == []
+
+
+def test_attended_idle_pane_still_gets_trivial_confirm(tmp_path):
+    s = _settings(tmp_path)
+    tmux = _Tmux(["Do you want to proceed? (y/n)"])
+    clock, esc, aud = _clock(), [], []
+    now = 2000.0
+    deps = _deps(
+        [_attended_pane(activity=int(now) - 900)],
+        tmux,
+        clock=clock,
+        escalations=esc,
+        audits=aud,
+    )
+    tick_recovery(s, deps, now=now)
+    assert tmux.sent_text == ["yes"]
+
+
+def test_attended_active_pane_defers_rate_limit_resend(tmp_path):
+    s = _settings(tmp_path)
+    tmux = _Tmux(["Rate limited"])
+    clock, esc, aud = _clock(), [], []
+    now = 2000.0
+    deps = _deps(
+        [_attended_pane(activity=int(now) - 30)],
+        tmux,
+        clock=clock,
+        escalations=esc,
+        audits=aud,
+    )
+    tick_recovery(s, deps, now=now)
+    assert tmux.sent_keys == []
+    # but once the pane goes idle (user stepped away), the resend happens
+    deps2 = _deps(
+        [_attended_pane(activity=int(now) - 900)],
+        tmux,
+        clock=clock,
+        escalations=esc,
+        audits=aud,
+    )
+    tick_recovery(s, deps2, now=now + 400)
+    assert tmux.sent_keys == [["Up", "Enter"]]
+
+
+def test_attended_active_pane_defers_limit_continue_but_still_schedules_wait(tmp_path):
+    import time as _t
+
+    s = _settings(tmp_path)
+    tmux = _Tmux(["You've hit your usage limit. Try again at 3:47am."])
+    clock, esc, aud = _clock(), [], []
+    now1 = _t.mktime((2026, 6, 12, 1, 0, 0, 0, 0, -1))
+    deps = _deps(
+        [_attended_pane(activity=int(now1) - 30, command="codex-aarch64-a")],
+        tmux,
+        clock=clock,
+        escalations=esc,
+        audits=aud,
+    )
+    tick_recovery(s, deps, now=now1)
+    # scheduling the wait is keystroke-free and must still happen
+    assert ("limit_wait", "usage_limit") in aud
+    assert tmux.sent_text == []
+    # past reset but user is typing -> defer the continue
+    now2 = _t.mktime((2026, 6, 12, 3, 50, 0, 0, 0, -1))
+    deps2 = _deps(
+        [_attended_pane(activity=int(now2) - 30, command="codex-aarch64-a")],
+        tmux,
+        clock=clock,
+        escalations=esc,
+        audits=aud,
+    )
+    tick_recovery(s, deps2, now=now2)
+    assert tmux.sent_text == []
+    # user gone (idle past grace) -> continue goes out
+    now3 = now2 + 600
+    deps3 = _deps(
+        [_attended_pane(activity=int(now2) - 30, command="codex-aarch64-a")],
+        tmux,
+        clock=clock,
+        escalations=esc,
+        audits=aud,
+    )
+    tick_recovery(s, deps3, now=now3)
+    assert tmux.sent_text == ["continue"]
