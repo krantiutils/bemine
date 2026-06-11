@@ -184,6 +184,7 @@ context_limit = 1000
     assert "config: `config show` / `what config is set?`" in out.text
     assert "social posts:" in out.text
     assert "subagents: PA, SMM, style" in out.text
+    assert "style convention:" in out.text
     assert "phantom: project_root=/tmp/phantom" in out.text
     assert "phantom status" in out.text
     assert "phantom build" in out.text
