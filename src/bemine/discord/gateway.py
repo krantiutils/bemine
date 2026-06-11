@@ -1329,8 +1329,12 @@ def _direct_smm_command(normalized_lower: str) -> dict[str, str] | None:
         "draft post",
         "what should i post",
         "what should i post about",
+        "what should i post today",
+        "what can i post",
+        "what can i post today",
         "what should smm post",
         "what should smm post about",
+        "what should smm post today",
         "give me a post idea",
         "post ideas",
     }:
