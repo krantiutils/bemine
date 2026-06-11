@@ -7,13 +7,17 @@ from bemine.discord.gateway import register_slash_commands, slash_command_text
 
 
 def test_slash_command_calls_registry(tmp_path):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
     text = slash_command_text(settings, "jobs", {})
     assert isinstance(text, str) and text  # came from commands.run_command, no LLM
 
 
 def test_slash_health_and_goals_are_deterministic(tmp_path):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
 
     health = slash_command_text(settings, "health", {})
     goals = slash_command_text(settings, "goals", {})
@@ -26,23 +30,32 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     continuity = slash_command_text(settings, "continuity", {})
     help_text = slash_command_text(settings, "help", {})
     routes = slash_command_text(settings, "routes", {})
+    grouped_routes = slash_command_text(settings, "discord.routes", {})
+    sync_plan = slash_command_text(settings, "discord.sync-plan", {})
 
     assert "Bemine health:" in health
     assert "goal sessions" in goals.lower()
     assert "[identity]" in config
-    assert "device_id = \"cdjk\"" in config
+    assert 'device_id = "cdjk"' in config
     assert "SMM draft" in smm or "drafts" in smm.lower()
-    assert "Subagent profiles:" in subagents or "No subagent profiles configured." in subagents
+    assert (
+        "Subagent profiles:" in subagents
+        or "No subagent profiles configured." in subagents
+    )
     assert "Phantom" in phantom
     assert "Phantom" in phantom_build
     assert "backlog" in backlog.lower()
     assert "Bemine continuity:" in continuity
     assert "Bemine help:" in help_text
     assert "Discord route management:" in routes
+    assert "Discord route management:" in grouped_routes
+    assert "Discord channel sync plan:" in sync_plan
 
 
 def test_slash_backlog_can_filter_by_owner(tmp_path, monkeypatch):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
     calls = {}
 
     def fake_list_backlog_items(settings_arg, *, owner, limit):
@@ -55,7 +68,9 @@ def test_slash_backlog_can_filter_by_owner(tmp_path, monkeypatch):
         return f"{owner} backlog:\n" + "\n".join(items) + "\n"
 
     monkeypatch.setattr("bemine.commands.list_backlog_items", fake_list_backlog_items)
-    monkeypatch.setattr("bemine.commands.render_backlog_items", fake_render_backlog_items)
+    monkeypatch.setattr(
+        "bemine.commands.render_backlog_items", fake_render_backlog_items
+    )
 
     text = slash_command_text(settings, "backlog", {"owner": "PA", "limit": 1})
 
@@ -67,7 +82,9 @@ def test_slash_backlog_can_filter_by_owner(tmp_path, monkeypatch):
 
 
 def test_slash_pa_plan_is_deterministic(tmp_path, monkeypatch):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
     monkeypatch.setattr("bemine.pa.collect_fleet_status", lambda *a, **k: ([], []))
 
     text = slash_command_text(settings, "pa", {})
@@ -76,7 +93,9 @@ def test_slash_pa_plan_is_deterministic(tmp_path, monkeypatch):
 
 
 def test_slash_dream_and_brief_are_deterministic(tmp_path, monkeypatch):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
     monkeypatch.setattr("bemine.briefs.collect_fleet_status", lambda *a, **k: ([], []))
     monkeypatch.setattr("bemine.briefs.detect_tool_capabilities", lambda: {})
 
@@ -101,7 +120,9 @@ backend = "native"
         encoding="utf-8",
     )
     monkeypatch.setenv("BEMINE_CONFIG", str(config))
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
 
     text = slash_command_text(settings, "dispatch", {})
 
@@ -111,7 +132,9 @@ backend = "native"
 
 
 def test_slash_goal_starts_goal_session(tmp_path, monkeypatch):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
 
     class FakeWorker:
         name = "goal-rai"
@@ -141,31 +164,42 @@ def test_slash_goal_starts_goal_session(tmp_path, monkeypatch):
     monkeypatch.setattr("bemine.goals.start_goal", lambda *a, **k: FakeResult())
     monkeypatch.setattr(
         "bemine.goals.render_goal_start",
-        lambda result: "Goal session started:\n- worker: `goal-rai` [shell] device=testbox `/tmp/repo`\n",
+        lambda result: (
+            "Goal session started:\n- worker: `goal-rai` [shell] device=testbox `/tmp/repo`\n"
+        ),
     )
 
-    text = slash_command_text(settings, "goal", {"project": "rai", "brief": "train checkpoint"})
+    text = slash_command_text(
+        settings, "goal", {"project": "rai", "brief": "train checkpoint"}
+    )
 
     assert "Goal session started:" in text
     assert "goal-rai" in text
 
 
 def test_register_slash_commands_exposes_grouped_surfaces(tmp_path):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
 
     register_slash_commands(bot.tree, settings_loader=lambda: settings)
 
     subagents = bot.tree.get_command("subagents")
     phantom = bot.tree.get_command("phantom")
+    discord_group = bot.tree.get_command("discord")
 
     assert subagents is not None
     assert phantom is not None
+    assert discord_group is not None
     assert [cmd.name for cmd in subagents.commands] == ["list", "show"]
     assert [cmd.name for cmd in phantom.commands] == ["status", "build", "install"]
+    assert [cmd.name for cmd in discord_group.commands] == ["routes", "sync-plan"]
 
 
 def test_slash_unknown_command(tmp_path):
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
     text = slash_command_text(settings, "nope", {})
     assert "Unknown" in text

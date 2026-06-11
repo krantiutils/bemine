@@ -110,6 +110,10 @@ def slash_command_text(settings: BemineSettings, slash_name: str, args: dict) ->
         command = "goal.start"
     elif slash_name == "backlog":
         command = "backlog.list"
+    elif slash_name == "discord.routes":
+        command = "discord.routes"
+    elif slash_name in {"discord.sync-plan", "discord.sync_plan"}:
+        command = "discord.sync_plan"
     else:
         command = _SLASH_TO_COMMAND.get(slash_name)
     if not command:
@@ -327,6 +331,37 @@ def register_slash_commands(
         )
 
     tree.add_command(phantom_group)
+
+    discord_group = discord.app_commands.Group(
+        name="discord",
+        description="Bemine: inspect Discord project routing",
+    )
+
+    @discord_group.command(name="routes", description="Inspect project channel routes")
+    async def discord_routes(
+        interaction: discord.Interaction,
+        query: str = "",
+        limit: int = 50,
+    ) -> None:
+        await _send_slash_result(
+            interaction,
+            command_name="discord.routes",
+            args={"query": query, "limit": limit},
+        )
+
+    @discord_group.command(name="sync-plan", description="Dry-run project channel sync")
+    async def discord_sync_plan(
+        interaction: discord.Interaction,
+        limit: int = 200,
+        prune: bool = False,
+    ) -> None:
+        await _send_slash_result(
+            interaction,
+            command_name="discord.sync_plan",
+            args={"limit": limit, "prune": prune},
+        )
+
+    tree.add_command(discord_group)
 
 
 class DiscordResponder:
