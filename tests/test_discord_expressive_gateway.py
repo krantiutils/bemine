@@ -131,49 +131,121 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("what can you do?") == "help"
     assert gw._direct_observability_command("discord routes") == "discord.routes"
     assert gw._direct_observability_command("discord sync plan") == "discord.sync_plan"
-    assert gw._direct_observability_command("what channels would be created?") == "discord.sync_plan"
+    assert (
+        gw._direct_observability_command("what channels would be created?")
+        == "discord.sync_plan"
+    )
     assert gw._direct_observability_command("line cuts") == "continuity"
-    assert gw._direct_observability_command("wake sessions after reboot?") == "continuity"
-    assert gw._direct_observability_command("will sessions resume after shutdown?") == "continuity"
-    assert gw._direct_observability_command("mayor dispatch status") == "dispatch.status"
-    assert gw._direct_observability_command("what model are we using?") == "dispatch.status"
-    assert gw._direct_observability_command("what should I focus on today?".lower()) == "pa.plan"
-    assert gw._direct_observability_command("what should I focus on this week?") == "pa.plan"
+    assert (
+        gw._direct_observability_command("wake sessions after reboot?") == "continuity"
+    )
+    assert (
+        gw._direct_observability_command("will sessions resume after shutdown?")
+        == "continuity"
+    )
+    assert (
+        gw._direct_observability_command("mayor dispatch status") == "dispatch.status"
+    )
+    assert (
+        gw._direct_observability_command("what model are we using?")
+        == "dispatch.status"
+    )
+    assert (
+        gw._direct_observability_command("what should I focus on today?".lower())
+        == "pa.plan"
+    )
+    assert (
+        gw._direct_observability_command("what should I focus on this week?")
+        == "pa.plan"
+    )
     assert gw._direct_observability_command("what should I do next?") == "pa.plan"
-    assert gw._direct_observability_command("what should I focus on tomorrow?") == "pa.plan"
+    assert (
+        gw._direct_observability_command("what should I focus on tomorrow?")
+        == "pa.plan"
+    )
+    assert gw._direct_observability_command("dream status") == "dream.status"
+    assert (
+        gw._direct_observability_command("when did you last dream?") == "dream.status"
+    )
     assert gw._direct_observability_command("dream now") == "dream.run"
     assert gw._direct_observability_command("learn from recent history") == "dream.run"
+    assert gw._direct_observability_command("brief status") == "brief.status"
+    assert (
+        gw._direct_observability_command("when was the last PA/SMM brief?")
+        == "brief.status"
+    )
     assert gw._direct_observability_command("generate PA/SMM brief") == "brief.run"
     assert gw._direct_observability_command("what are you?") == "help"
     assert gw._direct_observability_command("what is Bemine?") == "help"
     assert gw._direct_observability_command("what is this for?") == "help"
     assert gw._direct_observability_command("what is this bot for?") == "help"
     assert gw._direct_observability_command("goals") == "goals.list"
-    assert gw._direct_observability_command("what goal sessions are active?") == "goals.list"
+    assert (
+        gw._direct_observability_command("what goal sessions are active?")
+        == "goals.list"
+    )
     assert gw._direct_observability_command("what config is set?") == "config.show"
     assert gw._direct_observability_command("what's my config?") == "config.show"
-    assert gw._direct_observability_command("what backlog owners are configured?") == "config.show"
-    assert gw._direct_observability_command("what is the default backlog owner?") == "config.show"
+    assert (
+        gw._direct_observability_command("what backlog owners are configured?")
+        == "config.show"
+    )
+    assert (
+        gw._direct_observability_command("what is the default backlog owner?")
+        == "config.show"
+    )
     assert gw._direct_subagents_command("subagents") == {"command": "subagents.list"}
-    assert gw._direct_subagents_command("show subagents") == {"command": "subagents.list"}
-    assert gw._direct_subagents_command("what subagents are configured?") == {"command": "subagents.list"}
-    assert gw._direct_subagents_command("show PA subagent") == {"command": "subagents.show", "name": "PA"}
-    assert gw._direct_subagents_command("what is PA?") == {"command": "subagents.show", "name": "PA"}
-    assert gw._direct_subagents_command("what does PA do?") == {"command": "subagents.show", "name": "PA"}
-    assert gw._direct_subagents_command("show SMM") == {"command": "subagents.show", "name": "SMM"}
-    assert gw._direct_subagents_command("what does SMM do?") == {"command": "subagents.show", "name": "SMM"}
-    assert gw._direct_subagents_command("what is the style convention?") == {"command": "subagents.show", "name": "style"}
+    assert gw._direct_subagents_command("show subagents") == {
+        "command": "subagents.list"
+    }
+    assert gw._direct_subagents_command("what subagents are configured?") == {
+        "command": "subagents.list"
+    }
+    assert gw._direct_subagents_command("show PA subagent") == {
+        "command": "subagents.show",
+        "name": "PA",
+    }
+    assert gw._direct_subagents_command("what is PA?") == {
+        "command": "subagents.show",
+        "name": "PA",
+    }
+    assert gw._direct_subagents_command("what does PA do?") == {
+        "command": "subagents.show",
+        "name": "PA",
+    }
+    assert gw._direct_subagents_command("show SMM") == {
+        "command": "subagents.show",
+        "name": "SMM",
+    }
+    assert gw._direct_subagents_command("what does SMM do?") == {
+        "command": "subagents.show",
+        "name": "SMM",
+    }
+    assert gw._direct_subagents_command("what is the style convention?") == {
+        "command": "subagents.show",
+        "name": "style",
+    }
     assert gw._direct_smm_command("what should I post?") == {"command": "smm.draft"}
-    assert gw._direct_smm_command("what should I post today?") == {"command": "smm.draft"}
-    assert gw._direct_smm_command("what should I post this week?") == {"command": "smm.draft"}
+    assert gw._direct_smm_command("what should I post today?") == {
+        "command": "smm.draft"
+    }
+    assert gw._direct_smm_command("what should I post this week?") == {
+        "command": "smm.draft"
+    }
     assert gw._direct_smm_command("show me post ideas") == {"command": "smm.draft"}
     assert gw._direct_smm_command("draft a post") == {"command": "smm.draft"}
     assert gw._direct_phantom_command("phantom") == {"command": "phantom.status"}
     assert gw._direct_phantom_command("show phantom") == {"command": "phantom.status"}
-    assert gw._direct_phantom_command("what is Phantom?") == {"command": "phantom.status"}
-    assert gw._direct_phantom_command("what does Phantom do?") == {"command": "phantom.status"}
+    assert gw._direct_phantom_command("what is Phantom?") == {
+        "command": "phantom.status"
+    }
+    assert gw._direct_phantom_command("what does Phantom do?") == {
+        "command": "phantom.status"
+    }
     assert gw._direct_phantom_command("phantom status") == {"command": "phantom.status"}
-    assert gw._direct_phantom_command("phantom install") == {"command": "phantom.install"}
+    assert gw._direct_phantom_command("phantom install") == {
+        "command": "phantom.install"
+    }
     assert gw._direct_observability_command("what jobs are scheduled?") == "jobs.list"
     assert gw._direct_observability_command("what cron jobs are set up?") == "jobs.list"
     assert gw._direct_backlog_command("show backlog") == {"owner": "SMM"}
@@ -183,7 +255,11 @@ def test_direct_observability_command_aliases() -> None:
 
 
 def test_discord_chunk_closes_and_reopens_markdown_fences() -> None:
-    text = "before\n```python\n" + "\n".join(f"print({index})" for index in range(20)) + "\n```\nafter"
+    text = (
+        "before\n```python\n"
+        + "\n".join(f"print({index})" for index in range(20))
+        + "\n```\nafter"
+    )
 
     chunks = _discord_chunk(text, limit=90)
 
@@ -360,8 +436,14 @@ def _make_gateway(tmp_path: Path):
 def test_novel_plain_message_routes_to_agent(tmp_path: Path, monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_run(settings, message, normalized, saved_attachments=None,
-                 progress_callback=None, cancel_event=None):
+    def fake_run(
+        settings,
+        message,
+        normalized,
+        saved_attachments=None,
+        progress_callback=None,
+        cancel_event=None,
+    ):
         seen["normalized"] = normalized
         seen["saved_attachments"] = saved_attachments
         return "AGENT REPLY"
@@ -381,7 +463,9 @@ def test_novel_plain_message_routes_to_agent(tmp_path: Path, monkeypatch) -> Non
     assert SUCCESS_REACTION in message.reactions
 
 
-def test_dispatch_status_plain_text_uses_local_command(tmp_path: Path, monkeypatch) -> None:
+def test_dispatch_status_plain_text_uses_local_command(
+    tmp_path: Path, monkeypatch
+) -> None:
     calls: list[str] = []
 
     def fake_run_command(name, settings, args):
@@ -452,7 +536,9 @@ def test_routes_plain_text_uses_local_command(tmp_path: Path, monkeypatch) -> No
 
     def fake_run_command(name, settings, args):
         calls.append(name)
-        return SimpleNamespace(text="Discord route management:\n- config_exists: True", data={})
+        return SimpleNamespace(
+            text="Discord route management:\n- config_exists: True", data={}
+        )
 
     def fail_run_agent(*args, **kwargs):
         raise AssertionError("routes should not start an agent")
@@ -469,7 +555,9 @@ def test_routes_plain_text_uses_local_command(tmp_path: Path, monkeypatch) -> No
     assert message.replies == ["Discord route management:\n- config_exists: True"]
 
 
-def test_dispatch_failure_finishes_progress_as_failed(tmp_path: Path, monkeypatch) -> None:
+def test_dispatch_failure_finishes_progress_as_failed(
+    tmp_path: Path, monkeypatch
+) -> None:
     notes: list[str | None] = []
 
     class FakeReporter:
@@ -482,8 +570,14 @@ def test_dispatch_failure_finishes_progress_as_failed(tmp_path: Path, monkeypatc
         async def finish(self, *, note: str | None = None) -> None:
             notes.append(note)
 
-    def fake_run(settings, message, normalized, saved_attachments=None,
-                 progress_callback=None, cancel_event=None):
+    def fake_run(
+        settings,
+        message,
+        normalized,
+        saved_attachments=None,
+        progress_callback=None,
+        cancel_event=None,
+    ):
         raise RuntimeError("boom sk-kimi-abcdefghijklmnopqrstuvwxyz")
 
     monkeypatch.setattr(gw, "_ProgressReporter", FakeReporter)
@@ -502,8 +596,9 @@ def test_dispatch_failure_finishes_progress_as_failed(tmp_path: Path, monkeypatc
 def test_empty_message_does_not_route_to_agent(tmp_path: Path, monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_run(settings, message, normalized, saved_attachments=None,
-                 progress_callback=None):
+    def fake_run(
+        settings, message, normalized, saved_attachments=None, progress_callback=None
+    ):
         seen["normalized"] = normalized
         return "SHOULD NOT HAPPEN"
 

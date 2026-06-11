@@ -18,7 +18,9 @@ def test_registry_lists_deterministic_ops():
         "backlog.list",
         "config.show",
         "dream.run",
+        "dream.status",
         "brief.run",
+        "brief.status",
         "subagents.list",
         "subagents.show",
         "phantom.status",
@@ -56,7 +58,7 @@ def test_run_command_continuity(tmp_path):
 
 def test_run_command_config_show(tmp_path, monkeypatch):
     config = tmp_path / "bemine.toml"
-    config.write_text("[backlog]\ndefault_owner = \"PA\"\n", encoding="utf-8")
+    config.write_text('[backlog]\ndefault_owner = "PA"\n', encoding="utf-8")
     monkeypatch.setenv("BEMINE_CONFIG", str(config))
     settings = _settings(tmp_path)
     out = run_command("config.show", settings, {})
@@ -95,7 +97,9 @@ def test_run_command_phantom_status_smoke(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     payload = {"ok": True, "status": "ready"}
     monkeypatch.setattr("bemine.commands.phantom_status", lambda **kwargs: payload)
-    monkeypatch.setattr("bemine.commands.render_phantom_status", lambda data: "phantom ok\n")
+    monkeypatch.setattr(
+        "bemine.commands.render_phantom_status", lambda data: "phantom ok\n"
+    )
 
     out = run_command("phantom.status", settings, {})
 
@@ -144,10 +148,13 @@ def test_run_command_dream_run_records_data_point(tmp_path):
     settings = _settings(tmp_path)
 
     out = run_command("dream.run", settings, {"limit": 5})
+    status = run_command("dream.status", settings, {})
 
     assert "Dream recorded:" in out.text
     assert out.data["path"].endswith("Dreams/dreams.jsonl")
     assert out.data["data"]["schema"] == "bemine.dream.v1"
+    assert "Dream status:" in status.text
+    assert status.data["entries"] == 1
 
 
 def test_run_command_brief_run_records_brief(tmp_path, monkeypatch):
@@ -156,10 +163,13 @@ def test_run_command_brief_run_records_brief(tmp_path, monkeypatch):
     monkeypatch.setattr("bemine.briefs.detect_tool_capabilities", lambda: {})
 
     out = run_command("brief.run", settings, {"limit": 5, "no_backlog": True})
+    status = run_command("brief.status", settings, {})
 
     assert "PA/SMM brief recorded:" in out.text
     assert out.data["path"].endswith("-pa-smm.md")
     assert out.data["backlog_entries"] == []
+    assert "PA/SMM brief status:" in status.text
+    assert status.data["count"] == 1
 
 
 def test_run_command_help_summarizes_configurable_surfaces(tmp_path, monkeypatch):
@@ -203,7 +213,9 @@ context_limit = 1000
     for name in ("PA.md", "SMM.md", "style.md"):
         (subagents / name).write_text(f"# {name}\n", encoding="utf-8")
     monkeypatch.setenv("BEMINE_CONFIG", str(config))
-    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
     BemineDB(settings.db_path).upsert_job(
         job_id="morning_plan",
         name="Morning plan",
@@ -229,13 +241,21 @@ context_limit = 1000
     assert "continuity:" in out.text
     assert "wake sessions after reboot?" in out.text
     assert "focus today:" in out.text
-    assert "dream: `dream run` / `dream now`" in out.text
-    assert "PA/SMM brief: `brief run` / `generate PA/SMM brief`" in out.text
+    assert "dream: `dream status` / `dream run`" in out.text
+    assert "when did you last dream?" in out.text
+    assert "PA/SMM brief: `brief status` / `brief run`" in out.text
+    assert "when was the last PA/SMM brief?" in out.text
     assert "watchers: active=0" in out.text
-    assert "backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`" in out.text
+    assert (
+        "backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`"
+        in out.text
+    )
     assert "backlog.default_owner=PA" in out.text
     assert "backlog.owners=PA, SMM" in out.text
-    assert "subagents.files=subagents/PA.md, subagents/SMM.md, subagents/style.md" in out.text
+    assert (
+        "subagents.files=subagents/PA.md, subagents/SMM.md, subagents/style.md"
+        in out.text
+    )
     assert "subagents.context_limit=1000" in out.text
     assert "phantom.application_id=dev.phantom.service" in out.text
     assert "phantom.accessibility_service=.PhantomAccessibilityService" in out.text
@@ -260,7 +280,10 @@ context_limit = 1000
     assert out.data["subagents_config"]["context_limit"] == 1000
     assert out.data["watchers"]["active"] == 0
     assert "phantom.project_root=/tmp/phantom" in out.data["config_knobs"]
-    assert "subagents.files=subagents/PA.md, subagents/SMM.md, subagents/style.md" in out.data["config_knobs"]
+    assert (
+        "subagents.files=subagents/PA.md, subagents/SMM.md, subagents/style.md"
+        in out.data["config_knobs"]
+    )
     assert "phantom.application_id=dev.phantom.service" in out.data["config_knobs"]
     assert any(job["job_id"] == "morning_plan" for job in out.data["jobs"])
 

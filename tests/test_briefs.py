@@ -4,7 +4,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bemine.briefs import build_brief_items, run_brief
+from bemine.briefs import (
+    brief_status,
+    build_brief_items,
+    render_brief_status,
+    run_brief,
+)
 from bemine.cli import main
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
@@ -45,13 +50,14 @@ def test_build_brief_items_finds_pa_smm_and_android_actions() -> None:
         inbound=[{"message_id": "m1", "content": "what should I focus on today?"}],
         outbound=[
             {"id": 1, "content": "Dispatch failed: maximum turns"},
-            {"id": 2, "content": "rai-speech-toolkit shipped the goal command and eval passed."},
+            {
+                "id": 2,
+                "content": "rai-speech-toolkit shipped the goal command and eval passed.",
+            },
         ],
         audits=[{"id": 9, "category": "recovery", "event_type": "llm_escalate"}],
         tools={
-            "adb": {
-                "devices": [{"serial": "RZCTC0M17SJ", "state": "unauthorized"}]
-            }
+            "adb": {"devices": [{"serial": "RZCTC0M17SJ", "state": "unauthorized"}]}
         },
     )
 
@@ -96,12 +102,12 @@ def test_run_brief_writes_vault_backlog_and_audit(tmp_path: Path) -> None:
             ),
         ],
         inbound=[],
-        outbound=[{"id": 1, "content": "rai-speech-toolkit shipped Rai benchmark chart."}],
+        outbound=[
+            {"id": 1, "content": "rai-speech-toolkit shipped Rai benchmark chart."}
+        ],
         audits=[],
         tools={
-            "adb": {
-                "devices": [{"serial": "RZCTC0M17SJ", "state": "unauthorized"}]
-            }
+            "adb": {"devices": [{"serial": "RZCTC0M17SJ", "state": "unauthorized"}]}
         },
         generated_at=generated_at,
     )
@@ -112,11 +118,19 @@ def test_run_brief_writes_vault_backlog_and_audit(tmp_path: Path) -> None:
     assert "Can you secure reviewer feedback" in text
     assert "rai-speech-toolkit shipped Rai benchmark chart" in text
     assert len(result.backlog_entries) == 2
-    assert all("Android USB debugging" not in entry.text for entry in result.backlog_entries)
+    assert all(
+        "Android USB debugging" not in entry.text for entry in result.backlog_entries
+    )
     assert (tmp_path / "vault" / "Backlog" / "PA.md").exists()
     assert (tmp_path / "vault" / "Backlog" / "SMM.md").exists()
     rows = db.list_audit_events(category="brief", limit=1)
     assert rows[0]["event_type"] == "pa_smm_brief_recorded"
+    status = brief_status(settings)
+    assert status["count"] == 1
+    assert status["latest"]["path"] == str(result.path)
+    assert status["latest"]["owner_counts"]["PA"] >= 1
+    assert status["latest"]["owner_counts"]["SMM"] >= 1
+    assert "PA/SMM brief status:" in render_brief_status(status)
 
     duplicate = run_brief(
         settings,
@@ -128,19 +142,21 @@ def test_run_brief_writes_vault_backlog_and_audit(tmp_path: Path) -> None:
             ),
         ],
         inbound=[],
-        outbound=[{"id": 1, "content": "rai-speech-toolkit shipped Rai benchmark chart."}],
+        outbound=[
+            {"id": 1, "content": "rai-speech-toolkit shipped Rai benchmark chart."}
+        ],
         audits=[],
         tools={
-            "adb": {
-                "devices": [{"serial": "RZCTC0M17SJ", "state": "unauthorized"}]
-            }
+            "adb": {"devices": [{"serial": "RZCTC0M17SJ", "state": "unauthorized"}]}
         },
         generated_at=generated_at,
     )
     assert duplicate.backlog_entries == []
 
 
-def test_cli_brief_run_json_without_backlog(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_cli_brief_run_json_without_backlog(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     monkeypatch.setattr("bemine.briefs.collect_fleet_status", lambda *a, **k: ([], []))
     monkeypatch.setattr("bemine.briefs.detect_tool_capabilities", lambda: {})
 

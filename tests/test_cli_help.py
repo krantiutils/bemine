@@ -29,7 +29,10 @@ def test_top_level_help_onboards_a_new_agent() -> None:
     assert "health        deploy/services/jobs/watchers health packet" in text
     assert "continuity    line-cut recovery status packet" in text
     assert "help          self-documenting capability and config summary" in text
-    assert "discord       project channel routing, route inspection, and Discord sync" in text
+    assert (
+        "discord       project channel routing, route inspection, and Discord sync"
+        in text
+    )
     assert "backlog       durable PA/SMM idea" in text
     assert "pa            plan daily focus" in text
     assert "smm           draft Ampixa-style social posts" in text
@@ -129,6 +132,7 @@ def test_dream_help_explains_jsonl_storage() -> None:
 
     assert "Condense recent Bemine/Discord history" in text
     assert "Dreams/dreams.jsonl" in flat
+    assert "uv run bemine dream status" in text
     assert "uv run bemine dream run" in text
 
 
@@ -139,6 +143,7 @@ def test_brief_help_explains_pa_smm_backlog_nudges() -> None:
     assert "Generate a deterministic PA/SMM brief" in text
     assert "Briefs/" in flat
     assert "non-duplicate PA/SMM backlog items" in flat
+    assert "uv run bemine brief status" in text
     assert "uv run bemine brief run" in text
 
 

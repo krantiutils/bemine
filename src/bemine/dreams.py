@@ -119,6 +119,77 @@ def render_dream(result: DreamResult) -> str:
     return "\n".join(lines) + "\n"
 
 
+def dream_status(settings: BemineSettings) -> dict[str, Any]:
+    path = dream_log_path(settings)
+    status: dict[str, Any] = {
+        "schema": "bemine.dream_status.v1",
+        "path": str(path),
+        "exists": path.exists(),
+        "entries": 0,
+        "latest": {},
+        "parse_errors": 0,
+    }
+    if not path.exists():
+        return status
+    latest: dict[str, Any] = {}
+    parse_errors = 0
+    entries = 0
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        entries += 1
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            parse_errors += 1
+            continue
+        if isinstance(parsed, dict):
+            latest = parsed
+    stat = path.stat()
+    status.update(
+        {
+            "entries": entries,
+            "latest": latest,
+            "latest_generated_at": str(latest.get("generated_at") or ""),
+            "signals": len(latest.get("signals") or []),
+            "friction": len(latest.get("friction") or []),
+            "window": latest.get("window") or {},
+            "parse_errors": parse_errors,
+            "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        }
+    )
+    return status
+
+
+def render_dream_status(status: dict[str, Any]) -> str:
+    lines = [
+        "Dream status:",
+        f"- path: `{status['path']}`",
+        f"- exists: {bool(status.get('exists'))}",
+        f"- entries: {status.get('entries', 0)}",
+    ]
+    if not status.get("exists") or not status.get("entries"):
+        lines.append("- latest: none")
+        return "\n".join(lines) + "\n"
+    window = status.get("window") or {}
+    lines.extend(
+        [
+            f"- latest_generated_at: {status.get('latest_generated_at') or 'unknown'}",
+            f"- file_mtime: {status.get('mtime') or 'unknown'}",
+            (
+                "- latest_window: "
+                f"inbound={window.get('inbound_messages', 0)} "
+                f"outbound={window.get('outbound_messages', 0)} "
+                f"audit={window.get('audit_events', 0)}"
+            ),
+            f"- latest_signals: {status.get('signals', 0)}",
+            f"- latest_friction: {status.get('friction', 0)}",
+            f"- parse_errors: {status.get('parse_errors', 0)}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def dream_log_path(settings: BemineSettings) -> Path:
     return settings.vault_dir / "Dreams" / "dreams.jsonl"
 
@@ -154,15 +225,25 @@ def _signals_from_messages(messages: list[str]) -> list[str]:
     signals: list[str] = []
     haystack = "\n".join(messages).casefold()
     if any(word in haystack for word in ("goal ", "watch", "training", "train ")):
-        signals.append("Users expect long-running project work to start, continue, and report back autonomously.")
+        signals.append(
+            "Users expect long-running project work to start, continue, and report back autonomously."
+        )
     if any(word in haystack for word in ("model", "runtime", "using right now")):
-        signals.append("Runtime/model identity must be self-documenting and authoritative.")
+        signals.append(
+            "Runtime/model identity must be self-documenting and authoritative."
+        )
     if any(word in haystack for word in ("idea", "post", "social", "smm")):
-        signals.append("Social/post ideas need durable backlog capture before they become tasks.")
+        signals.append(
+            "Social/post ideas need durable backlog capture before they become tasks."
+        )
     if any(word in haystack for word in ("status", "what are you doing", "latest")):
-        signals.append("Status answers should lead with live evidence from sessions, jobs, and audit state.")
+        signals.append(
+            "Status answers should lead with live evidence from sessions, jobs, and audit state."
+        )
     if any(word in haystack for word in ("line cut", "power", "restart", "cut off")):
-        signals.append("Managed work on cdjk needs continuity across line cuts and reboots.")
+        signals.append(
+            "Managed work on cdjk needs continuity across line cuts and reboots."
+        )
     return signals
 
 
@@ -170,13 +251,21 @@ def _friction_from_messages(messages: list[str], failures: list[str]) -> list[st
     friction: list[str] = []
     haystack = "\n".join([*messages, *failures]).casefold()
     if "maximum number of turns" in haystack:
-        friction.append("Meridian/proxy turn caps can fail Discord dispatch; prefer short tool paths for ops.")
+        friction.append(
+            "Meridian/proxy turn caps can fail Discord dispatch; prefer short tool paths for ops."
+        )
     if "not visible" in haystack or "isn't visible" in haystack:
-        friction.append("Invisible long-running work needs progress reporting and inspectable worker state.")
+        friction.append(
+            "Invisible long-running work needs progress reporting and inspectable worker state."
+        )
     if "no such file or directory" in haystack and "codex" in haystack:
         friction.append("Systemd PATH must use absolute runtime binaries.")
     if "bwrap" in haystack or "loopback" in haystack:
-        friction.append("Codex workspace sandbox is unreliable under this systemd environment.")
+        friction.append(
+            "Codex workspace sandbox is unreliable under this systemd environment."
+        )
     if "didnt press enter" in haystack or "didn't press enter" in haystack:
-        friction.append("Tmux input must verify that submitted text actually reached the pane.")
+        friction.append(
+            "Tmux input must verify that submitted text actually reached the pane."
+        )
     return friction
