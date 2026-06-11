@@ -161,6 +161,9 @@ def render_continuity(payload: dict[str, Any]) -> str:
         f"workers={continuity.get('tracked_workers', 0)} "
         f"restartable_missing={continuity.get('restartable_missing', 0)}"
     )
+    lines.append(f"Mode: {continuity.get('mode') or 'startup/poll recovery'}")
+    lines.append(f"Covers: {continuity.get('covers') or 'Bemine-managed local tmux workers'}")
+    lines.append(f"Excludes: {continuity.get('excludes') or 'adopted/manual sessions'}")
     if continuity.get("check_error"):
         lines.append(f"Check error: {continuity['check_error']}")
     missing_workers = continuity.get("missing_workers") or []
@@ -231,6 +234,9 @@ def _collect_continuity_health(settings: BemineSettings, db: BemineDB) -> dict[s
         "device_id": settings.device_id,
         "devices": devices,
         "applies_to_device": applies,
+        "mode": "startup/poll recovery, not a shutdown hook",
+        "covers": "Bemine-managed local tmux workers with restartable commands",
+        "excludes": "adopted/manual tmux sessions, remote device sessions, arbitrary terminals",
         "tracked_workers": len(candidates),
         "restartable_missing": len(missing),
         "missing_workers": missing,

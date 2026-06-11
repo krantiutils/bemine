@@ -1453,8 +1453,23 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "what channel sync would do",
     }:
         return "discord.sync_plan"
-    if variants & {"continuity", "continuity status", "line cuts", "line cut status",
-                   "power loss", "power loss status"}:
+    if variants & {
+        "continuity",
+        "continuity status",
+        "line cuts",
+        "line cut status",
+        "power loss",
+        "power loss status",
+        "wake sessions on shutdown",
+        "wake sessions after shutdown",
+        "wake sessions after reboot",
+        "will sessions resume after reboot",
+        "will sessions resume after shutdown",
+        "do sessions resume after reboot",
+        "do sessions resume after shutdown",
+        "reboot recovery",
+        "shutdown recovery",
+    }:
         return "continuity"
     if variants & {
         "dispatch",

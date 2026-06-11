@@ -203,6 +203,7 @@ context_limit = 1000
     assert "inspect ops:" in out.text
     assert "goal sessions: `goal <project> <brief>`" in out.text
     assert "continuity:" in out.text
+    assert "wake sessions after reboot?" in out.text
     assert "focus today:" in out.text
     assert "dream: `dream run`" in out.text
     assert "watchers: active=0" in out.text

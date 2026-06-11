@@ -29,7 +29,8 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "what can you do / help" → `help` or `uv run bemine help`; this prints the live
   capability/config summary and the main operator surfaces.
 - "line cuts / continuity on cdjk" → `continuity` / `uv run bemine continuity`
-  (or `health` if you want the whole deploy/service/watchers packet).
+  (or ask `wake sessions after reboot?`; use `health` if you want the whole
+  deploy/service/watchers packet).
 - "what Bemine-managed workers are running / duplicates?" → `workers_status` native tool
   or `uv run bemine workers list` / `uv run bemine workers duplicates`.
 - "send/tell the session …" → `tmux_list` → `tmux_send` (it appends Enter; afterwards

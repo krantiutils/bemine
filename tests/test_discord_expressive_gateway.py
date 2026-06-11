@@ -133,6 +133,8 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("discord sync plan") == "discord.sync_plan"
     assert gw._direct_observability_command("what channels would be created?") == "discord.sync_plan"
     assert gw._direct_observability_command("line cuts") == "continuity"
+    assert gw._direct_observability_command("wake sessions after reboot?") == "continuity"
+    assert gw._direct_observability_command("will sessions resume after shutdown?") == "continuity"
     assert gw._direct_observability_command("mayor dispatch status") == "dispatch.status"
     assert gw._direct_observability_command("what model are we using?") == "dispatch.status"
     assert gw._direct_observability_command("what should I focus on today?".lower()) == "pa.plan"
