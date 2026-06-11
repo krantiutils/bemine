@@ -308,6 +308,31 @@ class WorkerController:
         self._audit("worker_sent", record, {"enter": enter, "text_len": len(text)})
         return record
 
+    def send_when_ready(
+        self,
+        name: str,
+        text: str,
+        *,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> WorkerRecord:
+        """Send to a CLI worker after it boots, answering startup prompts.
+
+        Text sent right after start races the TUI boot (and trust prompts eat
+        it entirely). Non-CLI workers get a plain immediate send."""
+        record = self._require_record(name)
+        runtime_key = record.runtime.strip().lower()
+        if (
+            runtime_key in {"claude", "codex", "kimi"}
+            and _command_binary(record.command) == runtime_key
+        ):
+            send_to_cli_when_ready(
+                self._tmux_for_record(record), record.name, text, sleep=sleep
+            )
+            self.db.set_managed_session_status(record.name, status="running")
+            self._audit("worker_sent", record, {"enter": True, "text_len": len(text)})
+            return record
+        return self.send(name, text)
+
     def capture(self, name: str) -> str:
         record = self._require_record(name)
         captured = self._tmux_for_record(record).capture(record.name)
@@ -650,20 +675,15 @@ def _runtime_session_on_disk(
     return False
 
 
-def _send_resume_nudge(
+def _settle_pane(
     tmux: TmuxLike,
     name: str,
     *,
     sleep: Callable[[float], None],
-    settle_polls: int = 15,
-    poll_secs: float = 2.0,
-) -> None:
-    """Nudge the resumed CLI to continue, tolerating its boot time.
-
-    Keys sent while the TUI is still booting get dropped (codex) or left
-    unsubmitted in the input box (claude). Wait until the pane stops changing,
-    then send text and Enter separately; the trailing second Enter is a no-op
-    when the first landed (submitting an empty input does nothing)."""
+    settle_polls: int,
+    poll_secs: float,
+) -> str | None:
+    """Wait until the pane stops changing; None when the session is gone."""
     pane = ""
     previous = None
     for _ in range(settle_polls):
@@ -671,20 +691,64 @@ def _send_resume_nudge(
         try:
             pane = tmux.capture(name)
         except Exception:
-            return
+            return None
         if pane.strip() and pane == previous:
-            break
+            return pane
         previous = pane
-    if "uv tool upgrade kimi-cli" in pane:
-        # kimi's upgrade reminder maps Enter to "Upgrade now" — a blind nudge
-        # Enter would kick off the upgrade; `s` skips reminders for the version
-        tmux.send(name, "s", enter=False)
-        sleep(2.0)
-    tmux.send(name, RESUME_NUDGE, enter=False)
+    return pane
+
+
+def send_to_cli_when_ready(
+    tmux: TmuxLike,
+    name: str,
+    text: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    settle_polls: int = 15,
+    poll_secs: float = 2.0,
+) -> None:
+    """Deliver text to a CLI worker, tolerating boot time and startup prompts.
+
+    Keys sent while the TUI is still booting get dropped (codex) or left
+    unsubmitted in the input box (claude). Wait until the pane stops changing,
+    answer known startup prompts, then send text and Enter separately; the
+    trailing second Enter is a no-op when the first landed (submitting an
+    empty input does nothing)."""
+    pane = _settle_pane(
+        tmux, name, sleep=sleep, settle_polls=settle_polls, poll_secs=poll_secs
+    )
+    if pane is None:
+        return
+    for _ in range(2):
+        if "uv tool upgrade kimi-cli" in pane:
+            # kimi's upgrade reminder maps Enter to "Upgrade now" — a blind
+            # Enter would kick off the upgrade; `s` skips this version
+            tmux.send(name, "s", enter=False)
+        elif "trust this folder" in pane or "Do you trust" in pane:
+            # claude/codex first-run trust prompt for a Bemine-managed cwd;
+            # Enter selects the preselected "Yes, I trust / Yes, continue"
+            tmux.send(name, "", enter=True)
+        else:
+            break
+        pane = _settle_pane(
+            tmux, name, sleep=sleep, settle_polls=settle_polls, poll_secs=poll_secs
+        )
+        if pane is None:
+            return
+    tmux.send(name, text, enter=False)
     sleep(1.0)
     tmux.send(name, "", enter=True)
     sleep(2.0)
     tmux.send(name, "", enter=True)
+
+
+def _send_resume_nudge(
+    tmux: TmuxLike,
+    name: str,
+    *,
+    sleep: Callable[[float], None],
+) -> None:
+    send_to_cli_when_ready(tmux, name, RESUME_NUDGE, sleep=sleep)
 
 
 def _native_resume_command(command: str, runtime_key: str, session_id: str) -> str:
