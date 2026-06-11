@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,11 +69,17 @@ def build_pa_plan(
     generated_at = generated_at or datetime.now(timezone.utc)
     if statuses is None:
         try:
-            statuses, _errors = collect_fleet_status(settings, limit_per_runtime=8, timeout=6)
+            statuses, _errors = collect_fleet_status(
+                settings, limit_per_runtime=8, timeout=6
+            )
         except Exception:
             statuses = []
     health = dict(health) if health is not None else collect_health(settings, db=db)
-    audits = audits if audits is not None else [dict(row) for row in db.list_audit_events(limit=30)]
+    audits = (
+        audits
+        if audits is not None
+        else [dict(row) for row in db.list_audit_events(limit=30)]
+    )
     backlog = list_backlog_items(settings, owner="PA", limit=20)
     watchers = list(health.get("watchers", {}).get("items") or [])
     jobs = health.get("jobs") if isinstance(health.get("jobs"), Mapping) else {}
@@ -123,11 +131,15 @@ def build_pa_plan(
                 sort_keys=True,
             ),
         )
-    return result if path is None else PAPlanResult(
-        generated_at=result.generated_at,
-        items=result.items,
-        evidence=result.evidence,
-        path=path,
+    return (
+        result
+        if path is None
+        else PAPlanResult(
+            generated_at=result.generated_at,
+            items=result.items,
+            evidence=result.evidence,
+            path=path,
+        )
     )
 
 
@@ -188,6 +200,84 @@ def render_pa_plan_markdown(result: PAPlanResult) -> str:
     return "\n".join(lines)
 
 
+def pa_status(
+    settings: BemineSettings,
+    *,
+    db: BemineDB | None = None,
+    statuses: list[SessionStatus] | None = None,
+    health: Mapping[str, Any] | None = None,
+    audits: list[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    db = db or BemineDB(settings.db_path)
+    errors: list[str] = []
+    if statuses is None:
+        try:
+            statuses, fleet_errors = collect_fleet_status(
+                settings, limit_per_runtime=8, timeout=6
+            )
+            errors.extend(str(error) for error in fleet_errors)
+        except Exception as exc:
+            statuses = []
+            errors.append(str(exc))
+    health = dict(health) if health is not None else collect_health(settings, db=db)
+    audits = (
+        audits
+        if audits is not None
+        else [dict(row) for row in db.list_audit_events(limit=30)]
+    )
+    backlog = list_backlog_items(settings, owner="PA", limit=200)
+    watchers = list(health.get("watchers", {}).get("items") or [])
+    waiting = [status for status in statuses if status.asks_user]
+    latest_plan = _latest_pa_plan(settings)
+    device_counts = Counter(status.device_id for status in statuses)
+    runtime_counts = Counter(status.runtime for status in statuses)
+    return {
+        "schema": "bemine.pa_status.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "statuses": len(statuses),
+        "waiting_sessions": len(waiting),
+        "devices": dict(sorted(device_counts.items())),
+        "runtimes": dict(sorted(runtime_counts.items())),
+        "health_issues": len(health.get("issues") or []),
+        "active_watchers": len(watchers),
+        "audit_events": len(audits),
+        "pa_backlog_items": len(backlog),
+        "latest_plan": latest_plan,
+        "errors": errors,
+    }
+
+
+def render_pa_status(status: Mapping[str, Any]) -> str:
+    devices = status.get("devices") or {}
+    runtimes = status.get("runtimes") or {}
+    latest_plan = status.get("latest_plan") or {}
+    lines = [
+        "PA evidence status:",
+        f"- statuses: {status.get('statuses', 0)}",
+        f"- waiting_sessions: {status.get('waiting_sessions', 0)}",
+        f"- health_issues: {status.get('health_issues', 0)}",
+        f"- active_watchers: {status.get('active_watchers', 0)}",
+        f"- pa_backlog_items: {status.get('pa_backlog_items', 0)}",
+        f"- audit_events: {status.get('audit_events', 0)}",
+        f"- devices: {_render_counts(devices)}",
+        f"- runtimes: {_render_counts(runtimes)}",
+    ]
+    if latest_plan:
+        lines.extend(
+            [
+                f"- latest_plan: `{latest_plan.get('path')}`",
+                f"- latest_plan_generated_at: {latest_plan.get('generated_at') or 'unknown'}",
+                f"- latest_plan_items: {latest_plan.get('items', 0)}",
+            ]
+        )
+    else:
+        lines.append("- latest_plan: none")
+    errors = status.get("errors") or []
+    if errors:
+        lines.append(f"- errors: {len(errors)}")
+    return "\n".join(lines) + "\n"
+
+
 def pa_plan_path(
     settings: BemineSettings,
     *,
@@ -197,6 +287,42 @@ def pa_plan_path(
     ObsidianVault(settings.vault_dir)
     stem = safe_filename(f"{generated_at.date().isoformat()}-pa-plan", "pa-plan")
     return settings.vault_dir / "PA" / "Plans" / f"{stem}.md"
+
+
+def _latest_pa_plan(settings: BemineSettings) -> dict[str, Any]:
+    plan_dir = settings.vault_dir / "PA" / "Plans"
+    if not plan_dir.exists():
+        return {}
+    paths = sorted(
+        plan_dir.glob("*-pa-plan.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not paths:
+        return {}
+    latest = paths[0]
+    text = latest.read_text(encoding="utf-8", errors="replace")
+    return {
+        "path": str(latest),
+        "generated_at": _generated_at_from_markdown(text),
+        "mtime": datetime.fromtimestamp(
+            latest.stat().st_mtime, timezone.utc
+        ).isoformat(),
+        "items": sum(
+            1 for line in text.splitlines() if line.strip().startswith("- [ ] P")
+        ),
+    }
+
+
+def _generated_at_from_markdown(text: str) -> str:
+    match = re.search(r"^Generated:\s*`([^`]+)`", text, flags=re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def _render_counts(counts: Mapping[str, int]) -> str:
+    if not counts:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in counts.items())
 
 
 def _add_health_items(items: list[PAPlanItem], health: Mapping[str, Any]) -> None:
@@ -226,7 +352,9 @@ def _add_job_items(items: list[PAPlanItem], jobs: Mapping[str, Any]) -> None:
         )
 
 
-def _add_session_asks(items: list[PAPlanItem], statuses: Iterable[SessionStatus]) -> None:
+def _add_session_asks(
+    items: list[PAPlanItem], statuses: Iterable[SessionStatus]
+) -> None:
     for status in statuses:
         if not status.asks_user:
             continue
@@ -246,13 +374,17 @@ def _add_session_asks(items: list[PAPlanItem], statuses: Iterable[SessionStatus]
         )
 
 
-def _add_watcher_items(items: list[PAPlanItem], watchers: Iterable[Mapping[str, Any]]) -> None:
+def _add_watcher_items(
+    items: list[PAPlanItem], watchers: Iterable[Mapping[str, Any]]
+) -> None:
     for watcher in watchers:
         project = str(watcher.get("project_id") or "")
         if bool(watcher.get("awaiting_reply")):
             priority = 2
             text = f"Watcher for `{project}` is awaiting a reply."
-            next_action = "Inspect watchers_status and the project session before nudging."
+            next_action = (
+                "Inspect watchers_status and the project session before nudging."
+            )
         else:
             priority = 4
             text = f"Watcher active for `{project}`."
@@ -268,7 +400,9 @@ def _add_watcher_items(items: list[PAPlanItem], watchers: Iterable[Mapping[str, 
         )
 
 
-def _add_audit_items(items: list[PAPlanItem], audits: Iterable[Mapping[str, Any]]) -> None:
+def _add_audit_items(
+    items: list[PAPlanItem], audits: Iterable[Mapping[str, Any]]
+) -> None:
     for row in audits:
         category = str(row.get("category") or "")
         event_type = str(row.get("event_type") or "")
@@ -336,8 +470,13 @@ def _clean_status_text(text: str) -> str:
 
 def _next_action_for_ask(ask: str) -> str:
     haystack = ask.casefold()
-    if any(term in haystack for term in ("destructive", "irreversible", "authorize termination")):
-        return "Review manually; do not auto-confirm destructive or irreversible action."
+    if any(
+        term in haystack
+        for term in ("destructive", "irreversible", "authorize termination")
+    ):
+        return (
+            "Review manually; do not auto-confirm destructive or irreversible action."
+        )
     return "Read the session or relay the missing answer through tmux/session tools."
 
 

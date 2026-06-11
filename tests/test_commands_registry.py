@@ -21,6 +21,7 @@ def test_registry_lists_deterministic_ops():
         "dream.status",
         "brief.run",
         "brief.status",
+        "pa.status",
         "subagents.list",
         "subagents.show",
         "phantom.status",
@@ -113,6 +114,25 @@ def test_run_command_backlog_list(tmp_path):
     out = run_command("backlog.list", settings, {})
     assert "backlog" in out.text.lower()
     assert out.data["owner"] == "SMM"
+
+
+def test_run_command_pa_status(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr("bemine.pa.collect_fleet_status", lambda *a, **k: ([], []))
+    monkeypatch.setattr(
+        "bemine.pa.collect_health",
+        lambda *a, **k: {
+            "issues": [],
+            "jobs": {"failed_jobs": []},
+            "watchers": {"items": []},
+        },
+    )
+
+    out = run_command("pa.status", settings, {})
+
+    assert "PA evidence status:" in out.text
+    assert out.data["statuses"] == 0
+    assert out.data["waiting_sessions"] == 0
 
 
 def test_run_command_discord_sync_plan_is_dry_run(tmp_path):
@@ -274,6 +294,8 @@ context_limit = 1000
     assert "goal sessions: `goal <project> <brief>`" in out.text
     assert "continuity:" in out.text
     assert "wake sessions after reboot?" in out.text
+    assert "PA evidence:" in out.text
+    assert "what evidence does PA use?" in out.text
     assert "focus today:" in out.text
     assert "dream: `dream status` / `dream run`" in out.text
     assert "when did you last dream?" in out.text

@@ -100,6 +100,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   inspect freshness; `brief run` / `generate PA/SMM brief` in Discord, or
   `uv run bemine brief run` to write `Briefs/<date>-pa-smm.md` and add
   non-duplicate generated PA/SMM backlog nudges.
+- "what evidence does PA use?" → `pa status` / `uv run bemine pa status` for
+  read-only coverage: session rows, waiting sessions, health issues, watchers,
+  audits, PA backlog, and latest written PA plan.
 - "what should I focus on today?" / PA planning → `pa_plan` native tool or
   `uv run bemine pa plan`; this prioritizes health issues, failed jobs, waiting
   sessions, active watchers, recovery escalations, and PA backlog with evidence.

@@ -130,6 +130,13 @@ def _pa_plan(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_pa_plan(result), data=result.to_dict())
 
 
+def _pa_status(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.pa import pa_status, render_pa_status
+
+    status = pa_status(settings)
+    return CommandResult(text=render_pa_status(status), data=status)
+
+
 def _goals_list(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.goals import list_goal_sessions, render_goal_sessions
 
@@ -422,6 +429,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- inspect ops: `health` / `systemd status` / `jobs list` / `watch list`",
         "- goal sessions: `goal <project> <brief>` / `goal --list` / `goal --status <query>`",
         f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'} (`continuity` / `wake sessions after reboot?` / `uv run bemine continuity`)",
+        "- PA evidence: `pa status` / `what evidence does PA use?`",
         "- focus today: `pa plan` / `what should I focus on today?` / `what should I focus on this week?` / `what should I do next?` / `what should I focus on tomorrow?`",
         "- dream: `dream status` / `dream run` / `dream now` / `when did you last dream?`",
         "- PA/SMM brief: `brief status` / `brief run` / `generate PA/SMM brief` / `when was the last PA/SMM brief?`",
@@ -593,6 +601,7 @@ _SPECS = (
         "dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status
     ),
     CommandSpec("goal.start", "Start a managed goal session", _goal_start),
+    CommandSpec("pa.status", "Show PA evidence coverage", _pa_status),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),

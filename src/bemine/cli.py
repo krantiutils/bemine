@@ -36,7 +36,7 @@ from .goals import (
 from .health import collect_health, render_continuity, render_health
 from .dreams import dream_status, render_dream, render_dream_status, run_dream
 from .briefs import brief_status, render_brief, render_brief_status, run_brief
-from .pa import build_pa_plan, render_pa_plan
+from .pa import build_pa_plan, pa_status, render_pa_plan, render_pa_status
 from .smm import (
     draft_smm_posts,
     render_smm_draft_status,
@@ -240,11 +240,13 @@ Examples:
 PA_HELP = """\
 Plan daily focus from live PA evidence.
 
+Use `pa status` to inspect the evidence coverage without writing a new plan.
 The plan command inspects Bemine health, recent agent sessions, active watchers,
 failed jobs, recovery escalations, and open PA backlog items. It returns a
 small priority-ordered list with evidence and the next action for each item.
 
 Examples:
+  uv run bemine pa status
   uv run bemine pa plan
   uv run bemine pa plan --write
   uv run bemine pa plan --json --limit 8
@@ -823,6 +825,13 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HELP_FORMATTER,
     )
     pa_sub = pa.add_subparsers(dest="pa_command", required=True)
+    pa_status_cmd = pa_sub.add_parser(
+        "status",
+        help="Show PA evidence coverage without writing a plan.",
+    )
+    pa_status_cmd.add_argument(
+        "--json", action="store_true", help="Emit PA evidence status as JSON."
+    )
     pa_plan = pa_sub.add_parser(
         "plan",
         help="Create a priority-ordered PA plan from live evidence.",
@@ -2006,7 +2015,13 @@ def main(argv: list[str] | None = None) -> None:
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     elif args.command == "pa":
-        if args.pa_command == "plan":
+        if args.pa_command == "status":
+            status = pa_status(settings, db=kernel.db)
+            if args.json:
+                print(json.dumps(status, indent=2, sort_keys=True))
+            else:
+                print(render_pa_status(status), end="")
+        elif args.pa_command == "plan":
             result = build_pa_plan(
                 settings,
                 limit=args.limit,

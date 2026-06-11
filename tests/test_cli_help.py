@@ -103,6 +103,7 @@ def test_pa_help_explains_live_evidence_plan() -> None:
     assert "Plan daily focus from live PA evidence." in text
     assert "Bemine health" in flat
     assert "active watchers" in flat
+    assert "uv run bemine pa status" in text
     assert "uv run bemine pa plan" in text
 
 
