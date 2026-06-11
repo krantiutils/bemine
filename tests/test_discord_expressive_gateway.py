@@ -225,6 +225,10 @@ def test_direct_observability_command_aliases() -> None:
         "command": "subagents.show",
         "name": "style",
     }
+    assert gw._direct_smm_command("smm status") == {"command": "smm.status"}
+    assert gw._direct_smm_command("when was the last SMM draft?") == {
+        "command": "smm.status"
+    }
     assert gw._direct_smm_command("what should I post?") == {"command": "smm.draft"}
     assert gw._direct_smm_command("what should I post today?") == {
         "command": "smm.draft"

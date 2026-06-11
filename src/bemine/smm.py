@@ -276,6 +276,77 @@ def render_smm_drafts_markdown(result: SMMDraftResult) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def smm_draft_status(
+    settings: BemineSettings,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, Any]:
+    output_dir = smm_draft_dir(settings)
+    paths = (
+        sorted(
+            output_dir.glob("*-smm-drafts.md"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if output_dir.exists()
+        else []
+    )
+    assets = collect_ampixa_assets(project_root)
+    style_path = smm_style_path(project_root)
+    status: dict[str, Any] = {
+        "schema": "bemine.smm_draft_status.v1",
+        "output_dir": str(output_dir),
+        "exists": bool(paths),
+        "count": len(paths),
+        "latest": {},
+        "style_path": str(style_path),
+        "style_exists": style_path.exists(),
+        "assets": [asset.to_dict() for asset in assets],
+        "missing_assets": [asset.name for asset in assets if not asset.exists],
+        "target_channels": smm_target_channels(),
+    }
+    if not paths:
+        return status
+    latest = paths[0]
+    text = latest.read_text(encoding="utf-8", errors="replace")
+    status["latest"] = {
+        "path": str(latest),
+        "generated_at": _draft_generated_at(text),
+        "mtime": datetime.fromtimestamp(
+            latest.stat().st_mtime, timezone.utc
+        ).isoformat(),
+        "drafts": _draft_count(text),
+    }
+    return status
+
+
+def render_smm_draft_status(status: Mapping[str, Any]) -> str:
+    lines = [
+        "SMM draft status:",
+        f"- output_dir: `{status['output_dir']}`",
+        f"- draft_files: {status.get('count', 0)}",
+        f"- style: `{status.get('style_path')}` ({'present' if status.get('style_exists') else 'missing'})",
+        f"- target_channels: {', '.join(status.get('target_channels') or []) or 'none'}",
+    ]
+    missing_assets = status.get("missing_assets") or []
+    lines.append(
+        f"- missing_assets: {', '.join(missing_assets) if missing_assets else 'none'}"
+    )
+    latest = status.get("latest") or {}
+    if not latest:
+        lines.append("- latest: none")
+        return "\n".join(lines) + "\n"
+    lines.extend(
+        [
+            f"- latest_path: `{latest.get('path')}`",
+            f"- latest_generated_at: {latest.get('generated_at') or 'unknown'}",
+            f"- file_mtime: {latest.get('mtime') or 'unknown'}",
+            f"- latest_drafts: {latest.get('drafts', 0)}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def smm_draft_path(
     settings: BemineSettings,
     *,
@@ -284,25 +355,51 @@ def smm_draft_path(
     generated_at = generated_at or datetime.now(timezone.utc)
     ObsidianVault(settings.vault_dir)
     stem = safe_filename(f"{generated_at.date().isoformat()}-smm-drafts", "smm-drafts")
+    return smm_draft_dir(settings) / f"{stem}.md"
+
+
+def smm_draft_dir(settings: BemineSettings) -> Path:
     configured = config_string("smm", "output_dir", "").strip()
-    output_dir = Path(configured).expanduser() if configured else settings.vault_dir / "SMM" / "Drafts"
-    return output_dir / f"{stem}.md"
+    return (
+        Path(configured).expanduser()
+        if configured
+        else settings.vault_dir / "SMM" / "Drafts"
+    )
 
 
 def smm_target_channels() -> list[str]:
-    return config_list("smm", "target_channels", DEFAULT_TARGET_CHANNELS) or list(DEFAULT_TARGET_CHANNELS)
+    return config_list("smm", "target_channels", DEFAULT_TARGET_CHANNELS) or list(
+        DEFAULT_TARGET_CHANNELS
+    )
 
 
 def smm_asset_dir(project_root: Path | None = None) -> Path:
     root = (project_root or Path.cwd()).expanduser().resolve()
     configured = config_string("smm", "asset_dir", "").strip()
-    return Path(configured).expanduser().resolve() if configured else root / "assets" / "ampixa"
+    return (
+        Path(configured).expanduser().resolve()
+        if configured
+        else root / "assets" / "ampixa"
+    )
 
 
 def smm_style_path(project_root: Path | None = None) -> Path:
     root = (project_root or Path.cwd()).expanduser().resolve()
     configured = config_string("smm", "style_path", "").strip()
-    return Path(configured).expanduser().resolve() if configured else root / "subagents" / "style.md"
+    return (
+        Path(configured).expanduser().resolve()
+        if configured
+        else root / "subagents" / "style.md"
+    )
+
+
+def _draft_generated_at(text: str) -> str:
+    match = re.search(r"^Generated:\s*`([^`]+)`", text, flags=re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def _draft_count(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip().startswith("### Draft "))
 
 
 def _draft_limit(limit: int) -> int:
@@ -331,7 +428,11 @@ def _latest_brief_smm_lines(settings: BemineSettings, *, limit: int) -> list[str
     brief_dir = settings.vault_dir / "Briefs"
     if not brief_dir.exists():
         return []
-    paths = sorted(brief_dir.glob("*-pa-smm.md"), key=lambda path: path.stat().st_mtime, reverse=True)
+    paths = sorted(
+        brief_dir.glob("*-pa-smm.md"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
     if not paths:
         return []
     in_smm = False
@@ -392,9 +493,15 @@ def _draft_from_signal(
 
 
 def _hook(project: str, signal: str) -> str:
-    if any(word in signal.casefold() for word in ("shipped", "deployed", "released", "built")):
+    if any(
+        word in signal.casefold()
+        for word in ("shipped", "deployed", "released", "built")
+    ):
         return f"{project}: shipped a concrete speech-infra update."
-    if any(word in signal.casefold() for word in ("benchmark", "eval", "checkpoint", "chr", "bleu")):
+    if any(
+        word in signal.casefold()
+        for word in ("benchmark", "eval", "checkpoint", "chr", "bleu")
+    ):
         return f"{project}: a measured speech-infra result is ready to explain."
     return f"{project}: a useful speech-infra progress note is worth drafting."
 
@@ -445,7 +552,7 @@ def _clean_public_signal(signal: str) -> str:
         "Draft a project update from",
     ):
         if text.startswith(prefix):
-            text = text[len(prefix):].strip()
+            text = text[len(prefix) :].strip()
     text = re.sub(r"^`([^`]+)`:\s*", r"\1: ", text)
     text = re.sub(r"\s+\|\s+#\s+\|.*$", "", text)
     text = re.sub(r"\s+##\s+", " ", text)

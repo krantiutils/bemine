@@ -1371,6 +1371,19 @@ def _direct_smm_command(normalized_lower: str) -> dict[str, str] | None:
         text.removeprefix("!bemine ").removeprefix("bemine "),
     }
     if variants & {
+        "smm status",
+        "smm draft status",
+        "social draft status",
+        "post draft status",
+        "when was the last smm draft",
+        "when was the last social draft",
+        "when was the last post draft",
+        "last smm draft",
+        "latest smm draft",
+        "are smm drafts fresh",
+    }:
+        return {"command": "smm.status"}
+    if variants & {
         "smm",
         "smm draft",
         "draft a post",

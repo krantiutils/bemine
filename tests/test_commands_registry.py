@@ -26,6 +26,7 @@ def test_registry_lists_deterministic_ops():
         "phantom.status",
         "phantom.build",
         "phantom.install",
+        "smm.status",
         "smm.draft",
         "usage",
         "capabilities",
@@ -172,6 +173,37 @@ def test_run_command_brief_run_records_brief(tmp_path, monkeypatch):
     assert status.data["count"] == 1
 
 
+def test_run_command_smm_status_reads_latest_draft(tmp_path, monkeypatch):
+    config = tmp_path / "bemine.toml"
+    config.write_text("", encoding="utf-8")
+    monkeypatch.setenv("BEMINE_CONFIG", str(config))
+    settings = _settings(tmp_path)
+    draft_dir = settings.vault_dir / "SMM" / "Drafts"
+    draft_dir.mkdir(parents=True)
+    path = draft_dir / "2026-06-11-smm-drafts.md"
+    path.write_text(
+        "\n".join(
+            [
+                "# SMM Drafts",
+                "",
+                "Generated: `2026-06-11T00:00:00+00:00`",
+                "",
+                "## Drafts",
+                "",
+                "### Draft 1: Rai",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    out = run_command("smm.status", settings, {})
+
+    assert "SMM draft status:" in out.text
+    assert out.data["count"] == 1
+    assert out.data["latest"]["path"] == str(path)
+    assert out.data["latest"]["drafts"] == 1
+
+
 def test_run_command_help_summarizes_configurable_surfaces(tmp_path, monkeypatch):
     config = tmp_path / "bemine.toml"
     config.write_text(
@@ -262,7 +294,7 @@ context_limit = 1000
     assert "phantom.java_home=/usr/lib/jvm/java-17-openjdk-amd64" in out.text
     assert "phantom.android_home=/home/cdjk/Android/Sdk" in out.text
     assert "config: `config show` / `what config is set?`" in out.text
-    assert "social posts:" in out.text
+    assert "social posts: `smm status` / `smm draft`" in out.text
     assert "social posts ask:" in out.text
     assert "subagents: PA, SMM, style" in out.text
     assert "style convention:" in out.text
