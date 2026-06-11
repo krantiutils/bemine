@@ -134,9 +134,7 @@ def register_slash_commands(
 
     async def _run_slash(interaction: discord.Interaction, slash_name: str) -> None:
         if is_allowed_check is not None and not is_allowed_check(interaction):
-            await interaction.response.send_message(
-                "Access denied.", ephemeral=True
-            )
+            await interaction.response.send_message("Access denied.", ephemeral=True)
             return
         settings = await asyncio.to_thread(settings_loader)
         text = await asyncio.to_thread(slash_command_text, settings, slash_name, {})
@@ -148,6 +146,7 @@ def register_slash_commands(
     for slash_name in _SLASH_TO_COMMAND:
         if slash_name in _GROUPED_SLASH_ROOTS:
             continue
+
         # Capture slash_name in a default argument to avoid closure-over-loop issues.
         async def _handler(
             interaction: discord.Interaction,
@@ -189,7 +188,11 @@ def register_slash_commands(
         owner: str = "",
         limit: int = 20,
     ) -> None:
-        await _send_slash_result(interaction, command_name="backlog.list", args={"owner": owner, "limit": limit})
+        await _send_slash_result(
+            interaction,
+            command_name="backlog.list",
+            args={"owner": owner, "limit": limit},
+        )
 
     _backlog_handler.__name__ = "backlog"
     backlog_cmd = discord.app_commands.Command(
@@ -242,16 +245,22 @@ def register_slash_commands(
         description="Bemine: inspect configured subagent profiles",
     )
 
-    @subagents_group.command(name="list", description="List configured subagent profiles")
+    @subagents_group.command(
+        name="list", description="List configured subagent profiles"
+    )
     async def subagents_list(interaction: discord.Interaction) -> None:
         await _send_slash_result(interaction, command_name="subagents.list")
 
-    @subagents_group.command(name="show", description="Show one configured subagent profile")
+    @subagents_group.command(
+        name="show", description="Show one configured subagent profile"
+    )
     async def subagents_show(
         interaction: discord.Interaction,
         name: str,
     ) -> None:
-        await _send_slash_result(interaction, command_name="subagents.show", args={"name": name})
+        await _send_slash_result(
+            interaction, command_name="subagents.show", args={"name": name}
+        )
 
     tree.add_command(subagents_group)
 
@@ -349,7 +358,9 @@ class _ProgressReporter:
     """Bridges the agent loop's sync progress_callback (called from a worker thread)
     to a single, live-edited Discord status message so the user sees it working."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop, channel: discord.abc.Messageable) -> None:
+    def __init__(
+        self, loop: asyncio.AbstractEventLoop, channel: discord.abc.Messageable
+    ) -> None:
         self._loop = loop
         self._channel = channel
         self._lines: list[str] = []
@@ -361,7 +372,7 @@ class _ProgressReporter:
         # Sync, invoked from the agent worker thread.
         label = text.strip()
         if label.lower().startswith("tool:"):
-            label = label[len("tool:"):].strip()
+            label = label[len("tool:") :].strip()
         label = label.replace("`", "'").replace("\n", " ")
         if len(label) > 180:
             label = label[:180] + "…"
@@ -609,8 +620,12 @@ def run_bound_agent(
     from bemine.agent.clients import build_client_for_runtime
 
     client = build_client_for_runtime(settings, binding.runtime)
-    loop = AgentLoop(settings=settings, db=db, client=client,
-                     max_iterations=config_int("agent", "max_tool_iterations", 8))
+    loop = AgentLoop(
+        settings=settings,
+        db=db,
+        client=client,
+        max_iterations=config_int("agent", "max_tool_iterations", 8),
+    )
     result = loop.run(
         session_id=session_id,
         project_id=binding.project_id,
@@ -634,9 +649,12 @@ def maybe_consume_watcher_reply(settings, db, *, channel_id: str, text: str) -> 
     if not watcher or not int(watcher.get("awaiting_reply", 0)):
         return False
     from bemine.jobs.project_watcher import relay_user_reply, default_deps
+
     delivered = relay_user_reply(settings, db, watcher, text, default_deps(settings))
     if not delivered:
-        db.update_project_watcher(watcher["project_id"], awaiting_reply=0, status="paused")
+        db.update_project_watcher(
+            watcher["project_id"], awaiting_reply=0, status="paused"
+        )
         return False
     return True
 
@@ -658,7 +676,7 @@ def parse_goal_command(text: str) -> GoalCommand | None:
     match = GOAL_PREFIX_RE.match(text or "")
     if not match:
         return None
-    body = text[match.end():].strip()
+    body = text[match.end() :].strip()
     if not body:
         return None
     if ":" in body:
@@ -671,7 +689,7 @@ def parse_goal_command(text: str) -> GoalCommand | None:
         if len(parts) < 2:
             return None
         project = parts[0]
-        brief = body[len(project):]
+        brief = body[len(project) :]
     project = project.strip().strip("`#")
     brief = _strip_wrapping_quotes(brief.strip())
     if not project or not brief:
@@ -683,9 +701,15 @@ def parse_backlog_command(text: str) -> BacklogCommand | None:
     match = BACKLOG_RE.match(text or "")
     if not match:
         return None
-    owner = (match.group("owner1") or match.group("owner2") or match.group("owner3") or "").upper()
-    kind = (match.group("kind1") or match.group("kind2") or match.group("kind3") or "idea").lower()
-    item_text = _strip_wrapping_quotes((match.group("text") or match.group("text2") or "").strip())
+    owner = (
+        match.group("owner1") or match.group("owner2") or match.group("owner3") or ""
+    ).upper()
+    kind = (
+        match.group("kind1") or match.group("kind2") or match.group("kind3") or "idea"
+    ).lower()
+    item_text = _strip_wrapping_quotes(
+        (match.group("text") or match.group("text2") or "").strip()
+    )
     if not owner or not item_text:
         return None
     return BacklogCommand(owner=owner, kind=kind, text=item_text)
@@ -902,7 +926,11 @@ class MayorDiscordGateway:
         if subagents_args is not None:
             command_name = subagents_args.pop("command", "subagents.list")
             text = await asyncio.to_thread(
-                lambda: run_command(command_name, BemineSettings.load(), subagents_args).text
+                lambda: (
+                    run_command(
+                        command_name, BemineSettings.load(), subagents_args
+                    ).text
+                )
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
@@ -918,7 +946,9 @@ class MayorDiscordGateway:
         if phantom_args is not None:
             command_name = phantom_args.pop("command", "phantom.status")
             text = await asyncio.to_thread(
-                lambda: run_command(command_name, BemineSettings.load(), phantom_args).text
+                lambda: (
+                    run_command(command_name, BemineSettings.load(), phantom_args).text
+                )
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
@@ -926,7 +956,9 @@ class MayorDiscordGateway:
         if backlog_args is not None:
             command_name = backlog_args.pop("command", "backlog.list")
             text = await asyncio.to_thread(
-                lambda: run_command(command_name, BemineSettings.load(), backlog_args).text
+                lambda: (
+                    run_command(command_name, BemineSettings.load(), backlog_args).text
+                )
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
@@ -1020,6 +1052,7 @@ class MayorDiscordGateway:
         if normalized or saved_attachments:
             channel_key = str(message.channel.id)
             from bemine.db import BemineDB as _BemineDB
+
             _wdb = _BemineDB(self.settings.db_path)
             conversation_context = self._conversation_context(message)
             try:
@@ -1054,8 +1087,11 @@ class MayorDiscordGateway:
                 await responder.send(render_goal_start(goal_result))
                 return
             if await asyncio.to_thread(
-                maybe_consume_watcher_reply, BemineSettings.load(), _wdb,
-                channel_id=channel_key, text=normalized,
+                maybe_consume_watcher_reply,
+                BemineSettings.load(),
+                _wdb,
+                channel_id=channel_key,
+                text=normalized,
             ):
                 await responder.send("↪ Relayed your reply into the watched session.")
                 return
@@ -1077,7 +1113,9 @@ class MayorDiscordGateway:
             cancel_event = threading.Event()
             self._dispatch_cancel_events[channel_key] = cancel_event
             task = asyncio.ensure_future(
-                self._run_dispatch(message, normalized, saved_attachments, responder, cancel_event)
+                self._run_dispatch(
+                    message, normalized, saved_attachments, responder, cancel_event
+                )
             )
             self._dispatch_tasks[channel_key] = task
             try:
@@ -1497,6 +1535,16 @@ def _direct_observability_command(normalized_lower: str) -> str:
     }:
         return "pa.plan"
     if variants & {
+        "dream status",
+        "dream freshness",
+        "when did you last dream",
+        "when was the last dream",
+        "last dream",
+        "latest dream",
+        "is dream fresh",
+    }:
+        return "dream.status"
+    if variants & {
         "dream",
         "dream run",
         "run dream",
@@ -1506,6 +1554,18 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "record dream",
     }:
         return "dream.run"
+    if variants & {
+        "brief status",
+        "pa/smm brief status",
+        "pa smm brief status",
+        "brief freshness",
+        "when was the last pa/smm brief",
+        "when was the last pa smm brief",
+        "last pa/smm brief",
+        "latest pa/smm brief",
+        "is pa/smm brief fresh",
+    }:
+        return "brief.status"
     if variants & {
         "brief",
         "brief run",

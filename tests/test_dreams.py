@@ -7,7 +7,12 @@ from pathlib import Path
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.discord.store import Store
-from bemine.dreams import build_dream_datapoint, run_dream
+from bemine.dreams import (
+    build_dream_datapoint,
+    dream_status,
+    render_dream_status,
+    run_dream,
+)
 from bemine.jobs import run_job_by_id, seed_default_jobs
 
 
@@ -64,6 +69,12 @@ def test_run_dream_appends_jsonl_and_audits(tmp_path: Path) -> None:
     rows = BemineDB(settings.db_path).list_audit_events(category="dream", limit=1)
     assert rows[0]["event_type"] == "dream_recorded"
 
+    status = dream_status(settings)
+    assert status["entries"] == 1
+    assert status["latest_generated_at"]
+    assert status["signals"] >= 0
+    assert "Dream status:" in render_dream_status(status)
+
 
 def test_dream_job_is_seeded_and_runs(tmp_path: Path) -> None:
     settings = BemineSettings.load(
@@ -75,7 +86,9 @@ def test_dream_job_is_seeded_and_runs(tmp_path: Path) -> None:
     seed_default_jobs(db, settings=settings)
 
     assert db.get_job("dream") is not None
-    result = run_job_by_id(settings, "dream", sender=lambda text: {"id": "", "channel_id": ""})
+    result = run_job_by_id(
+        settings, "dream", sender=lambda text: {"id": "", "channel_id": ""}
+    )
 
     assert result.status == "success"
     assert "Dream recorded:" in result.output

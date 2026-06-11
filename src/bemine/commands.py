@@ -4,14 +4,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
 
-from bemine.backlog import default_backlog_owner, list_backlog_items, render_backlog_items
-from bemine.config import BemineSettings, config_bool, config_int, config_list, config_string
+from bemine.backlog import (
+    default_backlog_owner,
+    list_backlog_items,
+    render_backlog_items,
+)
+from bemine.config import (
+    BemineSettings,
+    config_bool,
+    config_int,
+    config_list,
+    config_string,
+)
 from bemine.config import config_path as bemine_config_path
 from bemine.config import load_bemine_config, render_toml_config
 from bemine.kernel import BemineKernel
 from bemine.context.subagents import load_subagent_context, render_subagent_context
 from bemine.phantom import phantom_build, phantom_install, phantom_status
-from bemine.phantom import render_phantom_build, render_phantom_install, render_phantom_status
+from bemine.phantom import (
+    render_phantom_build,
+    render_phantom_install,
+    render_phantom_status,
+)
 from bemine.smm import draft_smm_posts, render_smm_drafts
 
 
@@ -148,6 +162,13 @@ def _dream_run(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_dream(result), data=result.to_dict())
 
 
+def _dream_status(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.dreams import dream_status, render_dream_status
+
+    status = dream_status(settings)
+    return CommandResult(text=render_dream_status(status), data=status)
+
+
 def _brief_run(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.briefs import render_brief, run_brief
 
@@ -160,6 +181,13 @@ def _brief_run(settings: BemineSettings, args: Mapping) -> CommandResult:
         db=BemineKernel(settings).db,
     )
     return CommandResult(text=render_brief(result), data=result.to_dict())
+
+
+def _brief_status(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.briefs import brief_status, render_brief_status
+
+    status = brief_status(settings)
+    return CommandResult(text=render_brief_status(status), data=status)
 
 
 def _discord_sync_plan(settings: BemineSettings, args: Mapping) -> CommandResult:
@@ -233,7 +261,8 @@ def _subagents_show(settings: BemineSettings, args: Mapping) -> CommandResult:
         (
             item
             for item in context.profiles
-            if item.name.casefold() == normalized or item.path.name.casefold() == normalized
+            if item.name.casefold() == normalized
+            or item.path.name.casefold() == normalized
         ),
         None,
     )
@@ -246,7 +275,9 @@ def _phantom_status(settings: BemineSettings, args: Mapping) -> CommandResult:
     project_root = str(args.get("project_root") or "").strip() or None
     serial = str(args.get("serial") or "").strip()
     java_home = str(args.get("java_home") or "").strip() or None
-    payload = phantom_status(project_root=project_root, serial=serial, java_home=java_home)
+    payload = phantom_status(
+        project_root=project_root, serial=serial, java_home=java_home
+    )
     return CommandResult(text=render_phantom_status(payload), data=payload)
 
 
@@ -254,7 +285,9 @@ def _phantom_build(settings: BemineSettings, args: Mapping) -> CommandResult:
     project_root = str(args.get("project_root") or "").strip() or None
     java_home = str(args.get("java_home") or "").strip() or None
     timeout = int(args.get("timeout") or 600)
-    payload = phantom_build(project_root=project_root, java_home=java_home, timeout=timeout)
+    payload = phantom_build(
+        project_root=project_root, java_home=java_home, timeout=timeout
+    )
     return CommandResult(text=render_phantom_build(payload), data=payload)
 
 
@@ -291,7 +324,10 @@ def _smm_draft(settings: BemineSettings, args: Mapping) -> CommandResult:
 
 
 def _capabilities(settings: BemineSettings, args: Mapping) -> CommandResult:
-    from bemine.capabilities import build_capability_manifest, render_capability_manifest
+    from bemine.capabilities import (
+        build_capability_manifest,
+        render_capability_manifest,
+    )
 
     kernel = BemineKernel(settings)
     rows = [dict(r) for r in kernel.db.list_credential_profiles()]
@@ -320,8 +356,12 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     goal_interval = config_int("goal", "interval_secs", 600)
     continuity_enabled = config_bool("continuity", "enabled", True)
     continuity_devices = config_list("continuity", "devices", ["cdjk"])
-    session_fallback_channel = config_string("jobs", "session_fallback_channel", "session-updates")
-    session_auto_create_channels = config_bool("jobs", "session_auto_create_channels", True)
+    session_fallback_channel = config_string(
+        "jobs", "session_fallback_channel", "session-updates"
+    )
+    session_auto_create_channels = config_bool(
+        "jobs", "session_auto_create_channels", True
+    )
     recovery_poll_interval = config_int("recovery", "poll_interval_secs", 300)
     subagents_files = config_list("subagents", "files", [])
     subagents_context_limit = config_int("subagents", "context_limit", 12000)
@@ -330,8 +370,12 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     smm_target_channels = config_list("smm", "target_channels", ["X", "LinkedIn"])
     smm_style_path = config_string("smm", "style_path", "subagents/style.md")
     phantom_root = config_string("phantom", "project_root", "")
-    phantom_application_id = config_string("phantom", "application_id", "dev.phantom.service")
-    phantom_accessibility_service = config_string("phantom", "accessibility_service", ".PhantomAccessibilityService")
+    phantom_application_id = config_string(
+        "phantom", "application_id", "dev.phantom.service"
+    )
+    phantom_accessibility_service = config_string(
+        "phantom", "accessibility_service", ".PhantomAccessibilityService"
+    )
     phantom_java_home = config_string("phantom", "java_home", "")
     phantom_android_home = config_string("phantom", "android_home", "")
     active_watchers = len(BemineKernel(settings).db.list_active_project_watchers())
@@ -369,8 +413,8 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- goal sessions: `goal <project> <brief>` / `goal --list` / `goal --status <query>`",
         f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'} (`continuity` / `wake sessions after reboot?` / `uv run bemine continuity`)",
         "- focus today: `pa plan` / `what should I focus on today?` / `what should I focus on this week?` / `what should I do next?` / `what should I focus on tomorrow?`",
-        "- dream: `dream run` / `dream now` / `uv run bemine dream run` to condense recent history",
-        "- PA/SMM brief: `brief run` / `generate PA/SMM brief` / `uv run bemine brief run`",
+        "- dream: `dream status` / `dream run` / `dream now` / `when did you last dream?`",
+        "- PA/SMM brief: `brief status` / `brief run` / `generate PA/SMM brief` / `when was the last PA/SMM brief?`",
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
         "- discord sync plan: `discord sync plan` / `uv run bemine discord sync-project-channels --dry-run`",
@@ -394,7 +438,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
     summary_lines.extend(
         [
             "",
-        "Use `uv run bemine <command> --help` for the contract of any command.",
+            "Use `uv run bemine <command> --help` for the contract of any command.",
         ]
     )
     return CommandResult(
@@ -431,7 +475,11 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
 
 
 def _discord_routes(settings: BemineSettings, args: Mapping) -> CommandResult:
-    from bemine.discord.dispatch import DISPATCH_CONFIG_NAME, load_project_channels, project_channels_from_db
+    from bemine.discord.dispatch import (
+        DISPATCH_CONFIG_NAME,
+        load_project_channels,
+        project_channels_from_db,
+    )
 
     kernel = BemineKernel(settings)
     query = str(args.get("query") or "").strip()
@@ -466,10 +514,14 @@ def _discord_routes(settings: BemineSettings, args: Mapping) -> CommandResult:
     if query:
         needle = query.casefold()
         configured = [
-            row for row in configured if any(needle in str(value or "").casefold() for value in row.values())
+            row
+            for row in configured
+            if any(needle in str(value or "").casefold() for value in row.values())
         ]
         indexed = [
-            row for row in indexed if any(needle in str(value or "").casefold() for value in row.values())
+            row
+            for row in indexed
+            if any(needle in str(value or "").casefold() for value in row.values())
         ]
 
     config_path = settings.state_dir / DISPATCH_CONFIG_NAME
@@ -524,20 +576,36 @@ _SPECS = (
     CommandSpec("continuity", "cdjk line-cut recovery status", _continuity),
     CommandSpec("help", "Self-documenting command and config summary", _help),
     CommandSpec("discord.routes", "Discord project route management", _discord_routes),
-    CommandSpec("discord.sync_plan", "Dry-run Discord project channel sync", _discord_sync_plan),
-    CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
+    CommandSpec(
+        "discord.sync_plan", "Dry-run Discord project channel sync", _discord_sync_plan
+    ),
+    CommandSpec(
+        "dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status
+    ),
     CommandSpec("goal.start", "Start a managed goal session", _goal_start),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),
     CommandSpec("config.show", "Show parsed Bemine config", _config_show),
-    CommandSpec("dream.run", "Record one self-improvement dream data point", _dream_run),
+    CommandSpec(
+        "dream.run", "Record one self-improvement dream data point", _dream_run
+    ),
+    CommandSpec(
+        "dream.status", "Show latest self-improvement dream data point", _dream_status
+    ),
     CommandSpec("brief.run", "Generate PA/SMM brief and backlog nudges", _brief_run),
+    CommandSpec("brief.status", "Show latest PA/SMM brief freshness", _brief_status),
     CommandSpec("subagents.list", "List configured subagent profiles", _subagents_list),
-    CommandSpec("subagents.show", "Show one configured subagent profile", _subagents_show),
-    CommandSpec("phantom.status", "Inspect Phantom Android app readiness", _phantom_status),
+    CommandSpec(
+        "subagents.show", "Show one configured subagent profile", _subagents_show
+    ),
+    CommandSpec(
+        "phantom.status", "Inspect Phantom Android app readiness", _phantom_status
+    ),
     CommandSpec("phantom.build", "Build the Phantom Android APK", _phantom_build),
-    CommandSpec("phantom.install", "Install the Phantom APK on the phone", _phantom_install),
+    CommandSpec(
+        "phantom.install", "Install the Phantom APK on the phone", _phantom_install
+    ),
     CommandSpec("smm.draft", "Draft Ampixa-style social posts", _smm_draft),
     CommandSpec("capabilities", "Credential capabilities", _capabilities),
     CommandSpec("usage", "Codex/Claude/Kimi token usage", _usage),

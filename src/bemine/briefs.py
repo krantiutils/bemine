@@ -24,7 +24,9 @@ STATUS_BOILERPLATE_RE = re.compile(
     re.IGNORECASE,
 )
 PARTIAL_QUESTION_RE = re.compile(r'"question"\s*:\s*"([^"]+)', re.IGNORECASE)
-PROJECT_NAME_RE = re.compile(r"\b([A-Za-z0-9][A-Za-z0-9_.-]+-(?:toolkit|bench|better|core|tests))\b")
+PROJECT_NAME_RE = re.compile(
+    r"\b([A-Za-z0-9][A-Za-z0-9_.-]+-(?:toolkit|bench|better|core|tests))\b"
+)
 
 
 @dataclass(frozen=True)
@@ -77,9 +79,21 @@ def run_brief(
     db = db or BemineDB(settings.db_path)
     generated_at = generated_at or datetime.now(timezone.utc)
     statuses = statuses if statuses is not None else _collect_statuses(settings)
-    inbound = inbound if inbound is not None else _recent_rows(db, "inbound_messages", "received_at", limit=limit)
-    outbound = outbound if outbound is not None else _recent_rows(db, "outbound_messages", "sent_at", limit=limit)
-    audits = audits if audits is not None else [dict(row) for row in db.list_audit_events(limit=limit)]
+    inbound = (
+        inbound
+        if inbound is not None
+        else _recent_rows(db, "inbound_messages", "received_at", limit=limit)
+    )
+    outbound = (
+        outbound
+        if outbound is not None
+        else _recent_rows(db, "outbound_messages", "sent_at", limit=limit)
+    )
+    audits = (
+        audits
+        if audits is not None
+        else [dict(row) for row in db.list_audit_events(limit=limit)]
+    )
     tools = dict(tools) if tools is not None else detect_tool_capabilities()
     items = build_brief_items(
         statuses=statuses,
@@ -183,7 +197,9 @@ def build_brief_items(
                 ),
             )
     for row in outbound:
-        content = compact_text(_clean_evidence_text(str(row.get("content") or "")), limit=260)
+        content = compact_text(
+            _clean_evidence_text(str(row.get("content") or "")), limit=260
+        )
         if not content:
             continue
         if _is_failure(content):
@@ -210,7 +226,9 @@ def build_brief_items(
             )
 
     for row in inbound:
-        content = compact_text(_clean_evidence_text(str(row.get("content") or "")), limit=220)
+        content = compact_text(
+            _clean_evidence_text(str(row.get("content") or "")), limit=220
+        )
         if "focus" in content.casefold() or "today" in content.casefold():
             _add_item(
                 items,
@@ -254,6 +272,62 @@ def render_brief(result: BriefResult) -> str:
     )
 
 
+def brief_status(settings: BemineSettings) -> dict[str, Any]:
+    brief_dir = settings.vault_dir / "Briefs"
+    paths = (
+        sorted(
+            brief_dir.glob("*-pa-smm.md"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        if brief_dir.exists()
+        else []
+    )
+    status: dict[str, Any] = {
+        "schema": "bemine.brief_status.v1",
+        "directory": str(brief_dir),
+        "exists": bool(paths),
+        "count": len(paths),
+        "latest": {},
+    }
+    if not paths:
+        return status
+    latest = paths[0]
+    text = latest.read_text(encoding="utf-8", errors="replace")
+    generated_at = _brief_generated_at(text)
+    owner_counts = _brief_owner_counts(text)
+    stat = latest.stat()
+    status["latest"] = {
+        "path": str(latest),
+        "generated_at": generated_at,
+        "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "owner_counts": owner_counts,
+    }
+    return status
+
+
+def render_brief_status(status: dict[str, Any]) -> str:
+    lines = [
+        "PA/SMM brief status:",
+        f"- directory: `{status['directory']}`",
+        f"- brief_files: {status.get('count', 0)}",
+    ]
+    latest = status.get("latest") or {}
+    if not latest:
+        lines.append("- latest: none")
+        return "\n".join(lines) + "\n"
+    owner_counts = latest.get("owner_counts") or {}
+    lines.extend(
+        [
+            f"- latest_path: `{latest.get('path')}`",
+            f"- latest_generated_at: {latest.get('generated_at') or 'unknown'}",
+            f"- file_mtime: {latest.get('mtime') or 'unknown'}",
+            f"- latest_items: PA={owner_counts.get('PA', 0)} SMM={owner_counts.get('SMM', 0)}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def render_brief_markdown(
     *,
     generated_at: str,
@@ -285,10 +359,38 @@ def render_brief_markdown(
     return "\n".join(lines)
 
 
-def brief_path(settings: BemineSettings, *, generated_at: datetime | None = None) -> Path:
+def _brief_generated_at(text: str) -> str:
+    match = re.search(r"^Generated:\s*`([^`]+)`", text, flags=re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def _brief_owner_counts(text: str) -> dict[str, int]:
+    counts = {"PA": 0, "SMM": 0}
+    current = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "## PA":
+            current = "PA"
+            continue
+        if stripped == "## SMM":
+            current = "SMM"
+            continue
+        if stripped.startswith("## "):
+            current = ""
+            continue
+        if current in counts and stripped.startswith("- [ ] "):
+            counts[current] += 1
+    return counts
+
+
+def brief_path(
+    settings: BemineSettings, *, generated_at: datetime | None = None
+) -> Path:
     generated_at = generated_at or datetime.now(timezone.utc)
     ObsidianVault(settings.vault_dir)
-    return settings.vault_dir / "Briefs" / f"{generated_at.date().isoformat()}-pa-smm.md"
+    return (
+        settings.vault_dir / "Briefs" / f"{generated_at.date().isoformat()}-pa-smm.md"
+    )
 
 
 def _record_new_backlog_items(
@@ -384,7 +486,9 @@ def _add_android_items(
             )
 
 
-def _add_item(items: list[BriefItem], seen: set[tuple[str, str]], item: BriefItem) -> None:
+def _add_item(
+    items: list[BriefItem], seen: set[tuple[str, str]], item: BriefItem
+) -> None:
     key = (item.owner, item.text.casefold())
     if key in seen:
         return
@@ -392,7 +496,9 @@ def _add_item(items: list[BriefItem], seen: set[tuple[str, str]], item: BriefIte
     items.append(item)
 
 
-def _extend_owner_lines(lines: list[str], items: list[BriefItem], *, owner: str) -> None:
+def _extend_owner_lines(
+    lines: list[str], items: list[BriefItem], *, owner: str
+) -> None:
     owner_items = [item for item in items if item.owner == owner]
     if not owner_items:
         lines.append("- No generated items.")
@@ -404,7 +510,9 @@ def _extend_owner_lines(lines: list[str], items: list[BriefItem], *, owner: str)
 
 def _is_failure(text: str) -> bool:
     haystack = text.casefold()
-    return any(word in haystack for word in ("failed", "blocked", "crashed", "unauthorized"))
+    return any(
+        word in haystack for word in ("failed", "blocked", "crashed", "unauthorized")
+    )
 
 
 def _is_smm_worthy(text: str) -> bool:

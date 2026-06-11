@@ -27,10 +27,15 @@ from .jobs import (
     seed_default_jobs,
     upsert_reminder_job,
 )
-from .goals import list_goal_sessions, render_goal_sessions, render_goal_start, start_goal
+from .goals import (
+    list_goal_sessions,
+    render_goal_sessions,
+    render_goal_start,
+    start_goal,
+)
 from .health import collect_health, render_continuity, render_health
-from .dreams import render_dream, run_dream
-from .briefs import render_brief, run_brief
+from .dreams import dream_status, render_dream, render_dream_status, run_dream
+from .briefs import brief_status, render_brief, render_brief_status, run_brief
 from .pa import build_pa_plan, render_pa_plan
 from .smm import draft_smm_posts, render_smm_drafts
 from .phantom import (
@@ -246,6 +251,7 @@ Dreams/dreams.jsonl. The daemon runs this periodically via the built-in
 dream job; use `dream run` for an immediate manual pass.
 
 Examples:
+  uv run bemine dream status
   uv run bemine dream run
   uv run bemine dream run --limit 120 --json
 """
@@ -259,6 +265,7 @@ capabilities. It writes a dated Markdown file under Briefs/ and, by default,
 adds new non-duplicate PA/SMM backlog items.
 
 Examples:
+  uv run bemine brief status
   uv run bemine brief run
   uv run bemine brief run --no-backlog
   uv run bemine brief run --json
@@ -870,6 +877,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HELP_FORMATTER,
     )
     dream_sub = dream.add_subparsers(dest="dream_command", required=True)
+    dream_status_cmd = dream_sub.add_parser(
+        "status", help="Show latest dream data point freshness."
+    )
+    dream_status_cmd.add_argument(
+        "--json", action="store_true", help="Emit dream status as JSON."
+    )
     dream_run = dream_sub.add_parser("run", help="Record one dream data point.")
     dream_run.add_argument(
         "--limit",
@@ -877,7 +890,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=80,
         help="Maximum recent inbound/outbound/audit rows to inspect.",
     )
-    dream_run.add_argument("--json", action="store_true", help="Emit dream data as JSON.")
+    dream_run.add_argument(
+        "--json", action="store_true", help="Emit dream data as JSON."
+    )
 
     brief = sub.add_parser(
         "brief",
@@ -887,6 +902,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HELP_FORMATTER,
     )
     brief_sub = brief.add_subparsers(dest="brief_command", required=True)
+    brief_status_cmd = brief_sub.add_parser(
+        "status", help="Show latest PA/SMM brief freshness."
+    )
+    brief_status_cmd.add_argument(
+        "--json", action="store_true", help="Emit brief status as JSON."
+    )
     brief_run = brief_sub.add_parser("run", help="Generate the current PA/SMM brief.")
     brief_run.add_argument(
         "--limit",
@@ -991,11 +1012,11 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=HELP_FORMATTER,
     )
     usage_cmd.add_argument(
-        "--provider", default="", help="Filter by provider name, e.g. kimi, codex, claude."
+        "--provider",
+        default="",
+        help="Filter by provider name, e.g. kimi, codex, claude.",
     )
-    usage_cmd.add_argument(
-        "--json", action="store_true", help="Emit rollup as JSON."
-    )
+    usage_cmd.add_argument("--json", action="store_true", help="Emit rollup as JSON.")
 
     dispatch = sub.add_parser(
         "dispatch",
@@ -1394,16 +1415,24 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_disable = jobs_sub.add_parser("disable", help="Disable a job.")
     jobs_disable.add_argument("job_id", help="Job id.")
 
-    deploy = sub.add_parser("deploy", help="Deploy Bemine's committed code (test-gated, auto-rollback).")
+    deploy = sub.add_parser(
+        "deploy", help="Deploy Bemine's committed code (test-gated, auto-rollback)."
+    )
     deploy_sub = deploy.add_subparsers(dest="deploy_command", required=False)
     deploy_sub.add_parser("status", help="Show the current deploy state.")
 
     watch = sub.add_parser("watch", help="Manage per-project watchers.")
     watch_sub = watch.add_subparsers(dest="watch_command", required=True)
-    w_start = watch_sub.add_parser("start", help="Start/replace a watcher for a project.")
-    w_start.add_argument("--project", required=True, help="project id (e.g. channel:<name>)")
+    w_start = watch_sub.add_parser(
+        "start", help="Start/replace a watcher for a project."
+    )
+    w_start.add_argument(
+        "--project", required=True, help="project id (e.g. channel:<name>)"
+    )
     w_start.add_argument("--brief", required=True, help="context brief / goal")
-    w_start.add_argument("--interval", type=int, default=300, help="poll interval seconds")
+    w_start.add_argument(
+        "--interval", type=int, default=300, help="poll interval seconds"
+    )
     w_stop = watch_sub.add_parser("stop", help="Stop a watcher.")
     w_stop.add_argument("--project", required=True)
     w_status = watch_sub.add_parser("status", help="Show a watcher.")
@@ -1921,8 +1950,7 @@ def main(argv: list[str] | None = None) -> None:
                 (
                     item
                     for item in context.profiles
-                    if item.name.casefold() == name
-                    or item.path.name.casefold() == name
+                    if item.name.casefold() == name or item.path.name.casefold() == name
                 ),
                 None,
             )
@@ -1990,14 +2018,26 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 print(render_smm_drafts(result), end="")
     elif args.command == "dream":
-        if args.dream_command == "run":
+        if args.dream_command == "status":
+            status = dream_status(settings)
+            if args.json:
+                print(json.dumps(status, indent=2, sort_keys=True))
+            else:
+                print(render_dream_status(status), end="")
+        elif args.dream_command == "run":
             result = run_dream(settings, limit=args.limit, db=kernel.db)
             if args.json:
                 print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
             else:
                 print(render_dream(result), end="")
     elif args.command == "brief":
-        if args.brief_command == "run":
+        if args.brief_command == "status":
+            status = brief_status(settings)
+            if args.json:
+                print(json.dumps(status, indent=2, sort_keys=True))
+            else:
+                print(render_brief_status(status), end="")
+        elif args.brief_command == "run":
             result = run_brief(
                 settings,
                 limit=args.limit,
@@ -2009,11 +2049,14 @@ def main(argv: list[str] | None = None) -> None:
             else:
                 print(render_brief(result), end="")
     elif args.command == "usage":
-        rollup = kernel.db.usage_rollup(provider=getattr(args, "provider", None) or None)
+        rollup = kernel.db.usage_rollup(
+            provider=getattr(args, "provider", None) or None
+        )
         if getattr(args, "json", False):
             print(json.dumps(rollup, indent=2))
         else:
             from bemine.usage import render_usage
+
             print(render_usage(rollup))
     elif args.command == "context":
         if args.context_command == "show":
@@ -2280,25 +2323,33 @@ def main(argv: list[str] | None = None) -> None:
             print(json.dumps({"job_id": args.job_id, "enabled": False}, sort_keys=True))
     elif args.command == "deploy":
         from bemine.deploy.state import DeployState, state_path
+
         settings = _settings_from_args(args)
         if getattr(args, "deploy_command", None) == "status":
             st = DeployState.load(state_path(settings))
-            print(f"phase={st.phase} target={st.target_sha[:8]} rollback={st.rollback_sha[:8]}")
+            print(
+                f"phase={st.phase} target={st.target_sha[:8]} rollback={st.rollback_sha[:8]}"
+            )
         else:
             st = run_deploy(settings, self_restart_daemon=False)
             print(f"deploy {st.phase} (target={st.target_sha[:8]})")
     elif args.command == "watch":
         from bemine.db import BemineDB
+
         settings = _settings_from_args(args)
         db = BemineDB(settings.db_path)
         if args.watch_command == "start":
             channel_id = db.get_channel_id_for_project(args.project) or ""
             db.upsert_project_watcher(
-                project_id=args.project, channel_id=channel_id,
-                brief=args.brief, interval_secs=args.interval,
+                project_id=args.project,
+                channel_id=channel_id,
+                brief=args.brief,
+                interval_secs=args.interval,
             )
-            print(f"watcher active for {args.project} (every {args.interval}s, "
-                  f"channel={channel_id or 'unknown'})")
+            print(
+                f"watcher active for {args.project} (every {args.interval}s, "
+                f"channel={channel_id or 'unknown'})"
+            )
         elif args.watch_command == "stop":
             db.update_project_watcher(args.project, status="stopped")
             print(f"watcher stopped for {args.project}")
@@ -2321,8 +2372,10 @@ def main(argv: list[str] | None = None) -> None:
                 print("No active watchers.")
             else:
                 for row in rows:
-                    print(f"{row['project_id']}\t{row['status']}\t"
-                          f"every {row['interval_secs']}s\tchannel={row['channel_id']}")
+                    print(
+                        f"{row['project_id']}\t{row['status']}\t"
+                        f"every {row['interval_secs']}s\tchannel={row['channel_id']}"
+                    )
     elif args.command == "daemon":
         daemon = BemineDaemon(settings, poll_seconds=args.poll_seconds)
         if args.once:
