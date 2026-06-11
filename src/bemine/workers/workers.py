@@ -4,7 +4,9 @@ import json
 import re
 import shlex
 import subprocess
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -47,6 +49,7 @@ class WorkerRecord:
     command: str
     status: str
     exists: bool
+    runtime_session_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -59,6 +62,7 @@ class WorkerRecord:
             "command": self.command,
             "status": self.status,
             "exists": self.exists,
+            "runtime_session_id": self.runtime_session_id,
         }
 
 
@@ -189,14 +193,15 @@ class WorkerController:
         command = command.strip() or DEFAULT_RUNTIME_COMMANDS.get(runtime, runtime)
         if self.tmux.exists(name):
             raise WorkerError(f"tmux session already exists: {name}")
-        tmux_command = _command_in_cwd(cwd, command)
-        self.tmux.start(name, tmux_command)
+        launch_command, runtime_session_id = _pin_runtime_session(runtime, command)
+        self.tmux.start(name, _command_in_cwd(cwd, launch_command))
         return self._record(
             name=name,
             runtime=runtime,
             cwd=cwd,
             command=command,
             status="running",
+            runtime_session_id=runtime_session_id,
         )
 
     def start_on_device(
@@ -274,6 +279,7 @@ class WorkerController:
                     command=str(row["command"]),
                     status=status,
                     exists=exists,
+                    runtime_session_id=str(row["runtime_session_id"] or ""),
                 )
             )
         return records
@@ -430,6 +436,7 @@ class WorkerController:
         status: str,
         transport: str = "tmux",
         device_id: str = "",
+        runtime_session_id: str = "",
     ) -> WorkerRecord:
         project_id = project_id_from_cwd(str(cwd))
         device_id = device_id or self.settings.device_id
@@ -442,6 +449,7 @@ class WorkerController:
             cwd=str(cwd),
             command=command,
             status=status,
+            runtime_session_id=runtime_session_id,
         )
         record = WorkerRecord(
             name=name,
@@ -453,6 +461,7 @@ class WorkerController:
             command=command,
             status=status,
             exists=True,
+            runtime_session_id=runtime_session_id,
         )
         event_type = "worker_started" if status == "running" else "worker_adopted"
         self._audit(event_type, record, {})
@@ -480,6 +489,7 @@ class WorkerController:
             command=str(row["command"]),
             status=str(row["status"]),
             exists=exists,
+            runtime_session_id=str(row["runtime_session_id"] or ""),
         )
 
     def _record_exists(self, record: WorkerRecord) -> bool:
@@ -539,6 +549,43 @@ RESUME_NUDGE = (
     "Bemine restored this session after a reboot/line cut. "
     "Review the conversation above and continue from where you left off."
 )
+# Pre-start slack when matching indexed sessions to a worker: ingestion
+# timestamps and worker created_at come from different clocks.
+SESSION_LINK_SLACK_SECS = 120.0
+
+
+def _pin_runtime_session(runtime: str, command: str) -> tuple[str, str]:
+    """Pin a deterministic conversation id at launch where the CLI supports it.
+
+    claude accepts --session-id <uuid> and --resume keeps that id (forking is
+    opt-in via --fork-session), so the conversation is recoverable by id from
+    the first turn. codex has no launch-time id flag; its id is captured later
+    by link_worker_runtime_sessions. Returns (launch_command, session_id)."""
+    if runtime.strip().lower() != "claude":
+        return command, ""
+    if "--session-id" in command or "--resume" in command:
+        return command, ""
+    session_id = str(uuid.uuid4())
+    return f"{command} --session-id {session_id}", session_id
+
+
+def _is_resumable_session_id(raw_id: str) -> bool:
+    # stable_id fallbacks (claude_*/codex_*) are index-internal, not CLI-resumable
+    return bool(raw_id) and not raw_id.startswith(("claude_", "codex_"))
+
+
+def _native_resume_command(command: str, runtime_key: str, session_id: str) -> str:
+    if runtime_key == "claude":
+        return f"{command} --resume {session_id}"
+    binary = command.split()[0] if command.split() else "codex"
+    return f"{binary} resume {session_id} --dangerously-bypass-approvals-and-sandbox"
+
+
+def _iso_epoch(value: str) -> float:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 def _resume_launch_command(
@@ -551,8 +598,9 @@ def _resume_launch_command(
 ) -> tuple[str, str] | None:
     """Resolve a runtime-native resume launch for a worker's last conversation.
 
-    Returns (launch_command, runtime_session_id) when the sessions index holds a
-    resumable conversation for this cwd, else None (caller starts fresh)."""
+    Legacy heuristic for workers without a captured runtime_session_id: returns
+    (launch_command, runtime_session_id) from the latest indexed session for
+    this cwd, else None (caller starts fresh)."""
     runtime_key = runtime.strip().lower()
     if runtime_key not in {"claude", "codex"}:
         return None
@@ -562,16 +610,60 @@ def _resume_launch_command(
     if row is None:
         return None
     raw_id = str(row["session_id"] or "").removeprefix(f"{runtime_key}:")
-    # stable_id fallbacks (claude_*/codex_*) are index-internal, not CLI-resumable
-    if not raw_id or raw_id.startswith(("claude_", "codex_")):
+    if not _is_resumable_session_id(raw_id):
         return None
-    if runtime_key == "claude":
-        return f"{command} --resume {raw_id}", raw_id
-    binary = command.split()[0] if command.split() else "codex"
-    return (
-        f"{binary} resume {raw_id} --dangerously-bypass-approvals-and-sandbox",
-        raw_id,
-    )
+    return _native_resume_command(command, runtime_key, raw_id), raw_id
+
+
+def link_worker_runtime_sessions(
+    settings: BemineSettings,
+    *,
+    db: BemineDB | None = None,
+) -> list[tuple[str, str]]:
+    """Capture conversation ids for running local workers that lack one.
+
+    claude workers get their id pinned at launch; this pass covers codex (no
+    launch-time id flag) and pre-capture workers. Only sessions whose
+    started_at falls after the worker's created_at qualify, so a manual
+    session in the same cwd that predates the worker can never be claimed."""
+    db = db or BemineDB(settings.db_path)
+    linked: list[tuple[str, str]] = []
+    for row in db.list_managed_sessions():
+        if str(row["runtime_session_id"] or ""):
+            continue
+        runtime_key = str(row["runtime"]).strip().lower()
+        if runtime_key not in {"claude", "codex"}:
+            continue
+        if str(row["transport"]) != "tmux":
+            continue
+        if str(row["device_id"]) not in {settings.device_id, "local"}:
+            continue
+        if str(row["status"]) not in {"running", "adopted"}:
+            continue
+        started_after = float(row["created_at"] or 0) - SESSION_LINK_SLACK_SECS
+        for session in db.sessions_for_cwd(
+            runtime=runtime_key, device_id=settings.device_id, cwd=str(row["cwd"])
+        ):
+            if _iso_epoch(str(session["started_at"] or "")) < started_after:
+                continue
+            raw_id = str(session["session_id"] or "").removeprefix(f"{runtime_key}:")
+            if not _is_resumable_session_id(raw_id):
+                continue
+            name = str(row["name"])
+            db.set_worker_runtime_session(name, raw_id)
+            db.record_audit_event(
+                category="worker",
+                event_type="worker_session_linked",
+                actor="worker-controller",
+                device_id=settings.device_id,
+                project_id=str(row["project_id"]),
+                payload_json=json.dumps(
+                    {"name": name, "runtime_session_id": raw_id}, sort_keys=True
+                ),
+            )
+            linked.append((name, raw_id))
+            break
+    return linked
 
 
 def resume_missing_local_workers(
@@ -607,22 +699,34 @@ def resume_missing_local_workers(
         command = record.command.strip()
         if not command or command == "adopted-existing-tmux-session":
             continue
+        runtime_key = record.runtime.strip().lower()
         launch_command = command
         resumed_session = ""
-        resume = _resume_launch_command(
-            db,
-            settings,
-            runtime=record.runtime,
-            cwd=str(cwd.resolve()),
-            command=command,
-        )
-        if resume is not None:
-            launch_command, resumed_session = resume
+        if _is_resumable_session_id(record.runtime_session_id):
+            # deterministic path: the id captured at start (claude) or by the
+            # linking pass (codex); both CLIs keep the id across resumes
+            resumed_session = record.runtime_session_id
+            launch_command = _native_resume_command(
+                command, runtime_key, resumed_session
+            )
+        else:
+            resume = _resume_launch_command(
+                db,
+                settings,
+                runtime=record.runtime,
+                cwd=str(cwd.resolve()),
+                command=command,
+            )
+            if resume is not None:
+                launch_command, resumed_session = resume
+        session_id = resumed_session
+        if not resumed_session:
+            launch_command, session_id = _pin_runtime_session(runtime_key, command)
         tmux.start(record.name, _command_in_cwd(cwd.resolve(), launch_command))
         if resumed_session:
             tmux.send(record.name, RESUME_NUDGE)
-        # record keeps the ORIGINAL command: claude forks a new session id on
-        # every resume, so a persisted --resume flag would go stale
+        # record keeps the ORIGINAL command; the conversation id lives in
+        # runtime_session_id and the resume flags are rebuilt per launch
         restarted = controller._record(
             name=record.name,
             runtime=record.runtime,
@@ -631,6 +735,7 @@ def resume_missing_local_workers(
             status="running",
             transport="tmux",
             device_id=settings.device_id,
+            runtime_session_id=session_id,
         )
         controller._audit(
             "worker_resumed_after_outage",

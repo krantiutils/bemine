@@ -78,11 +78,15 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `[continuity]` pass restarts Bemine-managed local tmux workers that were recorded as
   `running` but whose tmux session disappeared. This only applies to managed workers
   (especially `bemine goal` sessions), not arbitrary/adopted terminal sessions.
-  Claude/codex workers come back WITH their conversation: continuity resolves the
-  worker's latest indexed session for that cwd and relaunches via `claude --resume
-  <id>` / `codex resume <id>`, then nudges it to continue (audit:
-  `worker_resumed_after_outage` with `resumed_runtime_session`). No indexed session →
-  fresh start, same as before.
+  Claude/codex workers come back WITH their conversation: each managed worker's
+  conversation id is recorded in `managed_sessions.runtime_session_id` — claude
+  workers are pinned at launch with a generated `--session-id <uuid>` (resume keeps
+  the id; forking is opt-in), codex workers are captured by the daemon's
+  `worker_session_linked` pass (only sessions started AFTER the worker counts, so a
+  manual session in the same cwd is never claimed). Continuity relaunches via
+  `claude --resume <id>` / `codex resume <id>` and nudges the agent to continue
+  (audit: `worker_resumed_after_outage` with `resumed_runtime_session`). No captured
+  or indexed session → fresh start (claude gets a new pinned id).
 - Session watcher updates create Discord project channels on first active sighting, then
   route started/done/needs-input updates there; non-project sessions use
   `[jobs].session_fallback_channel`.

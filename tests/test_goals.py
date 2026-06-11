@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bemine.config import BemineSettings
@@ -10,7 +12,11 @@ from bemine.db import BemineDB
 from bemine.goals import list_goal_sessions, render_goal_sessions, start_goal
 from bemine.index.models import SessionRecord
 from bemine.index.status import SessionStatus
-from bemine.workers.workers import WorkerController, resume_missing_local_workers
+from bemine.workers.workers import (
+    WorkerController,
+    link_worker_runtime_sessions,
+    resume_missing_local_workers,
+)
 
 
 def test_start_goal_starts_worker_sends_prompt_and_registers_watcher(
@@ -381,6 +387,206 @@ def test_resume_missing_local_workers_ignores_other_device_sessions(
     resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
 
     assert "--resume" not in tmux.started_commands["goal-resume"]
+
+
+def test_worker_start_pins_claude_session_id(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    record = controller.start(
+        name="goal-pin",
+        runtime="claude",
+        cwd=project,
+        command="claude --dangerously-skip-permissions",
+    )
+
+    started = tmux.started_commands["goal-pin"]
+    assert "--session-id " in started
+    assert record.runtime_session_id
+    assert record.runtime_session_id in started
+    assert uuid.UUID(record.runtime_session_id)
+    row = db.get_managed_session("goal-pin")
+    assert row is not None
+    assert row["runtime_session_id"] == record.runtime_session_id
+    assert row["command"] == "claude --dangerously-skip-permissions"
+
+
+def test_worker_start_does_not_pin_codex_session_id(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    record = controller.start(
+        name="goal-codex", runtime="codex", cwd=project, command="codex --yolo"
+    )
+
+    assert "--session-id" not in tmux.started_commands["goal-codex"]
+    assert record.runtime_session_id == ""
+
+
+def test_link_worker_runtime_sessions_links_session_started_after_worker(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="codex", command="codex --yolo")
+    future = datetime.now(timezone.utc) + timedelta(seconds=60)
+    _index_session(
+        db,
+        session_id="codex:44444444-4444-4444-8444-444444444444",
+        runtime="codex",
+        cwd=cwd,
+        updated_at=future.isoformat(),
+    )
+
+    linked = link_worker_runtime_sessions(settings, db=db)
+
+    assert linked == [("goal-resume", "44444444-4444-4444-8444-444444444444")]
+    row = db.get_managed_session("goal-resume")
+    assert row is not None
+    assert row["runtime_session_id"] == "44444444-4444-4444-8444-444444444444"
+
+
+def test_link_worker_runtime_sessions_ignores_session_started_before_worker(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="codex", command="codex --yolo")
+    _index_session(
+        db,
+        session_id="codex:55555555-5555-4555-8555-555555555555",
+        runtime="codex",
+        cwd=cwd,
+        updated_at="2020-01-01T00:00:00+00:00",
+    )
+
+    linked = link_worker_runtime_sessions(settings, db=db)
+
+    assert linked == []
+    row = db.get_managed_session("goal-resume")
+    assert row is not None
+    assert row["runtime_session_id"] == ""
+
+
+def test_link_worker_runtime_sessions_skips_workers_with_session(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="codex", command="codex --yolo")
+    db.set_worker_runtime_session("goal-resume", "66666666-6666-4666-8666-666666666666")
+    future = datetime.now(timezone.utc) + timedelta(seconds=60)
+    _index_session(
+        db,
+        session_id="codex:77777777-7777-4777-8777-777777777777",
+        runtime="codex",
+        cwd=cwd,
+        updated_at=future.isoformat(),
+    )
+
+    assert link_worker_runtime_sessions(settings, db=db) == []
+    row = db.get_managed_session("goal-resume")
+    assert row is not None
+    assert row["runtime_session_id"] == "66666666-6666-4666-8666-666666666666"
+
+
+def test_resume_prefers_stored_runtime_session_id_over_index(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(
+        db, cwd=cwd, runtime="claude", command="claude --dangerously-skip-permissions"
+    )
+    db.set_worker_runtime_session("goal-resume", "88888888-8888-4888-8888-888888888888")
+    _index_session(
+        db,
+        session_id="claude:99999999-9999-4999-8999-999999999999",
+        runtime="claude",
+        cwd=cwd,
+        updated_at="2026-06-11T09:00:00+00:00",
+    )
+    tmux = FakeTmux()
+
+    resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    started = tmux.started_commands["goal-resume"]
+    assert "--resume 88888888-8888-4888-8888-888888888888" in started
+    assert "99999999" not in started
+    row = db.get_managed_session("goal-resume")
+    assert row is not None
+    assert row["runtime_session_id"] == "88888888-8888-4888-8888-888888888888"
+
+
+def test_resume_claude_fallback_pins_fresh_session_id(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(
+        db, cwd=cwd, runtime="claude", command="claude --dangerously-skip-permissions"
+    )
+    tmux = FakeTmux()
+
+    resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    started = tmux.started_commands["goal-resume"]
+    assert "--resume" not in started
+    assert "--session-id " in started
+    row = db.get_managed_session("goal-resume")
+    assert row is not None
+    assert row["runtime_session_id"]
+    assert row["runtime_session_id"] in started
+    assert tmux.sent["goal-resume"] == []
 
 
 def test_list_goal_sessions_joins_goal_worker_and_active_watcher(

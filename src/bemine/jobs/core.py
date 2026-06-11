@@ -43,7 +43,7 @@ class JobRunResult:
 def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition, ...]:
     from ..config import config_string
 
-    devices = (settings.status_devices if settings else ["local", "mbp", "mbp2", "k2"])
+    devices = settings.status_devices if settings else ["local", "mbp", "mbp2", "k2"]
     # Who to DM with session updates. Empty -> falls back to the home channel.
     notify_user_id = config_string("discord", "notify_user_id", "")
     session_config: dict[str, Any] = {
@@ -201,7 +201,10 @@ def run_due_jobs(
 ) -> list[JobRunResult]:
     kernel = BemineKernel(settings)
     seed_default_jobs(kernel.db, settings=settings, now=now)
-    return [run_job_row(settings, row, sender=sender, now=now) for row in due_jobs(kernel.db, now=now)]
+    return [
+        run_job_row(settings, row, sender=sender, now=now)
+        for row in due_jobs(kernel.db, now=now)
+    ]
 
 
 def run_job_by_id(
@@ -241,7 +244,9 @@ def run_job_row(
         # there are no events — don't post an empty message or touch an unbound `sent`).
         if config.get("notify_discord", False) and output.strip():
             sender = sender or _discord_sender(
-                db, channel_id=config.get("channel_id"), dm_user_id=config.get("dm_user_id")
+                db,
+                channel_id=config.get("channel_id"),
+                dm_user_id=config.get("dm_user_id"),
             )
             sent = dict(sender(output))
             notified = bool(sent.get("id") or sent.get("message_id"))
@@ -342,7 +347,9 @@ def next_run_after(schedule: str, after: datetime) -> datetime:
             and candidate.hour in hour_set
             and candidate.day in day_set
             and candidate.month in month_set
-            and (cron_weekday in weekday_set or (cron_weekday == 0 and 7 in weekday_set))
+            and (
+                cron_weekday in weekday_set or (cron_weekday == 0 and 7 in weekday_set)
+            )
         ):
             return candidate
         candidate += timedelta(minutes=1)
@@ -378,8 +385,13 @@ class BemineDaemon:
             time.sleep(self.poll_seconds)
 
     def _deploy_tick(self) -> None:
-        from bemine.deploy.pipeline import run_deploy, maybe_confirm_deploy, reap_stale_deploy
+        from bemine.deploy.pipeline import (
+            run_deploy,
+            maybe_confirm_deploy,
+            reap_stale_deploy,
+        )
         from bemine.deploy.state import DeployState, state_path
+
         try:
             write_heartbeat(self.settings, "daemon", self._boot_sha)
         except Exception:
@@ -387,7 +399,9 @@ class BemineDaemon:
         try:
             st = DeployState.load(state_path(self.settings))
             if st.phase == "requested":
-                run_deploy(self.settings, channel_id=st.channel_id, self_restart_daemon=True)
+                run_deploy(
+                    self.settings, channel_id=st.channel_id, self_restart_daemon=True
+                )
             elif st.phase == "deploying":
                 reap_stale_deploy(self.settings)
             else:
@@ -397,6 +411,7 @@ class BemineDaemon:
 
     def _tick_watchers(self) -> None:
         from .project_watcher import tick_all_watchers
+
         try:
             db = BemineDB(self.settings.db_path)
             tick_all_watchers(self.settings, db)
@@ -406,6 +421,7 @@ class BemineDaemon:
     def _recovery_tick(self) -> None:
         import time as _time
         from bemine.jobs import auto_recovery as ar
+
         try:
             if not ar.recovery_enabled():
                 return
@@ -414,8 +430,9 @@ class BemineDaemon:
             if now - getattr(self, "_last_recovery_ts", 0.0) < ar._cfg_poll_interval():
                 return
             self._last_recovery_ts = now
-            ar.tick_recovery(self.settings, ar.default_recovery_deps(self.settings),
-                             now=now)
+            ar.tick_recovery(
+                self.settings, ar.default_recovery_deps(self.settings), now=now
+            )
         except Exception:
             pass
 
@@ -423,8 +440,15 @@ class BemineDaemon:
         try:
             if not _continuity_enabled(self.settings):
                 return
-            from bemine.workers.workers import resume_missing_local_workers
+            from bemine.workers.workers import (
+                link_worker_runtime_sessions,
+                resume_missing_local_workers,
+            )
 
+            try:
+                link_worker_runtime_sessions(self.settings)
+            except Exception:
+                pass
             resumed = resume_missing_local_workers(self.settings) or []
             if not resumed:
                 return
@@ -454,7 +478,9 @@ class BemineDaemon:
                 pass
 
 
-def _run_job_type(settings: BemineSettings, job_id: str, config: Mapping[str, Any]) -> str:
+def _run_job_type(
+    settings: BemineSettings, job_id: str, config: Mapping[str, Any]
+) -> str:
     job_type = str(config.get("type") or job_id)
     if job_type == "daily_digest":
         return generate_daily_digest(settings, config)
@@ -486,21 +512,26 @@ def _continuity_enabled(settings: BemineSettings) -> bool:
     return settings.device_id in devices
 
 
-
-
-def generate_session_watcher_report(settings: BemineSettings, config: Mapping[str, Any]) -> str:
+def generate_session_watcher_report(
+    settings: BemineSettings, config: Mapping[str, Any]
+) -> str:
     from .session_watcher import deliver_events
 
     state_path = settings.state_dir / "session_watcher_state.json"
     events = check_sessions(settings, state_path)
     if not events:
-        return "" if config.get("only_when_events", True) else "No session changes detected."
+        return (
+            ""
+            if config.get("only_when_events", True)
+            else "No session changes detected."
+        )
     # Self-delivers to a channel per project (auto-created); undelivered events are
     # re-armed via state_path so the next poll retries them (at-least-once). The job has
     # notify_discord disabled so run_job_row does not also send.
     return "Session watcher delivered — " + deliver_events(
         settings, events, state_path=state_path
     )
+
 
 def generate_reminder(job_id: str, config: Mapping[str, Any]) -> str:
     text = str(config.get("text") or "").strip()
@@ -566,7 +597,9 @@ def _discord_sender(
     return sender
 
 
-def _record_job_notification(db: BemineDB, job_id: str, sent: Mapping[str, Any]) -> None:
+def _record_job_notification(
+    db: BemineDB, job_id: str, sent: Mapping[str, Any]
+) -> None:
     db.record_audit_event(
         category="job",
         event_type="job_notification_sent",
@@ -575,7 +608,9 @@ def _record_job_notification(db: BemineDB, job_id: str, sent: Mapping[str, Any])
             {
                 "job_id": job_id,
                 "channel_id": str(sent.get("channel_id") or ""),
-                "discord_message_id": str(sent.get("id") or sent.get("message_id") or ""),
+                "discord_message_id": str(
+                    sent.get("id") or sent.get("message_id") or ""
+                ),
             },
             sort_keys=True,
         ),
