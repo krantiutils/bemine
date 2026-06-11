@@ -400,6 +400,18 @@ class BemineDB:
                 )
             return results
 
+    def device_cwd_for_project(self, project_id: str, *, device_id: str) -> str:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT cwd FROM project_devices
+                WHERE project_id = ? AND device_id = ?
+                ORDER BY last_seen_at DESC LIMIT 1
+                """,
+                (project_id, device_id),
+            ).fetchone()
+        return str(row["cwd"]) if row else ""
+
     def sessions_for_project(
         self, project_id: str, *, limit: int = 3
     ) -> list[sqlite3.Row]:

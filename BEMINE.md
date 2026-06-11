@@ -98,6 +98,13 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - Session watcher updates create Discord project channels on first active sighting, then
   route started/done/needs-input updates there; non-project sessions use
   `[jobs].session_fallback_channel`.
+- Cross-device failover: a remote device hosting managed workers that goes
+  unreachable for 3 continuity passes ([failover].unreachable_passes) gets its
+  running workers revived LOCALLY — matching local checkout (project_devices
+  mapping or same path), fresh pinned conversation, and a revival brief with
+  the last-known project state (the dead device's transcript is gone; the
+  brief says so and tells the worker to check git first). Original is marked
+  `failed-over`; audits: failover/worker_failover_revived, device_back.
 - Goal-driven babysitting of a project session → `watch_control {"action":"start","brief":
   "<the user's full context verbatim>","interval_secs":600}`. Stop: `{"action":"stop"}`.
   Inspect all active watchers with `watchers_status`.
