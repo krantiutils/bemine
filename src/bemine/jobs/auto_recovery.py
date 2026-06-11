@@ -40,27 +40,97 @@ _RESET_TIME = re.compile(
     r"(?:try again|resets?|reset)\D{0,15}?(\d{1,2}):(\d{2})\s*(am|pm)?",
     re.IGNORECASE,
 )
+# "resets 3pm" / "resets at 11am" — claude's 5h-window message has no minutes;
+# am/pm is REQUIRED here so stray digits don't parse as a clock time.
+_RESET_TIME_NO_MINUTES = re.compile(
+    r"(?:try again|resets?|reset)\D{0,15}?(\d{1,2})\s*(am|pm)\b",
+    re.IGNORECASE,
+)
+# "try again in 4 hours 58 minutes" / "resets in 30 minutes" — codex phrasing.
+_RESET_RELATIVE = re.compile(
+    r"(?:try again|resets?|reset|retry|available)[^\n]{0,12}?\bin\s+"
+    r"(?:(\d+)\s*h(?:ou)?rs?\b)?\s*(?:and\s+)?(?:(\d+)\s*m(?:in(?:ute)?s?)?\b)?",
+    re.IGNORECASE,
+)
+# "resets Jun 17, 10:59am" — weekly limits state a date, optionally with a time.
+_RESET_DATE = re.compile(
+    r"resets?\D{0,12}?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+"
+    r"(\d{1,2})(?:\D{0,8}?(\d{1,2})(?::(\d{2}))?\s*(am|pm))?",
+    re.IGNORECASE,
+)
+_MONTHS = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
 
 
-def _parse_reset_epoch(text: str, now: float) -> float | None:
-    """Epoch of the next occurrence of the reset clock-time stated in *text* (local tz)."""
-    m = _RESET_TIME.search(text or "")
-    if not m:
-        return None
-    hour, minute = int(m.group(1)), int(m.group(2))
-    ampm = (m.group(3) or "").lower()
+def _to_24h(hour: int, ampm: str) -> int:
     if ampm == "pm" and hour < 12:
-        hour += 12
+        return hour + 12
     if ampm == "am" and hour == 12:
-        hour = 0
+        return 0
+    return hour
+
+
+def _next_clock_epoch(now: float, hour: int, minute: int) -> float | None:
     if hour > 23 or minute > 59:
         return None
     lt = time.localtime(now)
-    candidate = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, minute, 0,
-                             0, 0, -1))
+    candidate = time.mktime(
+        (lt.tm_year, lt.tm_mon, lt.tm_mday, hour, minute, 0, 0, 0, -1)
+    )
     if candidate <= now + 60:
         candidate += 86400
     return candidate
+
+
+def _parse_reset_epoch(text: str, now: float) -> float | None:
+    """Epoch of the reset stated in *text* (local tz).
+
+    Understands "try again at 3:47am", "resets 3pm" (claude, no minutes),
+    "try again in 4 hours 58 minutes" (codex, relative), and
+    "resets Jun 17, 10:59am" (weekly limits, dated)."""
+    text = text or ""
+    m = _RESET_TIME.search(text)
+    if m:
+        hour = _to_24h(int(m.group(1)), (m.group(3) or "").lower())
+        return _next_clock_epoch(now, hour, int(m.group(2)))
+    m = _RESET_DATE.search(text)
+    if m:
+        month = _MONTHS[m.group(1).lower()]
+        day = int(m.group(2))
+        hour = _to_24h(int(m.group(3)), (m.group(5) or "").lower()) if m.group(3) else 0
+        minute = int(m.group(4) or 0)
+        if day > 31 or hour > 23 or minute > 59:
+            return None
+        lt = time.localtime(now)
+        candidate = time.mktime((lt.tm_year, month, day, hour, minute, 0, 0, 0, -1))
+        if candidate <= now + 60:
+            candidate = time.mktime(
+                (lt.tm_year + 1, month, day, hour, minute, 0, 0, 0, -1)
+            )
+        return candidate
+    m = _RESET_TIME_NO_MINUTES.search(text)
+    if m:
+        hour = _to_24h(int(m.group(1)), m.group(2).lower())
+        return _next_clock_epoch(now, hour, 0)
+    m = _RESET_RELATIVE.search(text)
+    if m and (m.group(1) or m.group(2)):
+        seconds = int(m.group(1) or 0) * 3600 + int(m.group(2) or 0) * 60
+        if seconds > 0:
+            return now + seconds
+    return None
+
 
 # Obvious "just say yes / press enter" prompts that are safe to auto-confirm.
 _TRIVIAL_CONFIRM = re.compile(
@@ -89,6 +159,10 @@ def classify(pane_text: str, asks_user: bool = False, *, signatures: list[str]) 
     low = text.lower()
     # "(not your usage limit)" in the transient rate-limit message must not trip this tier.
     usage_low = low.replace("not your usage limit", "")
+    # "Approaching 5-hour limit · resets 3pm" is a warning shown while the
+    # session is still WORKING — treating it as a hard limit would freeze
+    # recovery for the pane and later type "continue" into a healthy session.
+    usage_low = re.sub(r"approaching[^\n]{0,40}?limit", "", usage_low)
     if any(sig in usage_low for sig in USAGE_LIMIT_DEFAULTS):
         return "usage_limit"
     if any(sig in low for sig in signatures):
@@ -124,7 +198,7 @@ def recovery_key(pane: dict) -> str:
 
 _BACKOFF_CAP = 1800
 _ESCALATED_HOLD = 86400  # after escalation, don't retry for a day (until state changes)
-_LIMIT_RETRY_CAP = 600   # default post-reset "continue" retry cap: 10 min
+_LIMIT_RETRY_CAP = 600  # default post-reset "continue" retry cap: 10 min
 
 
 def recovery_enabled() -> bool:
@@ -153,7 +227,9 @@ def _cfg_poll_interval() -> int:
 
 
 def _cfg_usage_limit_retry_cap() -> int:
-    return max(60, config_int("recovery", "usage_limit_retry_cap_secs", _LIMIT_RETRY_CAP))
+    return max(
+        60, config_int("recovery", "usage_limit_retry_cap_secs", _LIMIT_RETRY_CAP)
+    )
 
 
 def _cfg_signatures() -> list[str]:
@@ -168,9 +244,39 @@ def _cfg_signatures() -> list[str]:
 # Claude Code reports its VERSION (e.g. "2.1.168") as the pane's current command, and codex
 # shows "codex-aarch64-a". classify() gates action, so capturing a non-agent pane is harmless.
 _NON_AGENT_COMMANDS = {
-    "bash", "-bash", "zsh", "-zsh", "sh", "-sh", "fish", "-fish", "tmux", "vim", "nvim",
-    "vi", "emacs", "nano", "less", "more", "man", "ssh", "mosh", "tail", "head", "cat",
-    "grep", "rg", "htop", "top", "btop", "watch", "git", "fzf", "make", "lazygit", "gitui",
+    "bash",
+    "-bash",
+    "zsh",
+    "-zsh",
+    "sh",
+    "-sh",
+    "fish",
+    "-fish",
+    "tmux",
+    "vim",
+    "nvim",
+    "vi",
+    "emacs",
+    "nano",
+    "less",
+    "more",
+    "man",
+    "ssh",
+    "mosh",
+    "tail",
+    "head",
+    "cat",
+    "grep",
+    "rg",
+    "htop",
+    "top",
+    "btop",
+    "watch",
+    "git",
+    "fzf",
+    "make",
+    "lazygit",
+    "gitui",
 }
 
 
@@ -191,13 +297,15 @@ def _is_agent_pane(command: str) -> bool:
 
 @dataclass
 class RecoveryDeps:
-    get_panes: Callable      # (settings) -> list[dict]; each {device,pane_id,path,command,activity}
+    get_panes: Callable  # (settings) -> list[dict]; each {device,pane_id,path,command,activity}
     tmux: object
     escalate: Callable
     now: Callable
     sleep: Callable
     audit: Callable
-    decide: Callable = None   # (pane, pane_text) -> Decision|None ; None disables the LLM tier
+    decide: Callable = (
+        None  # (pane, pane_text) -> Decision|None ; None disables the LLM tier
+    )
 
 
 def _escalation_event(pane: dict, kind: str, pane_after: str) -> dict:
@@ -225,10 +333,16 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
         try:
             key = recovery_key(pane)
             live.add(key)
-            activity = int(pane.get("activity") or 0)
-            if activity and (now - activity) > max_age:
-                continue
             rec = state.get(key) or {}
+            activity = int(pane.get("activity") or 0)
+            in_limit_episode = bool(
+                rec.get("limit_wait_until") or rec.get("rl_attempts")
+            )
+            # A session waiting out a usage limit is idle BY DESIGN (5h windows,
+            # weekly resets) — the staleness gate must not strand its scheduled
+            # post-reset continue.
+            if activity and (now - activity) > max_age and not in_limit_episode:
+                continue
             if rec.get("next_retry_at") and now < float(rec["next_retry_at"]):
                 state[key] = rec
                 continue
@@ -238,12 +352,15 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
             kind = classify(before, signatures=sigs)
 
             if kind == "usage_limit":
-                state[key] = _handle_usage_limit(deps, pane, device, pid, rec, now, before)
+                state[key] = _handle_usage_limit(
+                    deps, pane, device, pid, rec, now, before
+                )
                 continue
 
             if kind == "rate_limit":
-                state[key] = _handle_rate_limit(deps, pane, device, pid, rec, now,
-                                                base_backoff, max_attempts)
+                state[key] = _handle_rate_limit(
+                    deps, pane, device, pid, rec, now, base_backoff, max_attempts
+                )
                 continue
 
             # No longer rate/usage-limited: if we were mid episode, it cleared.
@@ -288,23 +405,33 @@ def _fallback_reset_epoch(now: float) -> float:
     except ValueError:
         hour, minute = 3, 47
     lt = time.localtime(now)
-    candidate = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, minute, 0, 0, 0, -1))
+    candidate = time.mktime(
+        (lt.tm_year, lt.tm_mon, lt.tm_mday, hour, minute, 0, 0, 0, -1)
+    )
     if candidate <= now + 60:
         candidate += 86400
     return candidate
 
 
-def _handle_rate_limit(deps, pane, device, pid, rec, now, base_backoff, max_attempts) -> dict:
+def _handle_rate_limit(
+    deps, pane, device, pid, rec, now, base_backoff, max_attempts
+) -> dict:
     if rec.get("escalated"):
         # Already pinged the human for this episode — hold silently, no more resends.
         rec["next_retry_at"] = now + _ESCALATED_HOLD
         return rec
     attempts = int(rec.get("rl_attempts", 0)) + 1
-    deps.tmux.send_keys(device, pid, ["Up", "Enter"])  # recall + resend previous message
+    deps.tmux.send_keys(
+        device, pid, ["Up", "Enter"]
+    )  # recall + resend previous message
     deps.audit("resubmit", "rate_limit", pane)
     backoff = min(int(rec.get("backoff", base_backoff)) * 2, _BACKOFF_CAP)
-    new = {"rl_attempts": attempts, "backoff": backoff,
-           "next_retry_at": now + backoff, "escalated": bool(rec.get("escalated"))}
+    new = {
+        "rl_attempts": attempts,
+        "backoff": backoff,
+        "next_retry_at": now + backoff,
+        "escalated": bool(rec.get("escalated")),
+    }
     if attempts >= max_attempts and not new["escalated"]:
         deps.escalate(_escalation_event(pane, "rate_limit", ""))
         deps.audit("escalated", "rate_limit", pane)
@@ -357,7 +484,7 @@ def _handle_usage_limit(deps, pane, device, pid, rec, now, pane_text) -> dict:
     # usage_limit and the recovered path clears this record.
     deps.tmux.send_text(device, pid, "continue")
     deps.audit("limit_continue", "usage_limit", pane)
-    backoff = min(60 * (2 ** attempts), _cfg_usage_limit_retry_cap())
+    backoff = min(60 * (2**attempts), _cfg_usage_limit_retry_cap())
     return {
         "limit_wait_until": wait_until,
         "next_retry_at": now + backoff,
@@ -393,7 +520,9 @@ def default_recovery_deps(settings) -> RecoveryDeps:
     tmux = RemoteTmux(gateway_device=settings.device_id)
 
     def _panes(s):
-        devices = list(s.status_devices) if s.status_devices else list(DEFAULT_STATUS_DEVICES)
+        devices = (
+            list(s.status_devices) if s.status_devices else list(DEFAULT_STATUS_DEVICES)
+        )
         out = []
         for dev in devices:
             try:
@@ -413,10 +542,18 @@ def default_recovery_deps(settings) -> RecoveryDeps:
     def _audit(event_type, kind, pane):
         try:
             BemineDB(settings.db_path).record_audit_event(
-                category="recovery", event_type=event_type, actor="auto_recovery",
+                category="recovery",
+                event_type=event_type,
+                actor="auto_recovery",
                 device_id=pane.get("device"),
-                payload_json=json.dumps({"kind": kind, "pane": pane.get("pane_id"),
-                                         "cwd": pane.get("path"), "command": pane.get("command")}),
+                payload_json=json.dumps(
+                    {
+                        "kind": kind,
+                        "pane": pane.get("pane_id"),
+                        "cwd": pane.get("path"),
+                        "command": pane.get("command"),
+                    }
+                ),
             )
         except Exception:
             pass
@@ -432,7 +569,7 @@ def default_recovery_deps(settings) -> RecoveryDeps:
         "- TRANSIENT API/SERVER ERROR — if anywhere on screen you see 'API Error', 'rate "
         "limited', 'temporarily limiting requests', 'overloaded', 'server busy', 5xx, etc., "
         "AND the agent is now sitting idle at its input prompt, the turn FAILED: resend the "
-        "previous message with keys [\"Up\",\"Enter\"]. An idle prompt right after such an "
+        'previous message with keys ["Up","Enter"]. An idle prompt right after such an '
         "error is NOT 'done' — do NOT choose wait; resend it.\n"
         "- QUESTION — if it is asking something you can answer to continue, reply with the "
         "text to send.\n"
@@ -456,12 +593,27 @@ def default_recovery_deps(settings) -> RecoveryDeps:
         try:
             rt = _runtime_for(pane.get("command", ""))
             client = build_client_for_runtime(settings, rt)
-            model = config_string(rt, "model", "") or _DEFAULT_MODELS.get(rt, "kimi-k2.6")
-            return _watcher_decide(client, model=model, brief=_BRIEF,
-                                   pane_capture=pane_text, transcript_tail="",
-                                   ask_summary="", channel_context="")
+            model = config_string(rt, "model", "") or _DEFAULT_MODELS.get(
+                rt, "kimi-k2.6"
+            )
+            return _watcher_decide(
+                client,
+                model=model,
+                brief=_BRIEF,
+                pane_capture=pane_text,
+                transcript_tail="",
+                ask_summary="",
+                channel_context="",
+            )
         except Exception:
             return None
 
-    return RecoveryDeps(get_panes=_panes, tmux=tmux, escalate=_escalate,
-                        now=time.time, sleep=time.sleep, audit=_audit, decide=_decide)
+    return RecoveryDeps(
+        get_panes=_panes,
+        tmux=tmux,
+        escalate=_escalate,
+        now=time.time,
+        sleep=time.sleep,
+        audit=_audit,
+        decide=_decide,
+    )
