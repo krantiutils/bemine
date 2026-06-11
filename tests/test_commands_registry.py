@@ -17,6 +17,8 @@ def test_registry_lists_deterministic_ops():
         "jobs.list",
         "backlog.list",
         "config.show",
+        "dream.run",
+        "brief.run",
         "subagents.list",
         "subagents.show",
         "phantom.status",
@@ -138,6 +140,28 @@ def test_run_command_discord_sync_plan_is_dry_run(tmp_path):
     assert out.data["would_prune"][0]["channel_name"] == "old-project"
 
 
+def test_run_command_dream_run_records_data_point(tmp_path):
+    settings = _settings(tmp_path)
+
+    out = run_command("dream.run", settings, {"limit": 5})
+
+    assert "Dream recorded:" in out.text
+    assert out.data["path"].endswith("Dreams/dreams.jsonl")
+    assert out.data["data"]["schema"] == "bemine.dream.v1"
+
+
+def test_run_command_brief_run_records_brief(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setattr("bemine.briefs.collect_fleet_status", lambda *a, **k: ([], []))
+    monkeypatch.setattr("bemine.briefs.detect_tool_capabilities", lambda: {})
+
+    out = run_command("brief.run", settings, {"limit": 5, "no_backlog": True})
+
+    assert "PA/SMM brief recorded:" in out.text
+    assert out.data["path"].endswith("-pa-smm.md")
+    assert out.data["backlog_entries"] == []
+
+
 def test_run_command_help_summarizes_configurable_surfaces(tmp_path, monkeypatch):
     config = tmp_path / "bemine.toml"
     config.write_text(
@@ -205,7 +229,8 @@ context_limit = 1000
     assert "continuity:" in out.text
     assert "wake sessions after reboot?" in out.text
     assert "focus today:" in out.text
-    assert "dream: `dream run`" in out.text
+    assert "dream: `dream run` / `dream now`" in out.text
+    assert "PA/SMM brief: `brief run` / `generate PA/SMM brief`" in out.text
     assert "watchers: active=0" in out.text
     assert "backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`" in out.text
     assert "backlog.default_owner=PA" in out.text
