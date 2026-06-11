@@ -52,9 +52,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `uv run bemine goal <project> "<goal brief>"`; this starts a managed tmux worker,
   sends the brief, and registers a watcher. Inspect goal workers/watchers with
   `goal_status` or `uv run bemine goal --list`.
-- "dream / learn from recent history" → `dream_run` native tool or
-  `uv run bemine dream run`; daemon also runs the `dream` job periodically and appends
-  one JSONL data point to `Dreams/dreams.jsonl`.
+- "dream / learn from recent history" → `dream_run` native tool,
+  `dream now` in Discord, or `uv run bemine dream run`; daemon also runs the
+  `dream` job periodically and appends one JSONL data point to `Dreams/dreams.jsonl`.
 - config questions → `bemine_config` tool or `uv run bemine config show`; NEVER guess
   runtime/model identity.
 - phone/ADB questions → `capabilities_status` native tool or `uv run bemine capabilities`;
@@ -94,8 +94,9 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   daily; decisions in `Decisions/`; checklists in `Checklists/`.
 - PA/SMM ideas and tasks → `uv run bemine backlog add ...`; files live under
   `Backlog/PA.md` and `Backlog/SMM.md`.
-- PA/SMM daily brief → `uv run bemine brief run`; writes `Briefs/<date>-pa-smm.md`
-  and adds non-duplicate generated PA/SMM backlog nudges.
+- PA/SMM daily brief → `brief run` / `generate PA/SMM brief` in Discord, or
+  `uv run bemine brief run`; writes `Briefs/<date>-pa-smm.md` and adds
+  non-duplicate generated PA/SMM backlog nudges.
 - "what should I focus on today?" / PA planning → `pa_plan` native tool or
   `uv run bemine pa plan`; this prioritizes health issues, failed jobs, waiting
   sessions, active watchers, recovery escalations, and PA backlog with evidence.

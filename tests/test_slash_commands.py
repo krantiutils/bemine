@@ -75,6 +75,18 @@ def test_slash_pa_plan_is_deterministic(tmp_path, monkeypatch):
     assert "PA plan:" in text
 
 
+def test_slash_dream_and_brief_are_deterministic(tmp_path, monkeypatch):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    monkeypatch.setattr("bemine.briefs.collect_fleet_status", lambda *a, **k: ([], []))
+    monkeypatch.setattr("bemine.briefs.detect_tool_capabilities", lambda: {})
+
+    dream = slash_command_text(settings, "dream", {})
+    brief = slash_command_text(settings, "brief", {"no_backlog": True})
+
+    assert "Dream recorded:" in dream
+    assert "PA/SMM brief recorded:" in brief
+
+
 def test_slash_dispatch_reports_runtime(tmp_path, monkeypatch):
     config = tmp_path / "bemine.toml"
     config.write_text(

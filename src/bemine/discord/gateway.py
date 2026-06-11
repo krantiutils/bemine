@@ -81,6 +81,8 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "dispatch": "dispatch.status",
     "pa": "pa.plan",
     "goals": "goals.list",
+    "dream": "dream.run",
+    "brief": "brief.run",
     "usage": "usage",
     "capabilities": "capabilities",
 }
@@ -1494,6 +1496,27 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "what should i focus on tomorrow",
     }:
         return "pa.plan"
+    if variants & {
+        "dream",
+        "dream run",
+        "run dream",
+        "dream now",
+        "learn from recent history",
+        "record a dream",
+        "record dream",
+    }:
+        return "dream.run"
+    if variants & {
+        "brief",
+        "brief run",
+        "run brief",
+        "generate brief",
+        "generate pa/smm brief",
+        "generate pa smm brief",
+        "pa/smm brief",
+        "pa smm brief",
+    }:
+        return "brief.run"
     if variants & {"goals", "goal status", "goals status"}:
         return "goals.list"
     if variants & {

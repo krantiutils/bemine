@@ -140,6 +140,28 @@ def _config_show(settings: BemineSettings, args: Mapping) -> CommandResult:
     )
 
 
+def _dream_run(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.dreams import render_dream, run_dream
+
+    limit = int(args.get("limit") or 80)
+    result = run_dream(settings, limit=limit, db=BemineKernel(settings).db)
+    return CommandResult(text=render_dream(result), data=result.to_dict())
+
+
+def _brief_run(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.briefs import render_brief, run_brief
+
+    limit = int(args.get("limit") or 100)
+    record_backlog = not bool(args.get("no_backlog"))
+    result = run_brief(
+        settings,
+        limit=limit,
+        record_backlog=record_backlog,
+        db=BemineKernel(settings).db,
+    )
+    return CommandResult(text=render_brief(result), data=result.to_dict())
+
+
 def _discord_sync_plan(settings: BemineSettings, args: Mapping) -> CommandResult:
     from bemine.discord.dispatch import plan_project_channel_sync
 
@@ -347,7 +369,8 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- goal sessions: `goal <project> <brief>` / `goal --list` / `goal --status <query>`",
         f"- continuity: enabled={continuity_enabled} devices={', '.join(continuity_devices) or 'none'} (`continuity` / `wake sessions after reboot?` / `uv run bemine continuity`)",
         "- focus today: `pa plan` / `what should I focus on today?` / `what should I focus on this week?` / `what should I do next?` / `what should I focus on tomorrow?`",
-        "- dream: `dream run` / `uv run bemine dream run` to condense recent history",
+        "- dream: `dream run` / `dream now` / `uv run bemine dream run` to condense recent history",
+        "- PA/SMM brief: `brief run` / `generate PA/SMM brief` / `uv run bemine brief run`",
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
         "- discord sync plan: `discord sync plan` / `uv run bemine discord sync-project-channels --dry-run`",
@@ -508,6 +531,8 @@ _SPECS = (
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),
     CommandSpec("config.show", "Show parsed Bemine config", _config_show),
+    CommandSpec("dream.run", "Record one self-improvement dream data point", _dream_run),
+    CommandSpec("brief.run", "Generate PA/SMM brief and backlog nudges", _brief_run),
     CommandSpec("subagents.list", "List configured subagent profiles", _subagents_list),
     CommandSpec("subagents.show", "Show one configured subagent profile", _subagents_show),
     CommandSpec("phantom.status", "Inspect Phantom Android app readiness", _phantom_status),
