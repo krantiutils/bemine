@@ -140,6 +140,7 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("what are you?") == "help"
     assert gw._direct_observability_command("what is Bemine?") == "help"
     assert gw._direct_observability_command("what is this for?") == "help"
+    assert gw._direct_observability_command("what is this bot for?") == "help"
     assert gw._direct_observability_command("goals") == "goals.list"
     assert gw._direct_observability_command("what goal sessions are active?") == "goals.list"
     assert gw._direct_observability_command("what config is set?") == "config.show"
