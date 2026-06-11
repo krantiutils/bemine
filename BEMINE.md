@@ -78,15 +78,18 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
   `[continuity]` pass restarts Bemine-managed local tmux workers that were recorded as
   `running` but whose tmux session disappeared. This only applies to managed workers
   (especially `bemine goal` sessions), not arbitrary/adopted terminal sessions.
-  Claude/codex workers come back WITH their conversation: each managed worker's
-  conversation id is recorded in `managed_sessions.runtime_session_id` — claude
-  workers are pinned at launch with a generated `--session-id <uuid>` (resume keeps
-  the id; forking is opt-in), codex workers are captured by the daemon's
-  `worker_session_linked` pass (only sessions started AFTER the worker counts, so a
-  manual session in the same cwd is never claimed). Continuity relaunches via
-  `claude --resume <id>` / `codex resume <id>` and nudges the agent to continue
-  (audit: `worker_resumed_after_outage` with `resumed_runtime_session`). No captured
-  or indexed session → fresh start (claude gets a new pinned id).
+  Claude/codex/kimi workers come back WITH their conversation: each managed worker's
+  conversation id is recorded in `managed_sessions.runtime_session_id` — claude and
+  kimi workers are pinned at launch with a generated id (`claude --session-id
+  <uuid>`; `kimi --session <uuid>` creates-or-resumes), codex workers are captured
+  by the daemon's `worker_session_linked` pass (only sessions started AFTER the
+  worker counts, so a manual session in the same cwd is never claimed). Continuity
+  relaunches via `claude --resume <id>` / `codex resume <id>` / `kimi --session
+  <id>` and nudges the agent to continue (audit: `worker_resumed_after_outage` with
+  `resumed_runtime_session`). No captured or indexed session → fresh start with a
+  new pinned id. Pin/resume flags only apply when the worker command IS the runtime
+  CLI; custom commands restart as-is. NOTE: kimi goal workers need the kimi CLI
+  logged in (`/login` inside kimi) — without it they boot to "LLM not set".
 - Session watcher updates create Discord project channels on first active sighting, then
   route started/done/needs-input updates there; non-project sessions use
   `[jobs].session_fallback_channel`.

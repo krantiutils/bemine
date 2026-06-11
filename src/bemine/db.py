@@ -903,11 +903,7 @@ class BemineDB:
                     cwd=excluded.cwd,
                     command=excluded.command,
                     status=excluded.status,
-                    runtime_session_id=CASE
-                        WHEN excluded.runtime_session_id = ''
-                        THEN managed_sessions.runtime_session_id
-                        ELSE excluded.runtime_session_id
-                    END,
+                    runtime_session_id=excluded.runtime_session_id,
                     updated_at=excluded.updated_at,
                     last_seen_at=excluded.last_seen_at
                 """,

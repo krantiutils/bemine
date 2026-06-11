@@ -463,6 +463,136 @@ def test_worker_start_pins_claude_session_id(tmp_path: Path) -> None:
     assert row["command"] == "claude --dangerously-skip-permissions"
 
 
+def test_worker_start_pins_kimi_session_id(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    record = controller.start(name="goal-kimi", runtime="kimi", cwd=project)
+
+    started = tmux.started_commands["goal-kimi"]
+    assert "--session " in started
+    assert record.runtime_session_id
+    assert record.runtime_session_id in started
+    assert uuid.UUID(record.runtime_session_id)
+
+
+def test_resume_kimi_uses_stored_session_id(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="kimi", command="kimi")
+    db.set_worker_runtime_session("goal-resume", "70fa9938-8d44-49d6-8a4d-61b2e3307b20")
+    tmux = FakeTmux()
+
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
+
+    started = tmux.started_commands["goal-resume"]
+    # kimi --session creates-or-resumes, so no on-disk transcript check needed
+    assert "kimi --session 70fa9938-8d44-49d6-8a4d-61b2e3307b20" in started
+    assert any("continue" in text.lower() for text in tmux.sent["goal-resume"])
+
+
+def test_worker_restart_resets_stale_runtime_session_id(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="codex", command="codex --yolo")
+    db.set_worker_runtime_session("goal-resume", "11111111-1111-4111-8111-111111111111")
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    # user re-creates the worker (new conversation, even a new runtime)
+    record = controller.start(
+        name="goal-resume", runtime="codex", cwd=project, command="codex --yolo"
+    )
+
+    assert record.runtime_session_id == ""
+    row = db.get_managed_session("goal-resume")
+    assert row is not None
+    # the old conversation id must not survive a fresh start, or continuity
+    # would resurrect the previous conversation instead of the new one
+    assert row["runtime_session_id"] == ""
+
+
+def test_resume_nudge_answers_kimi_upgrade_prompt_with_skip(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="kimi", command="kimi")
+    db.set_worker_runtime_session("goal-resume", "70fa9938-8d44-49d6-8a4d-61b2e3307b20")
+    tmux = FakeTmux()
+    tmux.capture = lambda name: (  # type: ignore[method-assign]
+        "[Enter]  Upgrade now  (uv tool upgrade kimi-cli)\n"
+        "[q]      Not now, remind me next time\n"
+        "[s]      Skip reminders for version 1.47.0\n"
+    )
+
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
+
+    sent = tmux.sent["goal-resume"]
+    # a blind Enter on the upgrade prompt would run `uv tool upgrade`; the
+    # nudge must dismiss the prompt with `s` before typing
+    assert sent[0] == "s", f"expected upgrade prompt dismissed first, got {sent[:2]}"
+    assert any("continue" in text.lower() for text in sent)
+
+
+def test_worker_start_does_not_pin_custom_commands(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+
+    # runtime kimi but a custom command: CLI flags would be fatal for `cat`
+    record = controller.start(
+        name="goal-custom", runtime="kimi", cwd=project, command="cat"
+    )
+
+    assert "--session" not in tmux.started_commands["goal-custom"]
+    assert record.runtime_session_id == ""
+
+
 def test_worker_start_does_not_pin_codex_session_id(tmp_path: Path) -> None:
     project = tmp_path / "repo"
     project.mkdir()

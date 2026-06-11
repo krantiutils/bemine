@@ -555,19 +555,35 @@ RESUME_NUDGE = (
 SESSION_LINK_SLACK_SECS = 120.0
 
 
+def _command_binary(command: str) -> str:
+    parts = command.split()
+    return Path(parts[0]).name if parts else ""
+
+
 def _pin_runtime_session(runtime: str, command: str) -> tuple[str, str]:
     """Pin a deterministic conversation id at launch where the CLI supports it.
 
     claude accepts --session-id <uuid> and --resume keeps that id (forking is
-    opt-in via --fork-session), so the conversation is recoverable by id from
-    the first turn. codex has no launch-time id flag; its id is captured later
-    by link_worker_runtime_sessions. Returns (launch_command, session_id)."""
-    if runtime.strip().lower() != "claude":
+    opt-in via --fork-session). kimi's --session <uuid> creates-or-resumes, so
+    a generated id is pinned the same way. codex has no launch-time id flag;
+    its id is captured later by link_worker_runtime_sessions.
+    Returns (launch_command, session_id)."""
+    runtime_key = runtime.strip().lower()
+    if _command_binary(command) != runtime_key:
+        # custom command (e.g. `cat` in tests, wrapper scripts): the CLI flags
+        # below would be meaningless or fatal for it
         return command, ""
-    if "--session-id" in command or "--resume" in command:
-        return command, ""
-    session_id = str(uuid.uuid4())
-    return f"{command} --session-id {session_id}", session_id
+    if runtime_key == "claude":
+        if "--session-id" in command or "--resume" in command:
+            return command, ""
+        session_id = str(uuid.uuid4())
+        return f"{command} --session-id {session_id}", session_id
+    if runtime_key == "kimi":
+        if any(flag in command for flag in ("--session", "--resume", "--continue")):
+            return command, ""
+        session_id = str(uuid.uuid4())
+        return f"{command} --session {session_id}", session_id
+    return command, ""
 
 
 def _is_resumable_session_id(raw_id: str) -> bool:
@@ -610,6 +626,7 @@ def _send_resume_nudge(
     unsubmitted in the input box (claude). Wait until the pane stops changing,
     then send text and Enter separately; the trailing second Enter is a no-op
     when the first landed (submitting an empty input does nothing)."""
+    pane = ""
     previous = None
     for _ in range(settle_polls):
         sleep(poll_secs)
@@ -620,6 +637,11 @@ def _send_resume_nudge(
         if pane.strip() and pane == previous:
             break
         previous = pane
+    if "uv tool upgrade kimi-cli" in pane:
+        # kimi's upgrade reminder maps Enter to "Upgrade now" — a blind nudge
+        # Enter would kick off the upgrade; `s` skips reminders for the version
+        tmux.send(name, "s", enter=False)
+        sleep(2.0)
     tmux.send(name, RESUME_NUDGE, enter=False)
     sleep(1.0)
     tmux.send(name, "", enter=True)
@@ -630,6 +652,8 @@ def _send_resume_nudge(
 def _native_resume_command(command: str, runtime_key: str, session_id: str) -> str:
     if runtime_key == "claude":
         return f"{command} --resume {session_id}"
+    if runtime_key == "kimi":
+        return f"{command} --session {session_id}"
     binary = command.split()[0] if command.split() else "codex"
     return f"{binary} resume {session_id} --dangerously-bypass-approvals-and-sandbox"
 
@@ -759,18 +783,28 @@ def resume_missing_local_workers(
         runtime_key = record.runtime.strip().lower()
         launch_command = command
         resumed_session = ""
-        if _is_resumable_session_id(
-            record.runtime_session_id
-        ) and _runtime_session_on_disk(
-            settings, runtime_key, record.runtime_session_id
+        # resume flags only make sense when the command really is the runtime
+        # CLI — custom commands (wrappers, test stubs) restart as-is
+        supports_native = _command_binary(command) == runtime_key
+        if (
+            supports_native
+            and _is_resumable_session_id(record.runtime_session_id)
+            and (
+                # kimi --session creates-or-resumes, so unknown ids are safe;
+                # the other CLIs exit 1 on an id with no transcript on disk
+                runtime_key == "kimi"
+                or _runtime_session_on_disk(
+                    settings, runtime_key, record.runtime_session_id
+                )
+            )
         ):
-            # deterministic path: the id captured at start (claude) or by the
-            # linking pass (codex); both CLIs keep the id across resumes
+            # deterministic path: the id pinned at start (claude/kimi) or
+            # captured by the linking pass (codex); ids survive resumes
             resumed_session = record.runtime_session_id
             launch_command = _native_resume_command(
                 command, runtime_key, resumed_session
             )
-        else:
+        elif supports_native:
             resume = _resume_launch_command(
                 db,
                 settings,
