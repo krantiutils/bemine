@@ -4,6 +4,7 @@ import json
 import re
 import shlex
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -574,6 +575,58 @@ def _is_resumable_session_id(raw_id: str) -> bool:
     return bool(raw_id) and not raw_id.startswith(("claude_", "codex_"))
 
 
+def _runtime_session_on_disk(
+    settings: BemineSettings, runtime_key: str, session_id: str
+) -> bool:
+    """True when the runtime still has this conversation on disk.
+
+    Both CLIs exit 1 on resume with an unknown id, which would crash-loop the
+    continuity tick — never resume an id whose transcript is gone."""
+    if not session_id:
+        return False
+    try:
+        if runtime_key == "claude":
+            projects = settings.claude_home / "projects"
+            return any(projects.glob(f"*/{session_id}.jsonl"))
+        if runtime_key == "codex":
+            sessions = settings.codex_home / "sessions"
+            return any(sessions.glob(f"*/*/*/rollout-*{session_id}.jsonl"))
+    except OSError:
+        return False
+    return False
+
+
+def _send_resume_nudge(
+    tmux: TmuxLike,
+    name: str,
+    *,
+    sleep: Callable[[float], None],
+    settle_polls: int = 15,
+    poll_secs: float = 2.0,
+) -> None:
+    """Nudge the resumed CLI to continue, tolerating its boot time.
+
+    Keys sent while the TUI is still booting get dropped (codex) or left
+    unsubmitted in the input box (claude). Wait until the pane stops changing,
+    then send text and Enter separately; the trailing second Enter is a no-op
+    when the first landed (submitting an empty input does nothing)."""
+    previous = None
+    for _ in range(settle_polls):
+        sleep(poll_secs)
+        try:
+            pane = tmux.capture(name)
+        except Exception:
+            return
+        if pane.strip() and pane == previous:
+            break
+        previous = pane
+    tmux.send(name, RESUME_NUDGE, enter=False)
+    sleep(1.0)
+    tmux.send(name, "", enter=True)
+    sleep(2.0)
+    tmux.send(name, "", enter=True)
+
+
 def _native_resume_command(command: str, runtime_key: str, session_id: str) -> str:
     if runtime_key == "claude":
         return f"{command} --resume {session_id}"
@@ -611,6 +664,9 @@ def _resume_launch_command(
         return None
     raw_id = str(row["session_id"] or "").removeprefix(f"{runtime_key}:")
     if not _is_resumable_session_id(raw_id):
+        return None
+    source_path = str(row["source_path"] or "")
+    if not source_path or not Path(source_path).exists():
         return None
     return _native_resume_command(command, runtime_key, raw_id), raw_id
 
@@ -671,6 +727,7 @@ def resume_missing_local_workers(
     *,
     db: BemineDB | None = None,
     tmux: TmuxLike | None = None,
+    nudge_sleep: Callable[[float], None] = time.sleep,
 ) -> list[WorkerRecord]:
     """Restart Bemine-managed local tmux workers that were running before a reboot.
 
@@ -702,7 +759,11 @@ def resume_missing_local_workers(
         runtime_key = record.runtime.strip().lower()
         launch_command = command
         resumed_session = ""
-        if _is_resumable_session_id(record.runtime_session_id):
+        if _is_resumable_session_id(
+            record.runtime_session_id
+        ) and _runtime_session_on_disk(
+            settings, runtime_key, record.runtime_session_id
+        ):
             # deterministic path: the id captured at start (claude) or by the
             # linking pass (codex); both CLIs keep the id across resumes
             resumed_session = record.runtime_session_id
@@ -724,7 +785,7 @@ def resume_missing_local_workers(
             launch_command, session_id = _pin_runtime_session(runtime_key, command)
         tmux.start(record.name, _command_in_cwd(cwd.resolve(), launch_command))
         if resumed_session:
-            tmux.send(record.name, RESUME_NUDGE)
+            _send_resume_nudge(tmux, record.name, sleep=nudge_sleep)
         # record keeps the ORIGINAL command; the conversation id lives in
         # runtime_session_id and the resume flags are rebuilt per launch
         restarted = controller._record(

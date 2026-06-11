@@ -98,7 +98,12 @@ def test_resume_missing_local_workers_restarts_running_cdjk_worker(
     )
     tmux = FakeTmux()
 
-    resumed = resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resumed = resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert [record.name for record in resumed] == ["goal-restart"]
     assert "goal-restart" in tmux.sessions
@@ -137,7 +142,12 @@ def test_resume_missing_local_workers_restarts_missing_cdjk_worker(
     )
     tmux = FakeTmux()
 
-    resumed = resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resumed = resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert [record.name for record in resumed] == ["goal-restart"]
     assert "goal-restart" in tmux.sessions
@@ -152,7 +162,11 @@ def _index_session(
     cwd: str,
     updated_at: str,
     device_id: str = "cdjk",
+    write_transcript: bool = True,
 ) -> None:
+    transcript = Path(cwd) / f"{session_id.split(':', 1)[-1]}.jsonl"
+    if write_transcript:
+        transcript.write_text("{}\n", encoding="utf-8")
     db.upsert_device(device_id)
     db.upsert_session(
         SessionRecord(
@@ -160,7 +174,7 @@ def _index_session(
             runtime=runtime,
             device_id=device_id,
             cwd=cwd,
-            source_path=Path(cwd) / "transcript.jsonl",
+            source_path=transcript,
             started_at=updated_at,
             updated_at=updated_at,
             model="",
@@ -211,7 +225,12 @@ def test_resume_missing_local_workers_resumes_claude_conversation(
     )
     tmux = FakeTmux()
 
-    resumed = resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resumed = resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert [record.name for record in resumed] == ["goal-resume"]
     started = tmux.started_commands["goal-resume"]
@@ -220,7 +239,7 @@ def test_resume_missing_local_workers_resumes_claude_conversation(
         "0aa6aa5e-3a64-4a32-9a2b-9f4b1f2a3c4d" in started
     )
     assert tmux.sent["goal-resume"], "expected a continue nudge after resume"
-    assert "continue" in tmux.sent["goal-resume"][-1].lower()
+    assert any("continue" in text.lower() for text in tmux.sent["goal-resume"])
     record = db.get_managed_session("goal-resume")
     assert record is not None
     assert record["command"] == "claude --dangerously-skip-permissions"
@@ -255,7 +274,12 @@ def test_resume_missing_local_workers_resumes_codex_conversation(
     )
     tmux = FakeTmux()
 
-    resumed = resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resumed = resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert [record.name for record in resumed] == ["goal-resume"]
     started = tmux.started_commands["goal-resume"]
@@ -297,7 +321,12 @@ def test_resume_missing_local_workers_picks_latest_indexed_session(
     )
     tmux = FakeTmux()
 
-    resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert (
         "--resume 22222222-2222-4222-8222-222222222222"
@@ -322,7 +351,12 @@ def test_resume_missing_local_workers_falls_back_without_indexed_session(
     )
     tmux = FakeTmux()
 
-    resumed = resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resumed = resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert [record.name for record in resumed] == ["goal-resume"]
     started = tmux.started_commands["goal-resume"]
@@ -354,7 +388,12 @@ def test_resume_missing_local_workers_ignores_synthetic_session_ids(
     )
     tmux = FakeTmux()
 
-    resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert "--resume" not in tmux.started_commands["goal-resume"]
 
@@ -384,7 +423,12 @@ def test_resume_missing_local_workers_ignores_other_device_sessions(
     )
     tmux = FakeTmux()
 
-    resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     assert "--resume" not in tmux.started_commands["goal-resume"]
 
@@ -527,6 +571,25 @@ def test_link_worker_runtime_sessions_skips_workers_with_session(
     assert row["runtime_session_id"] == "66666666-6666-4666-8666-666666666666"
 
 
+def _write_runtime_transcript(
+    settings: BemineSettings, runtime: str, session_id: str
+) -> Path:
+    if runtime == "claude":
+        path = settings.claude_home / "projects" / "proj" / f"{session_id}.jsonl"
+    else:
+        path = (
+            settings.codex_home
+            / "sessions"
+            / "2026"
+            / "06"
+            / "11"
+            / f"rollout-2026-06-11T00-00-00-{session_id}.jsonl"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}\n", encoding="utf-8")
+    return path
+
+
 def test_resume_prefers_stored_runtime_session_id_over_index(
     tmp_path: Path,
 ) -> None:
@@ -535,6 +598,8 @@ def test_resume_prefers_stored_runtime_session_id_over_index(
     settings = BemineSettings.load(
         state_dir=tmp_path / "state",
         vault_dir=tmp_path / "vault",
+        claude_home=tmp_path / "claude_home",
+        codex_home=tmp_path / "codex_home",
         device_id="cdjk",
     )
     db = BemineDB(settings.db_path)
@@ -543,6 +608,9 @@ def test_resume_prefers_stored_runtime_session_id_over_index(
         db, cwd=cwd, runtime="claude", command="claude --dangerously-skip-permissions"
     )
     db.set_worker_runtime_session("goal-resume", "88888888-8888-4888-8888-888888888888")
+    _write_runtime_transcript(
+        settings, "claude", "88888888-8888-4888-8888-888888888888"
+    )
     _index_session(
         db,
         session_id="claude:99999999-9999-4999-8999-999999999999",
@@ -552,7 +620,12 @@ def test_resume_prefers_stored_runtime_session_id_over_index(
     )
     tmux = FakeTmux()
 
-    resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     started = tmux.started_commands["goal-resume"]
     assert "--resume 88888888-8888-4888-8888-888888888888" in started
@@ -560,6 +633,153 @@ def test_resume_prefers_stored_runtime_session_id_over_index(
     row = db.get_managed_session("goal-resume")
     assert row is not None
     assert row["runtime_session_id"] == "88888888-8888-4888-8888-888888888888"
+
+
+def test_resume_stored_claude_id_missing_on_disk_pins_fresh(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        claude_home=tmp_path / "claude_home",
+        codex_home=tmp_path / "codex_home",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(
+        db, cwd=cwd, runtime="claude", command="claude --dangerously-skip-permissions"
+    )
+    db.set_worker_runtime_session("goal-resume", "88888888-8888-4888-8888-888888888888")
+    tmux = FakeTmux()
+
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
+
+    started = tmux.started_commands["goal-resume"]
+    # resuming an id with no transcript exits 1 and crash-loops; must start fresh
+    assert "--resume" not in started
+    assert "--session-id " in started
+    row = db.get_managed_session("goal-resume")
+    assert row is not None
+    assert row["runtime_session_id"] != "88888888-8888-4888-8888-888888888888"
+    assert row["runtime_session_id"] in started
+
+
+def test_resume_stored_codex_id_missing_on_disk_falls_back_to_index(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        claude_home=tmp_path / "claude_home",
+        codex_home=tmp_path / "codex_home",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(db, cwd=cwd, runtime="codex", command="codex --yolo")
+    db.set_worker_runtime_session("goal-resume", "00000000-0000-4000-8000-000000000000")
+    _index_session(
+        db,
+        session_id="codex:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        runtime="codex",
+        cwd=cwd,
+        updated_at="2026-06-11T09:00:00+00:00",
+    )
+    tmux = FakeTmux()
+
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
+
+    started = tmux.started_commands["goal-resume"]
+    assert "codex resume aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" in started
+    assert "00000000" not in started
+
+
+def test_resume_heuristic_skips_deleted_transcript(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        claude_home=tmp_path / "claude_home",
+        codex_home=tmp_path / "codex_home",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(
+        db, cwd=cwd, runtime="claude", command="claude --dangerously-skip-permissions"
+    )
+    _index_session(
+        db,
+        session_id="claude:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        runtime="claude",
+        cwd=cwd,
+        updated_at="2026-06-11T09:00:00+00:00",
+        write_transcript=False,
+    )
+    tmux = FakeTmux()
+
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
+
+    started = tmux.started_commands["goal-resume"]
+    assert "--resume" not in started
+    assert "--session-id " in started
+
+
+def test_resume_nudge_waits_then_sends_text_and_enters(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        claude_home=tmp_path / "claude_home",
+        codex_home=tmp_path / "codex_home",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    cwd = str(project.resolve())
+    _managed_worker(
+        db, cwd=cwd, runtime="claude", command="claude --dangerously-skip-permissions"
+    )
+    db.set_worker_runtime_session("goal-resume", "88888888-8888-4888-8888-888888888888")
+    _write_runtime_transcript(
+        settings, "claude", "88888888-8888-4888-8888-888888888888"
+    )
+    tmux = FakeTmux()
+    sleeps: list[float] = []
+
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=sleeps.append,
+    )
+
+    sent = tmux.sent["goal-resume"]
+    # text first (no Enter), then Enter separately, then a second idempotent
+    # Enter in case the first landed before the TUI was ready
+    assert sent[0].rstrip("\n") == sent[0], "nudge text must be sent without Enter"
+    assert "continue" in sent[0].lower()
+    assert sent[1:] == ["\n", "\n"]
+    assert sleeps, "nudge must wait for the CLI to boot before typing"
 
 
 def test_resume_claude_fallback_pins_fresh_session_id(tmp_path: Path) -> None:
@@ -577,7 +797,12 @@ def test_resume_claude_fallback_pins_fresh_session_id(tmp_path: Path) -> None:
     )
     tmux = FakeTmux()
 
-    resume_missing_local_workers(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    resume_missing_local_workers(
+        settings,
+        db=db,
+        tmux=tmux,  # type: ignore[arg-type]
+        nudge_sleep=lambda _: None,
+    )
 
     started = tmux.started_commands["goal-resume"]
     assert "--resume" not in started
