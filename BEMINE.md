@@ -40,6 +40,11 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "add X to shopping/checklist" → `checklist.add` route (the gateway's local tool router).
 - "store SMM/PA idea X" → `uv run bemine backlog add "<idea>" --owner SMM|PA`
   (Discord also accepts `SMM idea: ...` / `store idea for PA: ...`).
+- channel management: sync creates missing project channels WITH topics and
+  refreshes drifted topics; `--archive-stale` moves untracked channels to the
+  "Bemine Archive" category (history preserved) instead of deleting; `--prune`
+  is the destructive variant. Scratch dirs never become channels
+  ([projects].ignored_roots covers /tmp and ~/.hermes).
 - "create/sync project channels" → inspect `channel_routes` first, or use
   `/discord routes`, `discord routes`, or `uv run bemine discord routes` for the
   read-only route view. Then dry-run with `/discord sync-plan`, `channel_sync_plan`,

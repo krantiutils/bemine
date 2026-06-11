@@ -109,3 +109,54 @@ def test_channel_system_prompt_includes_project_state(tmp_path, monkeypatch):
 
     assert "Current project state:" in prompt
     assert "STATE-MARKER" in prompt
+
+
+def test_project_channel_topic_describes_root_and_behavior(tmp_path):
+    from bemine.discord.dispatch import ProjectChannel, _project_channel_topic
+
+    channel = ProjectChannel(
+        channel_name="repo",
+        cwd=tmp_path / "repo",
+        project_id="proj_x",
+        project_name="repo",
+    )
+
+    topic = _project_channel_topic(channel)
+
+    assert "Bemine project `repo`" in topic
+    assert str(tmp_path / "repo") in topic
+    assert len(topic) <= 1024
+
+
+def test_plan_reports_would_archive_for_stale_channels(tmp_path, monkeypatch):
+    from bemine.discord.dispatch import plan_project_channel_sync
+
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v", device_id="cdjk"
+    )
+
+    class _FakeStore:
+        def __init__(self, db_path):
+            pass
+
+        def channel_metadata(self):
+            return [
+                {
+                    "channel_name": "old-project",
+                    "category_name": "Bemine Projects",
+                    "channel_type": 0,
+                    "channel_id": "123",
+                    "guild_id": "g1",
+                }
+            ]
+
+    monkeypatch.setattr("bemine.discord.dispatch.Store", _FakeStore)
+
+    plan = plan_project_channel_sync(settings, archive_stale=True)
+
+    assert [c["channel_name"] for c in plan["would_archive"]] == ["old-project"]
+    assert plan["would_prune"] == []
+    # prune wins over archive when both are requested
+    plan2 = plan_project_channel_sync(settings, archive_stale=True, prune=True)
+    assert plan2["would_archive"] == []
+    assert [c["channel_name"] for c in plan2["would_prune"]] == ["old-project"]

@@ -33,6 +33,7 @@ from bemine.index.project_filters import ignored_project_reason
 from bemine.index.status import _redact
 
 PROJECT_CATEGORY_NAME = "Bemine Projects"
+ARCHIVE_CATEGORY_NAME = "Bemine Archive"
 DISPATCH_CONFIG_NAME = "discord-projects.json"
 MAX_CHANNELS_PER_CATEGORY = 50
 
@@ -307,6 +308,41 @@ def ensure_default_project_config(
     return path
 
 
+def _project_channel_topic(channel: ProjectChannel) -> str:
+    name = channel.project_name or channel.channel_name
+    return (
+        f"Bemine project `{name}` — root {channel.cwd}. Talk here to operate this "
+        "project; Bemine injects current project state (sessions, handoffs, workers) "
+        "each turn."
+    )[:1024]
+
+
+async def _modify_discord_channel(
+    session: aiohttp.ClientSession, channel_id: str, payload: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    return await _discord_json(
+        session,
+        "PATCH",
+        f"https://discord.com/api/v10/channels/{channel_id}",
+        json_payload=dict(payload),
+    )
+
+
+async def _ensure_archive_category(
+    session: aiohttp.ClientSession,
+    guild_id: str,
+    existing_channels: list[Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    key = _channel_key(ARCHIVE_CATEGORY_NAME)
+    for channel in existing_channels:
+        if (
+            channel.get("type") == 4
+            and _channel_key(str(channel.get("name") or "")) == key
+        ):
+            return channel
+    return await _create_project_category(session, guild_id, ARCHIVE_CATEGORY_NAME)
+
+
 async def sync_project_channels_to_discord(
     settings: BemineSettings,
     discord_token: str,
@@ -314,6 +350,7 @@ async def sync_project_channels_to_discord(
     *,
     limit: int = 200,
     prune: bool = False,
+    archive_stale: bool = False,
 ) -> dict[str, Any]:
     db = BemineDB(settings.db_path)
     channels, aliases = _desired_project_channels(db, limit=limit)
@@ -345,6 +382,12 @@ async def sync_project_channels_to_discord(
         existing_by_name = {
             str(channel.get("name")): channel for channel in existing_project_channels
         }
+        topic_by_name = {
+            channel.channel_name: _project_channel_topic(channel)
+            for channel in channels
+        }
+        for alias_name, alias_channel in aliases.items():
+            topic_by_name[alias_name] = _project_channel_topic(alias_channel)
         deleted: list[dict[str, str]] = []
         if prune:
             for name, channel in list(existing_by_name.items()):
@@ -353,6 +396,31 @@ async def sync_project_channels_to_discord(
                 await _delete_discord_channel(session, str(channel.get("id") or ""))
                 deleted.append({"id": str(channel.get("id") or ""), "name": name})
                 existing_by_name.pop(name, None)
+        archived: list[dict[str, str]] = []
+        if archive_stale and not prune:
+            archive_category: Mapping[str, Any] | None = None
+            for name, channel in list(existing_by_name.items()):
+                if name in target_names:
+                    continue
+                if archive_category is None:
+                    archive_category = await _ensure_archive_category(
+                        session, guild_id, existing
+                    )
+                await _modify_discord_channel(
+                    session,
+                    str(channel.get("id") or ""),
+                    {"parent_id": str(archive_category.get("id") or "")},
+                )
+                archived.append({"id": str(channel.get("id") or ""), "name": name})
+                existing_by_name.pop(name, None)
+        topics_updated: list[str] = []
+        for name, channel in existing_by_name.items():
+            desired_topic = topic_by_name.get(name, "")
+            if desired_topic and str(channel.get("topic") or "") != desired_topic:
+                await _modify_discord_channel(
+                    session, str(channel.get("id") or ""), {"topic": desired_topic}
+                )
+                topics_updated.append(name)
         category_counts = _category_counts(categories, existing_by_name.values())
         created: list[dict[str, str]] = []
         skipped: list[str] = []
@@ -367,7 +435,11 @@ async def sync_project_channels_to_discord(
                 category_counts,
             )
             channel = await _create_text_channel(
-                session, guild_id, name, parent_id=str(category["id"])
+                session,
+                guild_id,
+                name,
+                parent_id=str(category["id"]),
+                topic=topic_by_name.get(name, ""),
             )
             category_id = str(category.get("id") or "")
             category_counts[category_id] = category_counts.get(category_id, 0) + 1
@@ -400,10 +472,13 @@ async def sync_project_channels_to_discord(
                 ],
                 "created": created,
                 "deleted": deleted,
+                "archived": archived,
+                "topics_updated": topics_updated,
                 "deleted_categories": deleted_categories,
                 "skipped_count": len(skipped),
                 "config_path": str(config_path),
                 "prune": prune,
+                "archive_stale": archive_stale,
             },
             sort_keys=True,
         ),
@@ -417,6 +492,8 @@ async def sync_project_channels_to_discord(
         ],
         "created": created,
         "deleted": deleted,
+        "archived": archived,
+        "topics_updated": topics_updated,
         "deleted_categories": deleted_categories,
         "skipped": skipped,
         "config_path": str(config_path),
@@ -429,6 +506,7 @@ def plan_project_channel_sync(
     *,
     limit: int = 200,
     prune: bool = False,
+    archive_stale: bool = False,
 ) -> dict[str, Any]:
     db = BemineDB(settings.db_path)
     channels, aliases = _desired_project_channels(db, limit=limit)
@@ -471,6 +549,8 @@ def plan_project_channel_sync(
         "existing": existing_matches,
         "stale": stale,
         "would_prune": stale if prune else [],
+        "archive_stale": archive_stale,
+        "would_archive": stale if (archive_stale and not prune) else [],
     }
 
 
@@ -2660,12 +2740,16 @@ async def _create_text_channel(
     name: str,
     *,
     parent_id: str,
+    topic: str = "",
 ) -> Mapping[str, Any]:
+    payload: dict[str, Any] = {"name": name, "type": 0, "parent_id": parent_id}
+    if topic:
+        payload["topic"] = topic
     return await _discord_json(
         session,
         "POST",
         f"https://discord.com/api/v10/guilds/{guild_id}/channels",
-        json_payload={"name": name, "type": 0, "parent_id": parent_id},
+        json_payload=payload,
     )
 
 
