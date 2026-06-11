@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS managed_sessions (
     cwd TEXT NOT NULL,
     command TEXT NOT NULL,
     status TEXT NOT NULL,
+    runtime_session_id TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     last_seen_at REAL
@@ -238,6 +239,12 @@ class BemineDB:
         bs_cols = {r[1] for r in conn.execute("PRAGMA table_info(bemine_sessions)")}
         if "codex_thread_id" not in bs_cols:
             conn.execute("ALTER TABLE bemine_sessions ADD COLUMN codex_thread_id TEXT")
+        ms_cols = {r[1] for r in conn.execute("PRAGMA table_info(managed_sessions)")}
+        if "runtime_session_id" not in ms_cols:
+            conn.execute(
+                "ALTER TABLE managed_sessions"
+                " ADD COLUMN runtime_session_id TEXT NOT NULL DEFAULT ''"
+            )
 
     def upsert_device(self, device_id: str, alias: str | None = None) -> None:
         now = time.time()
@@ -877,6 +884,7 @@ class BemineDB:
         cwd: str,
         command: str,
         status: str,
+        runtime_session_id: str = "",
     ) -> None:
         now = time.time()
         with self.connect() as conn:
@@ -884,8 +892,9 @@ class BemineDB:
                 """
                 INSERT INTO managed_sessions(
                     name, runtime, transport, device_id, project_id, cwd,
-                    command, status, created_at, updated_at, last_seen_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    command, status, runtime_session_id, created_at,
+                    updated_at, last_seen_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     runtime=excluded.runtime,
                     transport=excluded.transport,
@@ -894,6 +903,11 @@ class BemineDB:
                     cwd=excluded.cwd,
                     command=excluded.command,
                     status=excluded.status,
+                    runtime_session_id=CASE
+                        WHEN excluded.runtime_session_id = ''
+                        THEN managed_sessions.runtime_session_id
+                        ELSE excluded.runtime_session_id
+                    END,
                     updated_at=excluded.updated_at,
                     last_seen_at=excluded.last_seen_at
                 """,
@@ -906,11 +920,35 @@ class BemineDB:
                     cwd,
                     command,
                     status,
+                    runtime_session_id,
                     now,
                     now,
                     now,
                 ),
             )
+
+    def set_worker_runtime_session(self, name: str, session_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE managed_sessions SET runtime_session_id = ?, updated_at = ?"
+                " WHERE name = ?",
+                (session_id, time.time(), name),
+            )
+
+    def sessions_for_cwd(
+        self, *, runtime: str, device_id: str, cwd: str, limit: int = 10
+    ) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM sessions
+                WHERE runtime = ? AND device_id = ? AND cwd = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (runtime, device_id, cwd, limit),
+            ).fetchall()
 
     def list_managed_sessions(self) -> list[sqlite3.Row]:
         with self.connect() as conn:
