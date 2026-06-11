@@ -400,6 +400,21 @@ class BemineDB:
                 )
             return results
 
+    def sessions_for_project(
+        self, project_id: str, *, limit: int = 3
+    ) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM sessions
+                WHERE project_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (project_id, limit),
+            ).fetchall()
+
     def latest_session_for_cwd(
         self, *, runtime: str, device_id: str, cwd: str
     ) -> sqlite3.Row | None:

@@ -299,8 +299,7 @@ def ensure_default_project_config(
         return path
     defaults = load_project_channels(state_dir, repo_dir=repo_dir, home=home)
     payload = {
-        channel.channel_name: {"cwd": str(channel.cwd)}
-        for channel in defaults.values()
+        channel.channel_name: {"cwd": str(channel.cwd)} for channel in defaults.values()
     }
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -448,8 +447,7 @@ def plan_project_channel_sync(
     }
     existing_names = set(existing_by_name)
     would_create = [
-        row for row in desired
-        if str(row["channel_name"]) not in existing_names
+        row for row in desired if str(row["channel_name"]) not in existing_names
     ]
     existing_matches = [
         _cached_channel_entry(existing_by_name[name])
@@ -499,7 +497,9 @@ class ProjectDispatcher:
             dispatcher = self.kimi_dispatcher or resolve_kimi_dispatcher(self.settings)
             return dispatcher.dispatch(project, request, progress_callback)
         if runtime == "codex":
-            dispatcher = self.codex_dispatcher or resolve_codex_dispatcher(self.settings)
+            dispatcher = self.codex_dispatcher or resolve_codex_dispatcher(
+                self.settings
+            )
             return dispatcher.dispatch(project, request, progress_callback)
         if runtime == "claude":
             dispatcher = resolve_claude_dispatcher(self.settings)
@@ -737,7 +737,9 @@ class KimiDispatcher:
                         returncode=proc.poll(),
                         interrupted=True,
                     )
-                    self._audit_result("kimi_dispatch_finished", project, request, result)
+                    self._audit_result(
+                        "kimi_dispatch_finished", project, request, result
+                    )
                     _emit_progress(
                         progress_callback,
                         runtime="kimi",
@@ -812,9 +814,7 @@ class KimiDispatcher:
             return result
 
         output = _redact(
-            stdout.strip()
-            or stderr.strip()
-            or "Kimi finished without a final message."
+            stdout.strip() or stderr.strip() or "Kimi finished without a final message."
         )
         elapsed = time.monotonic() - started
         result = DispatchResult(
@@ -1874,6 +1874,20 @@ def _build_channel_system_prompt(
         if project
         else "Project root: (none bound; coordination/default surface)"
     )
+    project_state_block: list[str] = []
+    if project is not None and local_project:
+        from bemine.context.project_state import project_state_context
+
+        try:
+            state_text = project_state_context(
+                settings,
+                project_id=project.project_id or project.channel_name,
+                cwd=Path(project.cwd),
+            )
+        except Exception:
+            state_text = ""
+        if state_text:
+            project_state_block = ["", "Current project state:", state_text]
     identity = [
         "Active runtime configuration (AUTHORITATIVE — this is the ground truth; if the "
         "user asks which model/runtime/configuration you are, answer with exactly this and "
@@ -1895,6 +1909,7 @@ def _build_channel_system_prompt(
                 "You run inside Bemine's own harness and use only the tools Bemine provides.",
                 project_line,
                 *channel_block,
+                *project_state_block,
                 "",
                 *identity,
                 "",
@@ -1974,9 +1989,7 @@ def resolve_channel_binding(settings: BemineSettings, message: Any) -> ChannelBi
     runtime = resolve_dispatch_runtime(project.runtime if project else None)
     model = config_string(runtime, "model", "") or _DEFAULT_MODELS.get(runtime, "")
     cwd = Path(project.cwd) if local_project else Path(settings.state_dir).parent
-    project_id = (
-        (project.project_id or project.channel_name) if project else "bemine"
-    )
+    project_id = (project.project_id or project.channel_name) if project else "bemine"
     system = _build_channel_system_prompt(
         settings, project, runtime=runtime, model=model, local_project=local_project
     )
@@ -2050,7 +2063,9 @@ def dispatch_status_payload(settings: BemineSettings) -> dict[str, Any]:
                 if os.environ.get("BEMINE_CLAUDE_MODEL", "").strip()
                 else "bemine.toml",
                 "backend": backend,
-                "base_url": resolve_meridian_base_url() if backend == "meridian" else "",
+                "base_url": resolve_meridian_base_url()
+                if backend == "meridian"
+                else "",
                 "api_key_env": api_key_env,
                 "api_key_present": bool(os.environ.get(api_key_env, "").strip())
                 if api_key_env
@@ -2517,8 +2532,7 @@ def _desired_channel_entries(
     aliases: Mapping[str, ProjectChannel],
 ) -> list[dict[str, str]]:
     entries = [
-        {**_project_channel_payload(channel), "kind": "project"}
-        for channel in channels
+        {**_project_channel_payload(channel), "kind": "project"} for channel in channels
     ]
     for alias_name, channel in sorted(aliases.items()):
         entries.append(
