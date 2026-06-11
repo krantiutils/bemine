@@ -2,6 +2,7 @@ from pathlib import Path
 from bemine.config import BemineSettings
 from bemine.commands import registry, run_command
 from bemine.db import BemineDB
+from bemine.discord.store import Store
 
 
 def _settings(tmp_path):
@@ -27,6 +28,7 @@ def test_registry_lists_deterministic_ops():
         "continuity",
         "help",
         "discord.routes",
+        "discord.sync_plan",
     } <= names
 
 
@@ -106,6 +108,36 @@ def test_run_command_backlog_list(tmp_path):
     assert out.data["owner"] == "SMM"
 
 
+def test_run_command_discord_sync_plan_is_dry_run(tmp_path):
+    settings = _settings(tmp_path)
+    project = tmp_path / "rai"
+    project.mkdir()
+    db = BemineDB(settings.db_path)
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO projects(project_id, name, cwd, first_seen_at, last_seen_at)
+            VALUES (?, ?, ?, 1.0, 2.0)
+            """,
+            ("proj_rai", "rai", str(project)),
+        )
+    Store(settings.db_path).record_channel_metadata(
+        channel_id="chan-old",
+        guild_id="guild-1",
+        channel_name="old-project",
+        category_name="Bemine Projects",
+        channel_type=0,
+    )
+
+    out = run_command("discord.sync_plan", settings, {"prune": True})
+
+    assert "Discord channel sync plan:" in out.text
+    assert "mode: dry-run only" in out.text
+    assert out.data["dry_run"] is True
+    assert out.data["would_create"][0]["channel_name"] == "rai"
+    assert out.data["would_prune"][0]["channel_name"] == "old-project"
+
+
 def test_run_command_help_summarizes_configurable_surfaces(tmp_path, monkeypatch):
     config = tmp_path / "bemine.toml"
     config.write_text(
@@ -167,6 +199,7 @@ context_limit = 1000
     assert "jobs.session_fallback_channel=session-updates" in out.text
     assert "recovery.poll_interval_secs=300" in out.text
     assert "discord routes:" in out.text
+    assert "discord sync plan:" in out.text
     assert "inspect ops:" in out.text
     assert "goal sessions: `goal <project> <brief>`" in out.text
     assert "continuity:" in out.text
