@@ -281,8 +281,8 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- backlog config: default_owner={backlog_default_owner} owners={', '.join(backlog_owners) or 'none'}",
         "- config: `config show` / `what config is set?`",
         "- social posts: `smm draft` / `backlog add` for SMM ideas",
-        f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM` / `/subagents`)",
-        f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom build` / `phantom install` / `/phantom`)",
+        f"- subagents: {', '.join(profile.name for profile in subagents.profiles) or 'none'} (`subagents list` / `subagents show PA|SMM` / `/subagents list`)",
+        f"- phantom: project_root={phantom_root or 'unset'} (`phantom status` / `phantom build` / `phantom install` / `/phantom status`)",
         "Config knobs:",
         *[f"- {item}" for item in configurable_knobs],
     ]

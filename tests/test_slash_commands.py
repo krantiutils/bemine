@@ -1,6 +1,9 @@
 from pathlib import Path
+import discord
+from discord.ext import commands
+
 from bemine.config import BemineSettings
-from bemine.discord.gateway import slash_command_text
+from bemine.discord.gateway import register_slash_commands, slash_command_text
 
 
 def test_slash_command_calls_registry(tmp_path):
@@ -15,8 +18,9 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     health = slash_command_text(settings, "health", {})
     goals = slash_command_text(settings, "goals", {})
     config = slash_command_text(settings, "config", {})
-    subagents = slash_command_text(settings, "subagents", {})
-    phantom = slash_command_text(settings, "phantom", {})
+    subagents = slash_command_text(settings, "subagents.list", {})
+    phantom = slash_command_text(settings, "phantom.status", {})
+    phantom_build = slash_command_text(settings, "phantom.build", {})
     backlog = slash_command_text(settings, "backlog", {})
     continuity = slash_command_text(settings, "continuity", {})
     help_text = slash_command_text(settings, "help", {})
@@ -28,6 +32,7 @@ def test_slash_health_and_goals_are_deterministic(tmp_path):
     assert "device_id = \"cdjk\"" in config
     assert "Subagent profiles:" in subagents or "No subagent profiles configured." in subagents
     assert "Phantom" in phantom
+    assert "Phantom" in phantom_build
     assert "backlog" in backlog.lower()
     assert "Bemine continuity:" in continuity
     assert "Bemine help:" in help_text
@@ -129,6 +134,21 @@ def test_slash_goal_starts_goal_session(tmp_path, monkeypatch):
 
     assert "Goal session started:" in text
     assert "goal-rai" in text
+
+
+def test_register_slash_commands_exposes_grouped_surfaces(tmp_path):
+    settings = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
+
+    register_slash_commands(bot.tree, settings_loader=lambda: settings)
+
+    subagents = bot.tree.get_command("subagents")
+    phantom = bot.tree.get_command("phantom")
+
+    assert subagents is not None
+    assert phantom is not None
+    assert [cmd.name for cmd in subagents.commands] == ["list", "show"]
+    assert [cmd.name for cmd in phantom.commands] == ["status", "build", "install"]
 
 
 def test_slash_unknown_command(tmp_path):

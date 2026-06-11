@@ -84,6 +84,8 @@ _SLASH_TO_COMMAND: dict[str, str] = {
     "capabilities": "capabilities",
 }
 
+_GROUPED_SLASH_ROOTS = {"subagents", "phantom"}
+
 
 def slash_command_text(settings: BemineSettings, slash_name: str, args: dict) -> str:
     """Resolve a slash command name to a registry command and run it.
@@ -91,7 +93,17 @@ def slash_command_text(settings: BemineSettings, slash_name: str, args: dict) ->
     Returns the plain-text result suitable for sending back to Discord.
     No LLM is invoked; this is entirely deterministic.
     """
-    if slash_name == "goal":
+    if slash_name in {"subagents", "subagents.list"}:
+        command = "subagents.list"
+    elif slash_name == "subagents.show":
+        command = "subagents.show"
+    elif slash_name in {"phantom", "phantom.status"}:
+        command = "phantom.status"
+    elif slash_name == "phantom.build":
+        command = "phantom.build"
+    elif slash_name == "phantom.install":
+        command = "phantom.install"
+    elif slash_name == "goal":
         command = "goal.start"
     elif slash_name == "backlog":
         command = "backlog.list"
@@ -131,6 +143,8 @@ def register_slash_commands(
             await interaction.followup.send(chunk)
 
     for slash_name in _SLASH_TO_COMMAND:
+        if slash_name in _GROUPED_SLASH_ROOTS:
+            continue
         # Capture slash_name in a default argument to avoid closure-over-loop issues.
         async def _handler(
             interaction: discord.Interaction,
@@ -146,25 +160,33 @@ def register_slash_commands(
         )
         tree.add_command(cmd)
 
-    async def _backlog_handler(
+    async def _send_slash_result(
         interaction: discord.Interaction,
-        owner: str = "",
-        limit: int = 20,
+        *,
+        command_name: str,
+        args: dict[str, Any] | None = None,
     ) -> None:
         if is_allowed_check is not None and not is_allowed_check(interaction):
             await interaction.response.send_message("Access denied.", ephemeral=True)
             return
         settings = await asyncio.to_thread(settings_loader)
         text = await asyncio.to_thread(
-            slash_command_text,
+            run_command,
+            command_name,
             settings,
-            "backlog",
-            {"owner": owner, "limit": limit},
+            args or {},
         )
-        chunks = _discord_chunk(text, limit=1900)
+        chunks = _discord_chunk(text.text, limit=1900)
         await interaction.response.send_message(chunks[0])
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk)
+
+    async def _backlog_handler(
+        interaction: discord.Interaction,
+        owner: str = "",
+        limit: int = 20,
+    ) -> None:
+        await _send_slash_result(interaction, command_name="backlog.list", args={"owner": owner, "limit": limit})
 
     _backlog_handler.__name__ = "backlog"
     backlog_cmd = discord.app_commands.Command(
@@ -211,6 +233,88 @@ def register_slash_commands(
         callback=_goal_handler,
     )
     tree.add_command(goal_cmd)
+
+    subagents_group = discord.app_commands.Group(
+        name="subagents",
+        description="Bemine: inspect configured subagent profiles",
+    )
+
+    @subagents_group.command(name="list", description="List configured subagent profiles")
+    async def subagents_list(interaction: discord.Interaction) -> None:
+        await _send_slash_result(interaction, command_name="subagents.list")
+
+    @subagents_group.command(name="show", description="Show one configured subagent profile")
+    async def subagents_show(
+        interaction: discord.Interaction,
+        name: str,
+    ) -> None:
+        await _send_slash_result(interaction, command_name="subagents.show", args={"name": name})
+
+    tree.add_command(subagents_group)
+
+    phantom_group = discord.app_commands.Group(
+        name="phantom",
+        description="Bemine: inspect and manage Phantom",
+    )
+
+    @phantom_group.command(name="status", description="Inspect Phantom readiness")
+    async def phantom_status(
+        interaction: discord.Interaction,
+        project_root: str = "",
+        serial: str = "",
+        java_home: str = "",
+    ) -> None:
+        await _send_slash_result(
+            interaction,
+            command_name="phantom.status",
+            args={
+                "project_root": project_root,
+                "serial": serial,
+                "java_home": java_home,
+            },
+        )
+
+    @phantom_group.command(name="build", description="Build the Phantom APK")
+    async def phantom_build(
+        interaction: discord.Interaction,
+        project_root: str = "",
+        java_home: str = "",
+        timeout: int = 600,
+    ) -> None:
+        await _send_slash_result(
+            interaction,
+            command_name="phantom.build",
+            args={
+                "project_root": project_root,
+                "java_home": java_home,
+                "timeout": timeout,
+            },
+        )
+
+    @phantom_group.command(name="install", description="Install Phantom on the phone")
+    async def phantom_install(
+        interaction: discord.Interaction,
+        project_root: str = "",
+        serial: str = "",
+        java_home: str = "",
+        timeout: int = 600,
+        build: bool = False,
+        dry_run: bool = False,
+    ) -> None:
+        await _send_slash_result(
+            interaction,
+            command_name="phantom.install",
+            args={
+                "project_root": project_root,
+                "serial": serial,
+                "java_home": java_home,
+                "timeout": timeout,
+                "build": build,
+                "dry_run": dry_run,
+            },
+        )
+
+    tree.add_command(phantom_group)
 
 
 class DiscordResponder:
