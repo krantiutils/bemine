@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .config import BemineSettings, config_int, config_string
 from .db import BemineDB
@@ -63,6 +65,7 @@ def start_goal(
     target_device: str = "",
     db: BemineDB | None = None,
     controller: WorkerController | None = None,
+    send_sleep: Callable[[float], None] = time.sleep,
 ) -> GoalStartResult:
     project = project.strip()
     brief = brief.strip()
@@ -94,9 +97,11 @@ def start_goal(
         target_device=target.device_id,
     )
     prompt = _goal_prompt(project=project, brief=brief, worker=worker)
-    controller.send(worker.name, prompt)
+    controller.send_when_ready(worker.name, prompt, sleep=send_sleep)
     project_id = worker.project_id or project_id_from_cwd(str(project_cwd))
-    watcher_channel = channel_id.strip() or db.get_channel_id_for_project(project_id) or ""
+    watcher_channel = (
+        channel_id.strip() or db.get_channel_id_for_project(project_id) or ""
+    )
     db.upsert_project_watcher(
         project_id=project_id,
         channel_id=watcher_channel,
@@ -138,8 +143,7 @@ def list_goal_sessions(
     controller = controller or WorkerController(settings, db=db)
     workers = controller.list()
     watchers = {
-        str(row["project_id"]): dict(row)
-        for row in db.list_active_project_watchers()
+        str(row["project_id"]): dict(row) for row in db.list_active_project_watchers()
     }
     sessions: list[GoalSession] = []
     seen_projects: set[str] = set()
@@ -158,13 +162,13 @@ def list_goal_sessions(
     for project_id, watcher in watchers.items():
         if project_id in seen_projects:
             continue
-        sessions.append(GoalSession(project_id=project_id, worker=None, watcher=watcher))
+        sessions.append(
+            GoalSession(project_id=project_id, worker=None, watcher=watcher)
+        )
     query = status.strip().casefold()
     if query:
         sessions = [
-            session
-            for session in sessions
-            if _goal_session_matches(session, query)
+            session for session in sessions if _goal_session_matches(session, query)
         ]
     sessions.sort(key=_goal_session_sort_key)
     return sessions
@@ -299,7 +303,9 @@ def _start_unique_worker(
                 raise
             last_error = exc
             continue
-    raise WorkerError(f"could not allocate worker name from {base_name!r}") from last_error
+    raise WorkerError(
+        f"could not allocate worker name from {base_name!r}"
+    ) from last_error
 
 
 def _resolve_goal_target_from_fleet(
@@ -326,7 +332,9 @@ def _resolve_goal_target_from_fleet(
     ]
     if not matches:
         return None
-    matches.sort(key=lambda status: float(status.last_interaction_at or 0), reverse=True)
+    matches.sort(
+        key=lambda status: float(status.last_interaction_at or 0), reverse=True
+    )
     chosen = matches[0]
     return GoalTarget(cwd=Path(chosen.cwd).expanduser(), device_id=chosen.device_id)
 
@@ -390,6 +398,6 @@ def _goal_prompt(*, project: str, brief: str, worker: WorkerRecord) -> str:
             "- Keep durable findings in the repo, Bemine state, or the Obsidian vault as appropriate.",
             "- Use tests, benchmarks, or concrete artifacts as evidence before claiming completion.",
             "- If blocked on credentials, destructive approval, or missing external state, say exactly what is blocked.",
-            "- End substantial progress with `uv run bemine handoff \"<summary>\" --next \"<next>\" --test \"<verification>\"`.",
+            '- End substantial progress with `uv run bemine handoff "<summary>" --next "<next>" --test "<verification>"`.',
         ]
     )

@@ -572,6 +572,80 @@ def test_resume_nudge_answers_kimi_upgrade_prompt_with_skip(tmp_path: Path) -> N
     assert any("continue" in text.lower() for text in sent)
 
 
+def test_start_goal_claude_waits_for_boot_and_answers_trust_prompt(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    tmux.capture = lambda name: (  # type: ignore[method-assign]
+        "Quick safety check: Is this a project you created or one you trust?\n"
+        "1. Yes, I trust this folder\n2. No, exit\nEnter to confirm\n"
+    )
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    sleeps: list[float] = []
+
+    start_goal(
+        settings,
+        project="repo",
+        brief="reply BRIEF-RECEIVED",
+        cwd=project,
+        runtime="claude",
+        worker_name="goal-trust",
+        interval_secs=3600,
+        db=db,
+        controller=controller,
+        send_sleep=sleeps.append,
+    )
+
+    sent = tmux.sent["goal-trust"]
+    # trust prompt answered with Enter BEFORE the brief is typed, else the
+    # prompt eats the brief and the worker boots braindead
+    assert sent[0] == "\n"
+    prompt_index = next(i for i, s in enumerate(sent) if "BRIEF-RECEIVED" in s)
+    assert prompt_index > 0
+    assert sent[prompt_index].rstrip("\n") == sent[prompt_index]
+    assert sent[prompt_index + 1 :] == ["\n", "\n"]
+    assert sleeps, "brief must wait for the CLI to boot"
+
+
+def test_start_goal_shell_runtime_sends_brief_immediately(tmp_path: Path) -> None:
+    project = tmp_path / "repo"
+    project.mkdir()
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state",
+        vault_dir=tmp_path / "vault",
+        device_id="cdjk",
+    )
+    db = BemineDB(settings.db_path)
+    tmux = FakeTmux()
+    controller = WorkerController(settings, db=db, tmux=tmux)  # type: ignore[arg-type]
+    sleeps: list[float] = []
+
+    start_goal(
+        settings,
+        project="repo",
+        brief="non-CLI brief",
+        cwd=project,
+        runtime="shell",
+        worker_name="goal-shell",
+        interval_secs=3600,
+        command="cat",
+        db=db,
+        controller=controller,
+        send_sleep=sleeps.append,
+    )
+
+    assert sleeps == [], "shell workers must not settle-wait"
+    assert any("non-CLI brief" in s for s in tmux.sent["goal-shell"])
+
+
 def test_worker_start_resolves_runtime_binary_for_launch(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1140,6 +1214,9 @@ def test_cli_goal_with_command_option_starts_worker_and_watcher(
             )
 
         def send(self, name, text):
+            calls["send"] = (name, text)
+
+        def send_when_ready(self, name, text, *, sleep=None):
             calls["send"] = (name, text)
 
     monkeypatch.setattr(
