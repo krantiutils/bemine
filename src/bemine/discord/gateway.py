@@ -1298,6 +1298,9 @@ def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
         "show style.md",
         "what is style.md",
         "what is the style subagent",
+        "what is the style convention",
+        "what style should smm follow",
+        "what style should i follow",
     }:
         return {"command": "subagents.show", "name": "style"}
     return None
