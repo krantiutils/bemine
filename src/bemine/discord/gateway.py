@@ -1412,6 +1412,9 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "bemine help",
         "what can you do",
         "what do you do",
+        "what are you",
+        "what is bemine",
+        "what is this",
         "list commands",
         "commands",
     }:

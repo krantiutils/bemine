@@ -137,6 +137,8 @@ def test_direct_observability_command_aliases() -> None:
     assert gw._direct_observability_command("what should I focus on this week?") == "pa.plan"
     assert gw._direct_observability_command("what should I do next?") == "pa.plan"
     assert gw._direct_observability_command("what should I focus on tomorrow?") == "pa.plan"
+    assert gw._direct_observability_command("what are you?") == "help"
+    assert gw._direct_observability_command("what is Bemine?") == "help"
     assert gw._direct_observability_command("goals") == "goals.list"
     assert gw._direct_observability_command("what goal sessions are active?") == "goals.list"
     assert gw._direct_observability_command("what config is set?") == "config.show"
