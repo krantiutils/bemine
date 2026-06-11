@@ -310,7 +310,9 @@ class WorkerController:
         record = self._require_record(name)
         self._tmux_for_record(record).kill(record.name)
         self.db.set_managed_session_status(record.name, status="stopped")
-        stopped = WorkerRecord(**{**record.to_dict(), "status": "stopped", "exists": False})
+        stopped = WorkerRecord(
+            **{**record.to_dict(), "status": "stopped", "exists": False}
+        )
         self._audit("worker_stopped", stopped, {})
         return stopped
 
@@ -327,7 +329,7 @@ class WorkerController:
     ) -> WorkerTransferResult:
         source = self._require_record(source_name)
         target_name = _validate_name(target_name)
-        target_cwd = (cwd.expanduser().resolve() if cwd else Path(source.cwd))
+        target_cwd = cwd.expanduser().resolve() if cwd else Path(source.cwd)
         target_runtime = _normalize_runtime(target_runtime)
         target_device = target_device.strip() or self.settings.device_id
         target_tmux = self._tmux_for_device(target_device)
@@ -394,9 +396,7 @@ class WorkerController:
                     "target_device": target_device,
                     "target_runtime": target_runtime,
                     "stop_source": stop_source,
-                    "duplicate_heads": [
-                        record.to_dict() for record in duplicate_heads
-                    ],
+                    "duplicate_heads": [record.to_dict() for record in duplicate_heads],
                     "conflict_policy": "preserve_all_heads_with_explicit_handoff",
                     "prompt_len": len(prompt),
                     "source_capture_len": len(source_capture),
@@ -412,7 +412,9 @@ class WorkerController:
         if row is None:
             return False
         record = self._row_to_record(row, exists=False)
-        record = WorkerRecord(**{**record.to_dict(), "exists": self._record_exists(record)})
+        record = WorkerRecord(
+            **{**record.to_dict(), "exists": self._record_exists(record)}
+        )
         deleted = self.db.delete_managed_session(name)
         if deleted:
             self._audit("worker_forgotten", record, {})
@@ -533,6 +535,45 @@ class WorkerController:
         )
 
 
+RESUME_NUDGE = (
+    "Bemine restored this session after a reboot/line cut. "
+    "Review the conversation above and continue from where you left off."
+)
+
+
+def _resume_launch_command(
+    db: BemineDB,
+    settings: BemineSettings,
+    *,
+    runtime: str,
+    cwd: str,
+    command: str,
+) -> tuple[str, str] | None:
+    """Resolve a runtime-native resume launch for a worker's last conversation.
+
+    Returns (launch_command, runtime_session_id) when the sessions index holds a
+    resumable conversation for this cwd, else None (caller starts fresh)."""
+    runtime_key = runtime.strip().lower()
+    if runtime_key not in {"claude", "codex"}:
+        return None
+    row = db.latest_session_for_cwd(
+        runtime=runtime_key, device_id=settings.device_id, cwd=cwd
+    )
+    if row is None:
+        return None
+    raw_id = str(row["session_id"] or "").removeprefix(f"{runtime_key}:")
+    # stable_id fallbacks (claude_*/codex_*) are index-internal, not CLI-resumable
+    if not raw_id or raw_id.startswith(("claude_", "codex_")):
+        return None
+    if runtime_key == "claude":
+        return f"{command} --resume {raw_id}", raw_id
+    binary = command.split()[0] if command.split() else "codex"
+    return (
+        f"{binary} resume {raw_id} --dangerously-bypass-approvals-and-sandbox",
+        raw_id,
+    )
+
+
 def resume_missing_local_workers(
     settings: BemineSettings,
     *,
@@ -543,7 +584,9 @@ def resume_missing_local_workers(
 
     This is intentionally limited to `status=running` local tmux sessions. Adopted
     sessions are opaque; Bemine cannot safely reconstruct their original command.
-    """
+    When the sessions index knows the worker's last conversation for that cwd, the
+    runtime is relaunched with its native resume (claude --resume / codex resume)
+    so the agent keeps its context; otherwise it starts fresh."""
     db = db or BemineDB(settings.db_path)
     tmux = tmux or TmuxAdapter()
     controller = WorkerController(settings, db=db, tmux=tmux)
@@ -564,7 +607,22 @@ def resume_missing_local_workers(
         command = record.command.strip()
         if not command or command == "adopted-existing-tmux-session":
             continue
-        tmux.start(record.name, _command_in_cwd(cwd.resolve(), command))
+        launch_command = command
+        resumed_session = ""
+        resume = _resume_launch_command(
+            db,
+            settings,
+            runtime=record.runtime,
+            cwd=str(cwd.resolve()),
+            command=command,
+        )
+        if resume is not None:
+            launch_command, resumed_session = resume
+        tmux.start(record.name, _command_in_cwd(cwd.resolve(), launch_command))
+        if resumed_session:
+            tmux.send(record.name, RESUME_NUDGE)
+        # record keeps the ORIGINAL command: claude forks a new session id on
+        # every resume, so a persisted --resume flag would go stale
         restarted = controller._record(
             name=record.name,
             runtime=record.runtime,
@@ -577,7 +635,10 @@ def resume_missing_local_workers(
         controller._audit(
             "worker_resumed_after_outage",
             restarted,
-            {"previous_device_id": record.device_id},
+            {
+                "previous_device_id": record.device_id,
+                "resumed_runtime_session": resumed_session,
+            },
         )
         resumed.append(restarted)
     return resumed
