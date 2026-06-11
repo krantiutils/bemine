@@ -1289,6 +1289,8 @@ def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
         "show pa subagent",
         "show pa profile",
         "show pa.md",
+        "show pa",
+        "what is pa",
         "what is pa.md",
         "what is the pa subagent",
     }:
@@ -1297,6 +1299,8 @@ def _direct_subagents_command(normalized_lower: str) -> dict[str, str] | None:
         "show smm subagent",
         "show smm profile",
         "show smm.md",
+        "show smm",
+        "what is smm",
         "what is smm.md",
         "what is the smm subagent",
     }:
