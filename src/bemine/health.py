@@ -9,6 +9,7 @@ from bemine.deploy.heartbeat import read_heartbeat
 from bemine.deploy.state import DeployState, state_path
 from bemine.jobs import seed_default_jobs
 from bemine.jobs.systemd import UnitStatus, user_unit_status
+from bemine.preflight import preflight_issues, runtime_preflight
 from bemine.workers.tmux_adapter import TmuxAdapter
 
 
@@ -17,6 +18,7 @@ def collect_health(
     *,
     db: BemineDB | None = None,
     unit_statuses: list[UnitStatus] | None = None,
+    runtime_rows: list[dict[str, Any]] | None = None,
     now: float | None = None,
 ) -> dict[str, Any]:
     db = db or BemineDB(settings.db_path)
@@ -42,16 +44,15 @@ def collect_health(
             issues.append(f"{service} heartbeat is not on deploy target")
 
     jobs = [dict(row) for row in db.list_jobs()]
-    failed_jobs = [
-        job for job in jobs
-        if int(job.get("failure_count") or 0) > 0
-    ]
+    failed_jobs = [job for job in jobs if int(job.get("failure_count") or 0) > 0]
     for job in failed_jobs:
         issues.append(f"{job['job_id']} has {job['failure_count']} failure(s)")
 
     watchers = db.list_active_project_watchers()
     if deploy.phase not in {"confirmed", "idle"}:
         issues.append(f"deploy phase is {deploy.phase}")
+    runtimes = runtime_preflight(settings) if runtime_rows is None else runtime_rows
+    issues.extend(preflight_issues(runtimes))
     continuity = _collect_continuity_health(settings, db)
     recovery = _collect_recovery_health(db)
     if continuity.get("check_error"):
@@ -91,6 +92,7 @@ def collect_health(
         },
         "continuity": continuity,
         "recovery": recovery,
+        "runtimes": runtimes,
     }
 
 
@@ -116,6 +118,15 @@ def render_health(payload: dict[str, Any]) -> str:
             f"sub={service.get('sub_state') or 'unknown'} "
             f"heartbeat={sha[:8] or 'none'}"
         )
+
+    runtimes = payload.get("runtimes") or []
+    if runtimes:
+        parts = []
+        for row in runtimes:
+            marker = "ok" if row.get("ok") else "UNUSABLE"
+            default = "*" if row.get("goal_default") else ""
+            parts.append(f"{row.get('runtime')}{default}={marker}")
+        lines.append(f"Runtimes: {' '.join(parts)}")
 
     jobs = payload.get("jobs") or {}
     lines.append(
@@ -162,7 +173,9 @@ def render_continuity(payload: dict[str, Any]) -> str:
         f"restartable_missing={continuity.get('restartable_missing', 0)}"
     )
     lines.append(f"Mode: {continuity.get('mode') or 'startup/poll recovery'}")
-    lines.append(f"Covers: {continuity.get('covers') or 'Bemine-managed local tmux workers'}")
+    lines.append(
+        f"Covers: {continuity.get('covers') or 'Bemine-managed local tmux workers'}"
+    )
     lines.append(f"Excludes: {continuity.get('excludes') or 'adopted/manual sessions'}")
     if continuity.get("check_error"):
         lines.append(f"Check error: {continuity['check_error']}")
@@ -195,7 +208,9 @@ def _heartbeat_service_name(unit_name: str) -> str:
     return unit_name.removesuffix(".service")
 
 
-def _collect_continuity_health(settings: BemineSettings, db: BemineDB) -> dict[str, Any]:
+def _collect_continuity_health(
+    settings: BemineSettings, db: BemineDB
+) -> dict[str, Any]:
     enabled = config_bool("continuity", "enabled", True)
     devices = config_list("continuity", "devices", ["cdjk"])
     applies = enabled and settings.device_id in devices
@@ -263,7 +278,9 @@ def _collect_recovery_health(db: BemineDB) -> dict[str, Any]:
     return {
         "recent": len(rows),
         "counts": counts,
-        "escalations": sum(count for event, count in counts.items() if "escalate" in event),
+        "escalations": sum(
+            count for event, count in counts.items() if "escalate" in event
+        ),
         "limit_waits": counts.get("limit_wait", 0),
         "recovered": counts.get("recovered", 0),
         "recent_events": recent,

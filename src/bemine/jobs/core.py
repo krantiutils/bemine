@@ -100,6 +100,16 @@ def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition,
                 "notify_discord": False,
             },
         ),
+        JobDefinition(
+            job_id="selftest",
+            name="In-daemon selftest (continuity, recovery, runtimes)",
+            trigger_type="cron",
+            schedule=config_string("selftest", "schedule", "30 4 * * *"),
+            config={
+                "type": "selftest",
+                "notify_discord": False,
+            },
+        ),
     )
 
 
@@ -493,6 +503,15 @@ def _run_job_type(
 
         result = run_dream(settings, limit=int(config.get("limit") or 100))
         return render_dream(result)
+    if job_type == "selftest":
+        from bemine.selftest import render_selftest, run_selftest
+
+        result = run_selftest(settings)
+        output = render_selftest(result)
+        if not result["ok"]:
+            # a failed selftest must fail the job so health flags it
+            raise RuntimeError(output)
+        return output
     if job_type == "pa_smm_brief":
         from bemine.briefs import run_brief, render_brief
 
