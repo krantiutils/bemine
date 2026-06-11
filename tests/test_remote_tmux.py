@@ -40,32 +40,43 @@ def test_send_text_is_literal_then_enter():
     runner = _FakeRunner()
     rt = RemoteTmux(gateway_device="cdjk", runner=runner)
     rt.send_text("mbp", "%2", "hello world")
-    assert runner.calls[-2][-1] == _remote_cmd(["send-keys", "-t", "%2", "-l", "hello world"])
+    assert runner.calls[-2][-1] == _remote_cmd(
+        ["send-keys", "-t", "%2", "-l", "hello world"]
+    )
     assert runner.calls[-1][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
 
 
 def test_list_panes_parses_with_activity():
-    out = ("%1\t/Users/cdjk/github/llm/rai-speech-toolkit\tclaude\t1780000000\n"
-           "%2\t/home/cdjk\tbash\t1780000050\n")
+    out = (
+        "%1\t/Users/cdjk/github/llm/rai-speech-toolkit\tclaude\t1780000000\t1\n"
+        "%2\t/home/cdjk\tbash\t1780000050\t0\n"
+    )
     runner = _FakeRunner(stdout=out)
     rt = RemoteTmux(gateway_device="cdjk", runner=runner)
     panes = rt.list_panes("mbp")
-    assert panes[0] == {"pane_id": "%1",
-                        "path": "/Users/cdjk/github/llm/rai-speech-toolkit",
-                        "command": "claude", "activity": 1780000000}
+    assert panes[0] == {
+        "pane_id": "%1",
+        "path": "/Users/cdjk/github/llm/rai-speech-toolkit",
+        "command": "claude",
+        "activity": 1780000000,
+        "attached": 1,
+    }
+    assert panes[1]["attached"] == 0
     argv = runner.calls[-1]
     assert argv[0] == "ssh" and "mbp" in argv
     assert "list-panes" in argv[-1]
     assert "window_activity" in argv[-1]
+    assert "session_attached" in argv[-1]
 
 
 def test_list_panes_tolerates_missing_activity():
     # Older tmux may not emit window_activity -> activity defaults to 0, line still parsed.
-    out = "%1\t/home/cdjk\tbash\t\n"
+    out = "%1\t/home/cdjk\tbash\t\t\n"
     runner = _FakeRunner(stdout=out)
     rt = RemoteTmux(gateway_device="cdjk", runner=runner)
     panes = rt.list_panes("cdjk")
     assert panes[0]["activity"] == 0
+    assert panes[0]["attached"] == 0
 
 
 def test_local_device_still_runs_tmux_directly():
@@ -98,7 +109,9 @@ def test_capture_reads_scrollback():
 def test_send_text_pauses_between_text_and_enter():
     pauses = []
     runner = _FakeRunner()
-    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: pauses.append(s))
+    rt = RemoteTmux(
+        gateway_device="cdjk", runner=runner, pause=lambda s: pauses.append(s)
+    )
     rt.send_text("cdjk", "%1", "hello")
     assert runner.calls[-2] == ["tmux", "send-keys", "-t", "%1", "-l", "hello"]
     assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Enter"]

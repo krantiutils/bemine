@@ -295,6 +295,23 @@ def _is_agent_pane(command: str) -> bool:
     return cmd not in _cfg_non_agent_commands()
 
 
+def _cfg_attended_grace() -> int:
+    return max(30, config_int("recovery", "attended_grace_secs", 180))
+
+
+def _attended_recent(pane: dict, now: float) -> bool:
+    """Someone is plausibly at the keyboard: a client is attached AND the pane
+    changed recently. Recovery must not type into their hands — keystroke
+    actions defer until the pane idles past the grace. Stuck/limited sessions
+    stop producing output, so their activity ages out and automation proceeds
+    even on an always-attached session."""
+    attached = int(pane.get("attached") or 0)
+    activity = int(pane.get("activity") or 0)
+    if not attached or not activity:
+        return False
+    return (now - activity) < _cfg_attended_grace()
+
+
 @dataclass
 class RecoveryDeps:
     get_panes: Callable  # (settings) -> list[dict]; each {device,pane_id,path,command,activity}
@@ -350,14 +367,19 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
             pid = pane["pane_id"]
             before = deps.tmux.capture(device, pid)
             kind = classify(before, signatures=sigs)
+            hands_off = _attended_recent(pane, now)
 
             if kind == "usage_limit":
                 state[key] = _handle_usage_limit(
-                    deps, pane, device, pid, rec, now, before
+                    deps, pane, device, pid, rec, now, before, hands_off=hands_off
                 )
                 continue
 
             if kind == "rate_limit":
+                if hands_off:
+                    rec["next_retry_at"] = now + _cfg_attended_grace()
+                    state[key] = rec
+                    continue
                 state[key] = _handle_rate_limit(
                     deps, pane, device, pid, rec, now, base_backoff, max_attempts
                 )
@@ -370,6 +392,11 @@ def tick_recovery(settings, deps: "RecoveryDeps", *, now: float) -> None:
                 if rec.get("limit_wait_until"):
                     deps.audit("recovered", "usage_limit", pane)
                 state.pop(key, None)
+                continue
+
+            if hands_off:
+                # someone is at the keyboard — confirms and LLM answers can wait
+                state[key] = rec
                 continue
 
             if kind == "trivial_confirm":
@@ -441,7 +468,9 @@ def _handle_rate_limit(
     return new
 
 
-def _handle_usage_limit(deps, pane, device, pid, rec, now, pane_text) -> dict:
+def _handle_usage_limit(
+    deps, pane, device, pid, rec, now, pane_text, *, hands_off: bool = False
+) -> dict:
     wait_until = float(rec.get("limit_wait_until") or 0)
     if wait_until <= 0:
         # Prefer the reset time stated on screen; else the configured window reset
@@ -477,6 +506,16 @@ def _handle_usage_limit(deps, pane, device, pid, rec, now, pane_text) -> dict:
                     "next_retry_at": stated,
                     "limit_wait_audited": True,
                 }
+
+    # Past the reset but someone is at the keyboard: hold the nudge, re-check
+    # after the attended grace. The wait bookkeeping above is keystroke-free.
+    if hands_off:
+        return {
+            "limit_wait_until": wait_until,
+            "next_retry_at": now + _cfg_attended_grace(),
+            "limit_wait_audited": True,
+            "continue_attempts": attempts,
+        }
 
     # Past the reset: nudge "continue", and if the pane still shows the limit on later
     # passes, RETRY with doubling backoff capped at 10 minutes — never stall to the next
