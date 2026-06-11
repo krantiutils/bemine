@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from bemine.backlog import (
+    backlog_status,
     default_backlog_owner,
     list_backlog_items,
     render_backlog_items,
+    render_backlog_status,
 )
 from bemine.config import (
     BemineSettings,
@@ -156,6 +158,12 @@ def _backlog_list(settings: BemineSettings, args: Mapping) -> CommandResult:
         text=render_backlog_items(owner, items),
         data={"owner": owner.upper(), "items": items},
     )
+
+
+def _backlog_status(settings: BemineSettings, args: Mapping) -> CommandResult:
+    owner = str(args.get("owner") or "").strip()
+    status = backlog_status(settings, owner=owner)
+    return CommandResult(text=render_backlog_status(status), data=status)
 
 
 def _config_show(settings: BemineSettings, args: Mapping) -> CommandResult:
@@ -436,7 +444,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `/discord routes` / `uv run bemine discord routes`",
         "- discord sync plan: `discord sync plan` / `/discord sync-plan` / `uv run bemine discord sync-project-channels --dry-run`",
-        "- backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`",
+        "- backlog: `backlog add` / `backlog list` / `backlog status` / `show backlog` / `show PA backlog` / `show SMM backlog` / `how many backlog items?` / `remember this for SMM|PA: ...`",
         f"- backlog config: default_owner={backlog_default_owner} owners={', '.join(backlog_owners) or 'none'}",
         "- config: `config show` / `what config is set?`",
         "- social posts: `smm status` / `smm draft` / `backlog add` for SMM ideas",
@@ -605,6 +613,9 @@ _SPECS = (
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),
     CommandSpec("goals.list", "List managed goal sessions", _goals_list),
     CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),
+    CommandSpec(
+        "backlog.status", "Show durable backlog health by owner", _backlog_status
+    ),
     CommandSpec("config.show", "Show parsed Bemine config", _config_show),
     CommandSpec(
         "dream.run", "Record one self-improvement dream data point", _dream_run

@@ -11,9 +11,11 @@ from textwrap import dedent
 from .capabilities import build_capability_manifest, render_capability_manifest
 from .backlog import (
     add_backlog_item,
+    backlog_status,
     default_backlog_owner,
     list_backlog_items,
     render_backlog_items,
+    render_backlog_status,
 )
 from .commands import run_command
 from .config import BemineSettings, render_toml_config
@@ -207,7 +209,7 @@ Examples:
 
 
 BACKLOG_HELP = """\
-Capture or list durable PA/SMM backlog items.
+Capture, list, or inspect durable PA/SMM backlog items.
 
 Backlog entries are Markdown in the Obsidian vault under Backlog/<owner>.md and
 are audit logged. Owners are configured in [backlog].owners.
@@ -215,6 +217,8 @@ are audit logged. Owners are configured in [backlog].owners.
 Examples:
   uv run bemine backlog add "post idea: Rai training checkpoint chart" --owner SMM
   uv run bemine backlog add "follow up on stuck Claude asks" --owner PA --project bm
+  uv run bemine backlog status
+  uv run bemine backlog status --owner PA --json
   uv run bemine backlog list --owner SMM
 """
 
@@ -816,6 +820,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     backlog_list.add_argument("--limit", type=int, default=20, help="Maximum items.")
     backlog_list.add_argument("--json", action="store_true", help="Emit items as JSON.")
+    backlog_status_cmd = backlog_sub.add_parser(
+        "status", help="Show open backlog counts by owner."
+    )
+    backlog_status_cmd.add_argument(
+        "--owner",
+        default="",
+        help="Backlog owner, e.g. PA or SMM. Omit to show all owners.",
+    )
+    backlog_status_cmd.add_argument(
+        "--json", action="store_true", help="Emit status as JSON."
+    )
 
     pa = sub.add_parser(
         "pa",
@@ -2012,6 +2027,12 @@ def main(argv: list[str] | None = None) -> None:
                     )
                 else:
                     print(render_backlog_items(owner, items), end="")
+            elif args.backlog_command == "status":
+                status = backlog_status(settings, owner=args.owner or "")
+                if args.json:
+                    print(json.dumps(status, indent=2, sort_keys=True))
+                else:
+                    print(render_backlog_status(status), end="")
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     elif args.command == "pa":

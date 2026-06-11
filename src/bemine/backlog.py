@@ -60,7 +60,9 @@ def add_backlog_item(
     when = when or datetime.now(timezone.utc)
     vault = ObsidianVault(settings.vault_dir)
     path = backlog_path(settings, owner)
-    existing = path.read_text(encoding="utf-8") if path.exists() else _initial_backlog(owner)
+    existing = (
+        path.read_text(encoding="utf-8") if path.exists() else _initial_backlog(owner)
+    )
     created_at = when.isoformat()
     meta = " ".join(
         part
@@ -116,7 +118,18 @@ def list_backlog_items(
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
         if line.strip().startswith("- [ ] ")
     ]
-    return lines[-max(1, limit):]
+    return lines[-max(1, limit) :]
+
+
+def backlog_status(settings: BemineSettings, *, owner: str = "") -> dict:
+    owners = [_normalize_owner(owner)] if owner else backlog_owners()
+    rows = [_backlog_owner_status(settings, item) for item in owners]
+    return {
+        "schema": "bemine.backlog_status.v1",
+        "default_owner": default_backlog_owner(),
+        "owners": rows,
+        "total_open": sum(int(row["open_count"]) for row in rows),
+    }
 
 
 def render_backlog_items(owner: str, items: list[str]) -> str:
@@ -126,16 +139,81 @@ def render_backlog_items(owner: str, items: list[str]) -> str:
     return f"{owner} backlog:\n" + "\n".join(items) + "\n"
 
 
+def render_backlog_status(status: dict) -> str:
+    lines = [
+        "Backlog status:",
+        f"- default_owner: {status.get('default_owner') or 'none'}",
+        f"- total_open: {status.get('total_open', 0)}",
+    ]
+    for row in status.get("owners", []):
+        state = "present" if row.get("exists") else "missing"
+        latest = row.get("latest_created_at") or "none"
+        preview = row.get("latest_preview") or "none"
+        lines.append(
+            f"- {row.get('owner')}: {row.get('open_count', 0)} open "
+            f"({state}) latest={latest} path={row.get('path')}"
+        )
+        if preview != "none":
+            lines.append(f"  latest_item: {preview}")
+    return "\n".join(lines) + "\n"
+
+
 def backlog_path(settings: BemineSettings, owner: str) -> Path:
     owner = _normalize_owner(owner)
     return settings.vault_dir / "Backlog" / f"{safe_filename(owner, 'backlog')}.md"
+
+
+def _backlog_owner_status(settings: BemineSettings, owner: str) -> dict:
+    owner = _normalize_owner(owner)
+    path = backlog_path(settings, owner)
+    lines = _open_backlog_lines(path)
+    latest_line = lines[-1] if lines else ""
+    latest_created_at, latest_text = _parse_backlog_line(latest_line)
+    mtime = ""
+    if path.exists():
+        mtime = datetime.fromtimestamp(
+            path.stat().st_mtime, tz=timezone.utc
+        ).isoformat()
+    return {
+        "owner": owner,
+        "path": str(path),
+        "exists": path.exists(),
+        "open_count": len(lines),
+        "latest_created_at": latest_created_at,
+        "latest_preview": compact_text(latest_text, limit=160) if latest_text else "",
+        "mtime": mtime,
+    }
+
+
+def _open_backlog_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip().startswith("- [ ] ")
+    ]
+
+
+def _parse_backlog_line(line: str) -> tuple[str, str]:
+    if not line.startswith("- [ ] "):
+        return "", ""
+    body = line.removeprefix("- [ ] ").strip()
+    if " — " in body:
+        created_at, text = body.split(" — ", 1)
+    else:
+        created_at, text = "", body
+    text = text.split("<!--", 1)[0].strip()
+    return created_at.strip(), text
 
 
 def _normalize_owner(owner: str) -> str:
     owner = (owner or default_backlog_owner()).strip().upper()
     owners = backlog_owners()
     if owner not in owners:
-        raise ValueError(f"unknown backlog owner {owner!r}; configured owners: {', '.join(owners)}")
+        raise ValueError(
+            f"unknown backlog owner {owner!r}; configured owners: {', '.join(owners)}"
+        )
     return owner
 
 

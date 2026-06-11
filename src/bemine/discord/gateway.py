@@ -1310,6 +1310,29 @@ def _direct_backlog_command(normalized_lower: str) -> dict[str, str] | None:
         text.removeprefix("!bemine ").removeprefix("bemine "),
     }
     if variants & {
+        "backlog status",
+        "backlog health",
+        "how many backlog items",
+        "how many backlog items are open",
+        "how much backlog is open",
+        "what backlog is open",
+    }:
+        return {"command": "backlog.status"}
+    if variants & {
+        "pa backlog status",
+        "pa backlog health",
+        "how many pa backlog items",
+        "how many pa backlog items are open",
+    }:
+        return {"command": "backlog.status", "owner": "PA"}
+    if variants & {
+        "smm backlog status",
+        "smm backlog health",
+        "how many smm backlog items",
+        "how many smm backlog items are open",
+    }:
+        return {"command": "backlog.status", "owner": "SMM"}
+    if variants & {
         "backlog",
         "backlog list",
         "show backlog",

@@ -16,6 +16,7 @@ def test_registry_lists_deterministic_ops():
         "rundown",
         "jobs.list",
         "backlog.list",
+        "backlog.status",
         "config.show",
         "dream.run",
         "dream.status",
@@ -114,6 +115,22 @@ def test_run_command_backlog_list(tmp_path):
     out = run_command("backlog.list", settings, {})
     assert "backlog" in out.text.lower()
     assert out.data["owner"] == "SMM"
+
+
+def test_run_command_backlog_status(tmp_path):
+    settings = _settings(tmp_path)
+    out = run_command("backlog.status", settings, {})
+    assert "Backlog status:" in out.text
+    assert out.data["schema"] == "bemine.backlog_status.v1"
+    assert out.data["total_open"] == 0
+    assert [row["owner"] for row in out.data["owners"]] == ["PA", "SMM"]
+
+
+def test_run_command_backlog_status_owner_filter(tmp_path):
+    settings = _settings(tmp_path)
+    out = run_command("backlog.status", settings, {"owner": "PA"})
+    assert out.data["schema"] == "bemine.backlog_status.v1"
+    assert [row["owner"] for row in out.data["owners"]] == ["PA"]
 
 
 def test_run_command_pa_status(tmp_path, monkeypatch):
@@ -305,7 +322,7 @@ context_limit = 1000
     assert "when was the last PA/SMM brief?" in out.text
     assert "watchers: active=0" in out.text
     assert (
-        "backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`"
+        "backlog: `backlog add` / `backlog list` / `backlog status` / `show backlog` / `show PA backlog` / `show SMM backlog` / `how many backlog items?` / `remember this for SMM|PA: ...`"
         in out.text
     )
     assert "backlog.default_owner=PA" in out.text

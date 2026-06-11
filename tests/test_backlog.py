@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from bemine.backlog import add_backlog_item, list_backlog_items
+from bemine.backlog import (
+    add_backlog_item,
+    backlog_status,
+    list_backlog_items,
+    render_backlog_status,
+)
 from bemine.cli import main
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
@@ -52,7 +57,9 @@ owners = ["PA", "SMM"]
         encoding="utf-8",
     )
     monkeypatch.setenv("BEMINE_CONFIG", str(config))
-    settings = BemineSettings.load(state_dir=tmp_path / "state", vault_dir=tmp_path / "vault")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state", vault_dir=tmp_path / "vault"
+    )
 
     with pytest.raises(ValueError, match="unknown backlog owner"):
         add_backlog_item(settings, owner="ops", text="x")
@@ -97,8 +104,79 @@ def test_cli_backlog_add_and_list(tmp_path: Path, capsys) -> None:
     assert "follow up on stuck asks" in listed["items"][0]
 
 
+def test_backlog_status_counts_owners_and_latest_item(tmp_path: Path) -> None:
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state", vault_dir=tmp_path / "vault"
+    )
+    add_backlog_item(
+        settings,
+        owner="PA",
+        text="follow up on stuck asks",
+        when=datetime(2026, 6, 9, tzinfo=timezone.utc),
+    )
+    add_backlog_item(
+        settings,
+        owner="SMM",
+        text="post the first Rai checkpoint",
+        when=datetime(2026, 6, 10, tzinfo=timezone.utc),
+    )
+    add_backlog_item(
+        settings,
+        owner="SMM",
+        text="post the neptts-bench comparison",
+        when=datetime(2026, 6, 11, tzinfo=timezone.utc),
+    )
+
+    status = backlog_status(settings)
+    rows = {row["owner"]: row for row in status["owners"]}
+
+    assert status["schema"] == "bemine.backlog_status.v1"
+    assert status["default_owner"] == "SMM"
+    assert status["total_open"] == 3
+    assert rows["PA"]["open_count"] == 1
+    assert rows["SMM"]["open_count"] == 2
+    assert rows["SMM"]["latest_created_at"] == "2026-06-11T00:00:00+00:00"
+    assert rows["SMM"]["latest_preview"] == "post the neptts-bench comparison"
+    rendered = render_backlog_status(status)
+    assert "Backlog status:" in rendered
+    assert "- SMM: 2 open" in rendered
+
+
+def test_backlog_status_owner_filter(tmp_path: Path) -> None:
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state", vault_dir=tmp_path / "vault"
+    )
+    add_backlog_item(settings, owner="PA", text="prepare tomorrow plan")
+    add_backlog_item(settings, owner="SMM", text="draft launch post")
+
+    status = backlog_status(settings, owner="PA")
+
+    assert status["total_open"] == 1
+    assert [row["owner"] for row in status["owners"]] == ["PA"]
+
+
+def test_cli_backlog_status_json(tmp_path: Path, capsys) -> None:
+    settings_args = [
+        "--state-dir",
+        str(tmp_path / "state"),
+        "--vault",
+        str(tmp_path / "vault"),
+    ]
+    main([*settings_args, "backlog", "add", "draft proof post", "--owner", "SMM"])
+    capsys.readouterr()
+
+    main([*settings_args, "backlog", "status", "--owner", "SMM", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["schema"] == "bemine.backlog_status.v1"
+    assert payload["total_open"] == 1
+    assert payload["owners"][0]["owner"] == "SMM"
+
+
 def test_list_backlog_items_returns_recent_items(tmp_path: Path) -> None:
-    settings = BemineSettings.load(state_dir=tmp_path / "state", vault_dir=tmp_path / "vault")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / "state", vault_dir=tmp_path / "vault"
+    )
     add_backlog_item(settings, owner="SMM", text="first")
     add_backlog_item(settings, owner="SMM", text="second")
 

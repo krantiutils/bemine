@@ -91,9 +91,10 @@ def test_backlog_help_explains_vault_storage() -> None:
     text = _help("backlog")
     flat = " ".join(text.split())
 
-    assert "Capture or list durable PA/SMM backlog items." in text
+    assert "Capture, list, or inspect durable PA/SMM backlog items." in text
     assert "Obsidian vault under Backlog/<owner>.md" in flat
     assert "uv run bemine backlog add" in text
+    assert "uv run bemine backlog status" in text
 
 
 def test_pa_help_explains_live_evidence_plan() -> None:
