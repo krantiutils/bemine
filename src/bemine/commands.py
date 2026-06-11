@@ -140,6 +140,62 @@ def _config_show(settings: BemineSettings, args: Mapping) -> CommandResult:
     )
 
 
+def _discord_sync_plan(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.discord.dispatch import plan_project_channel_sync
+
+    limit = int(args.get("limit") or 200)
+    prune = bool(args.get("prune"))
+    plan = plan_project_channel_sync(settings, limit=limit, prune=prune)
+    return CommandResult(text=_render_discord_sync_plan(plan), data=plan)
+
+
+def _render_discord_sync_plan(plan: Mapping) -> str:
+    would_create = list(plan.get("would_create") or [])
+    would_prune = list(plan.get("would_prune") or [])
+    existing = list(plan.get("existing") or [])
+    stale = list(plan.get("stale") or [])
+    lines = [
+        "Discord channel sync plan:",
+        "- mode: dry-run only; no Discord channels were changed",
+        f"- metadata_source: {plan.get('metadata_source', 'unknown')}",
+        f"- config: `{plan.get('config_path', '')}`",
+        f"- prune: {bool(plan.get('prune'))}",
+        (
+            f"- desired: projects={plan.get('project_count', 0)} "
+            f"aliases={plan.get('alias_count', 0)} total={plan.get('desired_count', 0)}"
+        ),
+        f"- cached_existing: {plan.get('existing_count', 0)}",
+        f"- would_create: {len(would_create)}",
+        f"- would_prune: {len(would_prune)}",
+        f"- stale_without_prune: {len(stale) if not plan.get('prune') else 0}",
+    ]
+    _append_channel_preview(lines, "Create preview", would_create)
+    _append_channel_preview(lines, "Prune preview", would_prune)
+    _append_channel_preview(lines, "Existing matches", existing, max_rows=5)
+    return "\n".join(lines) + "\n"
+
+
+def _append_channel_preview(
+    lines: list[str],
+    title: str,
+    rows: list[Mapping],
+    *,
+    max_rows: int = 10,
+) -> None:
+    lines.append(f"{title}:")
+    if not rows:
+        lines.append("- none")
+        return
+    for row in rows[:max_rows]:
+        channel = str(row.get("channel_name") or row.get("name") or "unknown")
+        cwd = str(row.get("cwd") or "")
+        detail = f" -> `{cwd}`" if cwd else ""
+        lines.append(f"- `{channel}`{detail}")
+    remaining = len(rows) - max_rows
+    if remaining > 0:
+        lines.append(f"- ... {remaining} more")
+
+
 def _subagents_list(settings: BemineSettings, args: Mapping) -> CommandResult:
     context = load_subagent_context()
     return CommandResult(text=render_subagent_context(context), data=context.to_dict())
@@ -294,6 +350,7 @@ def _help(settings: BemineSettings, args: Mapping) -> CommandResult:
         "- dream: `dream run` / `uv run bemine dream run` to condense recent history",
         f"- watchers: active={active_watchers} (`watch list` / `uv run bemine watch list`)",
         "- discord routes: `discord routes` / `uv run bemine discord routes`",
+        "- discord sync plan: `discord sync plan` / `uv run bemine discord sync-project-channels --dry-run`",
         "- backlog: `backlog add` / `backlog list` / `show backlog` / `show PA backlog` / `show SMM backlog` / `remember this for SMM|PA: ...`",
         f"- backlog config: default_owner={backlog_default_owner} owners={', '.join(backlog_owners) or 'none'}",
         "- config: `config show` / `what config is set?`",
@@ -444,6 +501,7 @@ _SPECS = (
     CommandSpec("continuity", "cdjk line-cut recovery status", _continuity),
     CommandSpec("help", "Self-documenting command and config summary", _help),
     CommandSpec("discord.routes", "Discord project route management", _discord_routes),
+    CommandSpec("discord.sync_plan", "Dry-run Discord project channel sync", _discord_sync_plan),
     CommandSpec("dispatch.status", "Current Discord dispatch runtime/model", _dispatch_status),
     CommandSpec("goal.start", "Start a managed goal session", _goal_start),
     CommandSpec("pa.plan", "Priority-ordered PA focus plan", _pa_plan),

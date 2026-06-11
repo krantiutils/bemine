@@ -1444,6 +1444,15 @@ def _direct_observability_command(normalized_lower: str) -> str:
         "what channels are managed",
     }:
         return "discord.routes"
+    if variants & {
+        "discord sync plan",
+        "channel sync plan",
+        "project channel sync plan",
+        "what channels would be created",
+        "what discord channels would be created",
+        "what channel sync would do",
+    }:
+        return "discord.sync_plan"
     if variants & {"continuity", "continuity status", "line cuts", "line cut status",
                    "power loss", "power loss status"}:
         return "continuity"

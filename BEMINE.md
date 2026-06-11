@@ -39,9 +39,11 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "add X to shopping/checklist" → `checklist.add` route (the gateway's local tool router).
 - "store SMM/PA idea X" → `uv run bemine backlog add "<idea>" --owner SMM|PA`
   (Discord also accepts `SMM idea: ...` / `store idea for PA: ...`).
-- "create/sync project channels" → inspect `channel_routes` and `channel_sync_plan`
-  first, or use `discord routes` / `uv run bemine discord routes` for the read-only
-  management view. Then use `channel_sync_apply` with `confirm=true` to mutate
+- "create/sync project channels" → inspect `channel_routes` first, or use
+  `discord routes` / `uv run bemine discord routes` for the read-only route view.
+  Then dry-run with `channel_sync_plan`, `discord sync plan`, or
+  `uv run bemine discord sync-project-channels --dry-run`. Only after that use
+  `channel_sync_apply` with `confirm=true` to mutate
   Discord. Use `shell_run` + Discord REST only for channel operations outside that
   project-sync path.
 - "remind me / schedule X" → `uv run bemine jobs add-reminder --help`.
