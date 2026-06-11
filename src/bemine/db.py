@@ -237,9 +237,7 @@ class BemineDB:
             )
         bs_cols = {r[1] for r in conn.execute("PRAGMA table_info(bemine_sessions)")}
         if "codex_thread_id" not in bs_cols:
-            conn.execute(
-                "ALTER TABLE bemine_sessions ADD COLUMN codex_thread_id TEXT"
-            )
+            conn.execute("ALTER TABLE bemine_sessions ADD COLUMN codex_thread_id TEXT")
 
     def upsert_device(self, device_id: str, alias: str | None = None) -> None:
         now = time.time()
@@ -321,7 +319,9 @@ class BemineDB:
                     now,
                 ),
             )
-            conn.execute("DELETE FROM session_fts WHERE session_id = ?", (record.session_id,))
+            conn.execute(
+                "DELETE FROM session_fts WHERE session_id = ?", (record.session_id,)
+            )
             conn.execute(
                 """
                 INSERT INTO session_fts(session_id, project_id, runtime, cwd, title, summary)
@@ -380,14 +380,33 @@ class BemineDB:
                         project_id=row["project_id"],
                         name=row["name"],
                         cwd=row["cwd"],
-                        devices=sorted((row["devices"] or "").split(",")) if row["devices"] else [],
+                        devices=sorted((row["devices"] or "").split(","))
+                        if row["devices"]
+                        else [],
                         latest_at=row["latest_at"] or "",
                         session_count=int(row["session_count"] or 0),
-                        runtimes=sorted((row["runtimes"] or "").split(",")) if row["runtimes"] else [],
+                        runtimes=sorted((row["runtimes"] or "").split(","))
+                        if row["runtimes"]
+                        else [],
                         summaries=summaries,
                     )
                 )
             return results
+
+    def latest_session_for_cwd(
+        self, *, runtime: str, device_id: str, cwd: str
+    ) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT *
+                FROM sessions
+                WHERE runtime = ? AND device_id = ? AND cwd = ?
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                (runtime, device_id, cwd),
+            ).fetchone()
 
     def search_sessions(self, query: str, *, limit: int = 20) -> list[sqlite3.Row]:
         with self.connect() as conn:
@@ -410,11 +429,21 @@ class BemineDB:
                 "projects": conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0],
                 "sessions": conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0],
                 "jobs": conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0],
-                "credential_profiles": conn.execute("SELECT COUNT(*) FROM credential_profiles").fetchone()[0],
-                "permission_requests": conn.execute("SELECT COUNT(*) FROM permission_requests").fetchone()[0],
-                "audit_events": conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
-                "usage_samples": conn.execute("SELECT COUNT(*) FROM usage_samples").fetchone()[0],
-                "managed_sessions": conn.execute("SELECT COUNT(*) FROM managed_sessions").fetchone()[0],
+                "credential_profiles": conn.execute(
+                    "SELECT COUNT(*) FROM credential_profiles"
+                ).fetchone()[0],
+                "permission_requests": conn.execute(
+                    "SELECT COUNT(*) FROM permission_requests"
+                ).fetchone()[0],
+                "audit_events": conn.execute(
+                    "SELECT COUNT(*) FROM audit_events"
+                ).fetchone()[0],
+                "usage_samples": conn.execute(
+                    "SELECT COUNT(*) FROM usage_samples"
+                ).fetchone()[0],
+                "managed_sessions": conn.execute(
+                    "SELECT COUNT(*) FROM managed_sessions"
+                ).fetchone()[0],
             }
 
     def list_projects(self) -> list[sqlite3.Row]:
@@ -494,7 +523,9 @@ class BemineDB:
 
     def get_job(self, job_id: str) -> sqlite3.Row | None:
         with self.connect() as conn:
-            return conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            return conn.execute(
+                "SELECT * FROM jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
 
     def list_jobs(self, *, enabled: bool | None = None) -> list[sqlite3.Row]:
         with self.connect() as conn:
@@ -656,7 +687,9 @@ class BemineDB:
                 (request_id,),
             ).fetchone()
 
-    def list_permission_requests(self, *, status: str | None = None) -> list[sqlite3.Row]:
+    def list_permission_requests(
+        self, *, status: str | None = None
+    ) -> list[sqlite3.Row]:
         with self.connect() as conn:
             if status:
                 return conn.execute(
@@ -910,7 +943,9 @@ class BemineDB:
 
     def delete_managed_session(self, name: str) -> bool:
         with self.connect() as conn:
-            cursor = conn.execute("DELETE FROM managed_sessions WHERE name = ?", (name,))
+            cursor = conn.execute(
+                "DELETE FROM managed_sessions WHERE name = ?", (name,)
+            )
         return bool(cursor.rowcount)
 
     def upsert_bemine_session(
@@ -1021,8 +1056,9 @@ class BemineDB:
                 (thread_id, session_id),
             )
 
-    def upsert_project_watcher(self, *, project_id: str, channel_id: str,
-                               brief: str, interval_secs: int) -> None:
+    def upsert_project_watcher(
+        self, *, project_id: str, channel_id: str, brief: str, interval_secs: int
+    ) -> None:
         now = time.time()
         with self.connect() as conn:
             conn.execute(
@@ -1066,8 +1102,16 @@ class BemineDB:
         return [dict(r) for r in rows]
 
     def update_project_watcher(self, project_id: str, **fields) -> None:
-        allowed = {"channel_id", "brief", "interval_secs", "status",
-                   "last_tick_at", "awaiting_reply", "empty_ticks", "unchanged_sends"}
+        allowed = {
+            "channel_id",
+            "brief",
+            "interval_secs",
+            "status",
+            "last_tick_at",
+            "awaiting_reply",
+            "empty_ticks",
+            "unchanged_sends",
+        }
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
