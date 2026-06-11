@@ -25,7 +25,9 @@ hermes_home = "~/.hermes"
 devices = ["local", "mbp", "mbp2", "k2"]
 
 [projects]
-ignored_roots = ["~/gt"]              # repos under these paths are never indexed
+# repos under these paths are never indexed — scratch/legacy dirs polluted the
+# index and the Discord channel sync with junk channels like /tmp/*
+ignored_roots = ["~/gt", "/tmp", "~/.hermes"]
 
 [context]
 # Files injected (redacted) into dispatched-agent prompts.

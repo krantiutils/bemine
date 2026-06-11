@@ -15,7 +15,9 @@ def test_ignored_project_reason_filters_default_legacy_gt_root(
     reason = ignored_project_reason(tmp_path / "gt" / "legacy-app" / "crew" / "worker")
 
     assert reason == f"ignored project root: {tmp_path / 'gt'}"
-    assert ignored_project_reason(tmp_path / "github" / "urja") is None
+    # probe must live outside every configured root (repo config ignores /tmp,
+    # which is where tmp_path-derived homes land)
+    assert ignored_project_reason("/srv/projects/urja") is None
 
 
 def test_ignored_project_reason_filters_remote_home_gt_by_default(monkeypatch) -> None:
