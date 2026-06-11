@@ -150,6 +150,8 @@ def test_direct_observability_command_aliases() -> None:
         gw._direct_observability_command("what model are we using?")
         == "dispatch.status"
     )
+    assert gw._direct_observability_command("pa status") == "pa.status"
+    assert gw._direct_observability_command("what evidence does PA use?") == "pa.status"
     assert (
         gw._direct_observability_command("what should I focus on today?".lower())
         == "pa.plan"

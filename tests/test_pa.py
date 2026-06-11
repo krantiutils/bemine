@@ -9,7 +9,7 @@ from bemine.cli import main
 from bemine.config import BemineSettings
 from bemine.db import BemineDB
 from bemine.index.status import SessionStatus
-from bemine.pa import build_pa_plan, render_pa_plan
+from bemine.pa import build_pa_plan, pa_status, render_pa_plan, render_pa_status
 
 
 def _settings(tmp_path: Path) -> tuple[BemineSettings, BemineDB]:
@@ -39,7 +39,9 @@ def _status(**overrides) -> SessionStatus:
     return SessionStatus(**data)
 
 
-def test_build_pa_plan_prioritizes_health_jobs_sessions_watchers_and_backlog(tmp_path: Path) -> None:
+def test_build_pa_plan_prioritizes_health_jobs_sessions_watchers_and_backlog(
+    tmp_path: Path,
+) -> None:
     settings, db = _settings(tmp_path)
     add_backlog_item(settings, owner="PA", text="review stale asks before noon", db=db)
     health = {
@@ -56,7 +58,12 @@ def test_build_pa_plan_prioritizes_health_jobs_sessions_watchers_and_backlog(tmp
         },
     }
     audits = [
-        {"id": 9, "category": "recovery", "event_type": "llm_escalate", "project_id": "rai"}
+        {
+            "id": 9,
+            "category": "recovery",
+            "event_type": "llm_escalate",
+            "project_id": "rai",
+        }
     ]
     generated_at = datetime(2026, 6, 11, tzinfo=timezone.utc)
 
@@ -86,6 +93,24 @@ def test_build_pa_plan_prioritizes_health_jobs_sessions_watchers_and_backlog(tmp
     assert "1. [P1] Fix Bemine health issue" in rendered
     assert "2. [P1] Recover failed scheduled job `daily_digest`" in rendered
     assert "3. [P2]" in rendered
+    status = pa_status(
+        settings,
+        db=db,
+        statuses=[
+            _status(),
+            _status(device_id="cdjk", runtime="claude", asks_user=False),
+        ],
+        health=health,
+        audits=audits,
+    )
+    assert status["statuses"] == 2
+    assert status["waiting_sessions"] == 1
+    assert status["devices"] == {"cdjk": 1, "mbp": 1}
+    assert status["runtimes"] == {"claude": 1, "codex": 1}
+    assert status["pa_backlog_items"] == 1
+    assert status["latest_plan"]["path"] == str(result.path)
+    assert status["latest_plan"]["items"] == len(result.items)
+    assert "PA evidence status:" in render_pa_status(status)
 
 
 def test_cli_pa_plan_json(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -101,19 +126,52 @@ def test_cli_pa_plan_json(tmp_path: Path, capsys, monkeypatch) -> None:
         },
     )
 
-    main([
-        "--state-dir",
-        str(settings.state_dir),
-        "--vault",
-        str(settings.vault_dir),
-        "pa",
-        "plan",
-        "--limit",
-        "1",
-        "--json",
-    ])
+    main(
+        [
+            "--state-dir",
+            str(settings.state_dir),
+            "--vault",
+            str(settings.vault_dir),
+            "pa",
+            "plan",
+            "--limit",
+            "1",
+            "--json",
+        ]
+    )
 
     payload = json.loads(capsys.readouterr().out)
     assert len(payload["items"]) == 1
     assert "check active goal workers" in payload["items"][0]["text"]
     assert payload["evidence"]["pa_backlog_items"] == 1
+
+
+def test_cli_pa_status_json(tmp_path: Path, capsys, monkeypatch) -> None:
+    settings, db = _settings(tmp_path)
+    add_backlog_item(settings, owner="PA", text="check active goal workers", db=db)
+    monkeypatch.setattr("bemine.pa.collect_fleet_status", lambda *a, **k: ([], []))
+    monkeypatch.setattr(
+        "bemine.pa.collect_health",
+        lambda *a, **k: {
+            "issues": [],
+            "jobs": {"failed_jobs": []},
+            "watchers": {"items": []},
+        },
+    )
+
+    main(
+        [
+            "--state-dir",
+            str(settings.state_dir),
+            "--vault",
+            str(settings.vault_dir),
+            "pa",
+            "status",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["statuses"] == 0
+    assert payload["pa_backlog_items"] == 1
+    assert payload["latest_plan"] == {}

@@ -1571,6 +1571,16 @@ def _direct_observability_command(normalized_lower: str) -> str:
     }:
         return "dispatch.status"
     if variants & {
+        "pa status",
+        "pa evidence",
+        "pa evidence status",
+        "what evidence does pa use",
+        "what is pa looking at",
+        "what sources does pa use",
+        "pa sources",
+    }:
+        return "pa.status"
+    if variants & {
         "pa",
         "pa plan",
         "focus",
