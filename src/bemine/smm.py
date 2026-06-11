@@ -18,6 +18,11 @@ from .util import compact_text, safe_filename
 DEFAULT_SMM_LIMIT = 3
 DEFAULT_TARGET_CHANNELS = ["X", "LinkedIn"]
 EXPECTED_ASSETS = ("logo.png", "wordmark.svg", "wordmark-dev.svg")
+EXPECTED_ASSET_SOURCES = {
+    "logo.png": "https://ampixa.com/assets/logo.png",
+    "wordmark.svg": "https://ampixa.com/assets/wordmark.svg",
+    "wordmark-dev.svg": "https://ampixa.com/assets/wordmark-dev.svg",
+}
 PROJECT_RE = re.compile(r"\b([A-Za-z0-9][A-Za-z0-9_.-]{2,})\b")
 DEFAULT_REJECT_TERMS = [
     "already completed",
@@ -49,6 +54,7 @@ class SMMAsset:
     path: Path
     exists: bool
     size_bytes: int = 0
+    source_url: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +62,7 @@ class SMMAsset:
             "path": str(self.path),
             "exists": self.exists,
             "size_bytes": self.size_bytes,
+            "source_url": self.source_url,
         }
 
 
@@ -196,6 +203,7 @@ def collect_ampixa_assets(project_root: Path | None = None) -> list[SMMAsset]:
                 path=path,
                 exists=exists,
                 size_bytes=path.stat().st_size if exists else 0,
+                source_url=EXPECTED_ASSET_SOURCES.get(name, ""),
             )
         )
     return assets
@@ -332,6 +340,15 @@ def render_smm_draft_status(status: Mapping[str, Any]) -> str:
     lines.append(
         f"- missing_assets: {', '.join(missing_assets) if missing_assets else 'none'}"
     )
+    assets = status.get("assets") or []
+    if assets:
+        lines.append("- assets:")
+        for asset in assets:
+            present = "present" if asset.get("exists") else "missing"
+            size = int(asset.get("size_bytes") or 0)
+            lines.append(
+                f"  - {asset.get('name')}: {present} {size}B `{asset.get('path')}`"
+            )
     latest = status.get("latest") or {}
     if not latest:
         lines.append("- latest: none")

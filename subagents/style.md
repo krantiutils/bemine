@@ -1,6 +1,6 @@
 # Ampixa Style
 
-Source checked: https://ampixa.com/ on 2026-06-10.
+Source checked: https://ampixa.com/ on 2026-06-11.
 
 Core voice:
 - Text-first, plain, and technical.

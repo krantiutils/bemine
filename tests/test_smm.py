@@ -119,7 +119,10 @@ def test_draft_smm_posts_uses_topic_backlog_brief_assets_and_writes_vault(
     assert status["latest"]["generated_at"] == "2026-06-11T00:00:00+00:00"
     assert status["latest"]["drafts"] == 2
     assert status["missing_assets"] == []
-    assert "SMM draft status:" in render_smm_draft_status(status)
+    assert status["assets"][0]["source_url"].startswith("https://ampixa.com/assets/")
+    rendered_status = render_smm_draft_status(status)
+    assert "SMM draft status:" in rendered_status
+    assert "logo.png: present 5B" in rendered_status
     rows = db.list_audit_events(category="smm", limit=1)
     assert rows[0]["event_type"] == "smm_drafts_recorded"
 
