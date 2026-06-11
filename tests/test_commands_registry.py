@@ -267,7 +267,9 @@ context_limit = 1000
     assert "jobs.session_fallback_channel=session-updates" in out.text
     assert "recovery.poll_interval_secs=300" in out.text
     assert "discord routes:" in out.text
+    assert "/discord routes" in out.text
     assert "discord sync plan:" in out.text
+    assert "/discord sync-plan" in out.text
     assert "inspect ops:" in out.text
     assert "goal sessions: `goal <project> <brief>`" in out.text
     assert "continuity:" in out.text
