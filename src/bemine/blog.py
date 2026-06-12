@@ -516,6 +516,13 @@ def build_blog_site(
 
 
 def deploy_blog_site(settings: BemineSettings) -> dict[str, Any]:
+    import os
+
+    # HARD guard: a test run once rsynced tmp-dir content over the live site.
+    # PYTEST_CURRENT_TEST is set by pytest and inherited by subprocesses, so
+    # this closes every path a monkeypatch fixture cannot reach.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise RuntimeError("refusing to deploy the blog from inside a test run")
     host = _cfg("deploy_host", "ubuntu@178.104.21.224")
     key = str(Path(_cfg("ssh_key", "~/.ssh/monitor.pem")).expanduser())
     remote = _cfg("remote_site_dir", "/home/ubuntu/ampixa/site")
