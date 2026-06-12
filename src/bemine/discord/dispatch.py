@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from bemine.config import BemineSettings, config_path, config_string
+from bemine.config import BemineSettings, config_int, config_path, config_string
 from bemine.db import BemineDB
 from bemine.context.harness_context import load_harness_context
 from bemine.context.subagents import load_subagent_context
@@ -308,13 +308,99 @@ def ensure_default_project_config(
     return path
 
 
-def _project_channel_topic(channel: ProjectChannel) -> str:
+def _project_channel_topic(channel: ProjectChannel, device: str = "") -> str:
     name = channel.project_name or channel.channel_name
+    where = f" on `{device}`" if device else ""
     return (
-        f"Bemine project `{name}` — root {channel.cwd}. Talk here to operate this "
-        "project; Bemine injects current project state (sessions, handoffs, workers) "
-        "each turn."
+        f"Bemine project `{name}` — root {channel.cwd}{where}. Talk here to operate "
+        "this project; Bemine injects current project state (sessions, handoffs, "
+        "workers) each turn."
     )[:1024]
+
+
+def _device_category_name(device: str) -> str:
+    return f"Bemine · {device}"
+
+
+def _cfg_excluded_channel_names() -> set[str]:
+    raw = config_string("discord", "channel_exclude_names", "")
+    if raw.strip():
+        return {_channel_key(part) for part in raw.split(",") if part.strip()}
+    return {"downloads", "codex-cwd", "tmp", "desktop", "documents"}
+
+
+def _fleet_channel_candidates(settings: BemineSettings) -> dict[str, dict[str, Any]]:
+    """Live fleet attribution: best (most recently active) device per cwd.
+
+    Channels are organized by the computer the project actually runs on; the
+    index is local-only, so remote projects are discovered via fleet status."""
+    from bemine.index.project_filters import ignored_project_reason
+    from bemine.index.status import collect_fleet_status
+
+    rows, _errors = collect_fleet_status(settings, limit_per_runtime=25)
+    exclude = _cfg_excluded_channel_names()
+    best: dict[str, dict[str, Any]] = {}
+    for status in rows:
+        cwd = (status.cwd or "").strip()
+        if not cwd:
+            continue
+        try:
+            if ignored_project_reason(cwd):
+                continue
+        except Exception:
+            continue
+        name = _channel_key(Path(cwd).name)
+        if not name or name in exclude:
+            continue
+        device = (
+            settings.device_id
+            if status.device_id in {"", "local"}
+            else str(status.device_id)
+        )
+        age = int(status.age_seconds if status.age_seconds is not None else 10**9)
+        current = best.get(cwd)
+        if current is None or age < int(current["age"]):
+            best[cwd] = {"cwd": cwd, "device": device, "age": age, "name": name}
+    return best
+
+
+def _device_channel_layout(
+    settings: BemineSettings,
+    channels: list[ProjectChannel],
+    aliases: Mapping[str, ProjectChannel],
+    attribution: dict[str, dict[str, Any]],
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """Decide each channel's device and which remote-only channels to add.
+
+    Local channels follow their latest fleet activity (default: this device).
+    Remote cwds with recent activity and an unclaimed name become new channels."""
+    device_for: dict[str, str] = {}
+    for channel in channels:
+        hit = attribution.get(str(channel.cwd))
+        device_for[channel.channel_name] = (
+            str(hit["device"]) if hit else settings.device_id
+        )
+    for alias_name, alias_channel in aliases.items():
+        device_for[alias_name] = device_for.get(
+            alias_channel.channel_name, settings.device_id
+        )
+    window_secs = (
+        max(1, config_int("discord", "fleet_channel_max_age_days", 14)) * 86400
+    )
+    taken = {_channel_key(name) for name in device_for}
+    remote_entries: list[dict[str, Any]] = []
+    for info in sorted(attribution.values(), key=lambda item: int(item["age"])):
+        if str(info["device"]) == settings.device_id:
+            continue
+        if int(info["age"]) > window_secs:
+            continue
+        name = str(info["name"])
+        if name in taken:
+            continue
+        taken.add(name)
+        remote_entries.append(info)
+        device_for[name] = str(info["device"])
+    return device_for, remote_entries
 
 
 async def _modify_discord_channel(
@@ -363,31 +449,76 @@ async def sync_project_channels_to_discord(
     target_names = {channel.channel_name for channel in channels}
     target_names.update(aliases.keys())
 
+    # Organize by the computer each project runs on (live fleet attribution);
+    # remote-device projects get channels too.
+    attribution = _fleet_channel_candidates(settings)
+    device_for, remote_entries = _device_channel_layout(
+        settings, channels, aliases, attribution
+    )
+    remote_channels = [
+        ProjectChannel(
+            channel_name=str(info["name"]),
+            cwd=Path(str(info["cwd"])),
+            project_id=f"remote:{info['device']}:{info['name']}",
+            project_name=str(info["name"]),
+        )
+        for info in remote_entries
+    ]
+    target_names.update(channel.channel_name for channel in remote_channels)
+
     headers = {
         "Authorization": f"Bot {discord_token}",
         "Content-Type": "application/json",
         "X-Audit-Log-Reason": "Bemine per-project channel sync",
     }
     async with aiohttp.ClientSession(headers=headers) as session:
-        categories, existing = await _ensure_project_categories(session, guild_id)
-        project_category_ids = {
-            str(category.get("id") or "") for category in categories
-        }
-        existing_project_channels = [
+        existing = await _discord_json(
+            session, "GET", f"https://discord.com/api/v10/guilds/{guild_id}/channels"
+        )
+        if not isinstance(existing, list):
+            raise RuntimeError("Discord channel list response was not a list")
+        legacy_categories = [
             channel
             for channel in existing
-            if channel.get("type") == 0
-            and str(channel.get("parent_id") or "") in project_category_ids
+            if channel.get("type") == 4
+            and _is_project_category_name(str(channel.get("name") or ""))
         ]
-        existing_by_name = {
-            str(channel.get("name")): channel for channel in existing_project_channels
+        device_categories: dict[str, Mapping[str, Any]] = {
+            str(channel.get("name") or "").lower(): channel
+            for channel in existing
+            if channel.get("type") == 4
+            and str(channel.get("name") or "").lower().startswith("bemine ·")
         }
+        managed_category_ids = {
+            str(channel.get("id") or "") for channel in legacy_categories
+        } | {str(channel.get("id") or "") for channel in device_categories.values()}
+        existing_by_name = {
+            str(channel.get("name")): channel
+            for channel in existing
+            if channel.get("type") == 0
+            and str(channel.get("parent_id") or "") in managed_category_ids
+        }
+
+        async def _device_category(device: str) -> Mapping[str, Any]:
+            key = _device_category_name(device).lower()
+            category = device_categories.get(key)
+            if category is None:
+                category = await _create_project_category(
+                    session, guild_id, _device_category_name(device)
+                )
+                device_categories[key] = category
+            return category
+
         topic_by_name = {
-            channel.channel_name: _project_channel_topic(channel)
-            for channel in channels
+            channel.channel_name: _project_channel_topic(
+                channel, device_for.get(channel.channel_name, "")
+            )
+            for channel in [*channels, *remote_channels]
         }
         for alias_name, alias_channel in aliases.items():
-            topic_by_name[alias_name] = _project_channel_topic(alias_channel)
+            topic_by_name[alias_name] = _project_channel_topic(
+                alias_channel, device_for.get(alias_name, "")
+            )
         deleted: list[dict[str, str]] = []
         if prune:
             for name, channel in list(existing_by_name.items()):
@@ -414,26 +545,32 @@ async def sync_project_channels_to_discord(
                 archived.append({"id": str(channel.get("id") or ""), "name": name})
                 existing_by_name.pop(name, None)
         topics_updated: list[str] = []
+        moved: list[dict[str, str]] = []
         for name, channel in existing_by_name.items():
+            device = device_for.get(name, settings.device_id)
+            category = await _device_category(device)
+            payload: dict[str, Any] = {}
+            if str(channel.get("parent_id") or "") != str(category.get("id") or ""):
+                payload["parent_id"] = str(category.get("id") or "")
             desired_topic = topic_by_name.get(name, "")
             if desired_topic and str(channel.get("topic") or "") != desired_topic:
+                payload["topic"] = desired_topic
+            if payload:
                 await _modify_discord_channel(
-                    session, str(channel.get("id") or ""), {"topic": desired_topic}
+                    session, str(channel.get("id") or ""), payload
                 )
-                topics_updated.append(name)
-        category_counts = _category_counts(categories, existing_by_name.values())
+                if "parent_id" in payload:
+                    moved.append({"name": name, "device": device})
+                if "topic" in payload:
+                    topics_updated.append(name)
         created: list[dict[str, str]] = []
         skipped: list[str] = []
         for name in sorted(target_names):
             if name in existing_by_name:
                 skipped.append(name)
                 continue
-            category = await _project_category_with_capacity(
-                session,
-                guild_id,
-                categories,
-                category_counts,
-            )
+            device = device_for.get(name, settings.device_id)
+            category = await _device_category(device)
             channel = await _create_text_channel(
                 session,
                 guild_id,
@@ -441,23 +578,26 @@ async def sync_project_channels_to_discord(
                 parent_id=str(category["id"]),
                 topic=topic_by_name.get(name, ""),
             )
-            category_id = str(category.get("id") or "")
-            category_counts[category_id] = category_counts.get(category_id, 0) + 1
             created.append(
                 {
                     "id": str(channel.get("id") or ""),
                     "name": name,
-                    "category_id": category_id,
+                    "category_id": str(category.get("id") or ""),
                     "category_name": str(category.get("name") or ""),
                 }
             )
+        # every managed channel now lives in a device category; the legacy
+        # "Bemine Projects" categories are empty shells — remove them
         deleted_categories: list[dict[str, str]] = []
-        if prune:
-            deleted_categories = await _delete_empty_overflow_categories(
-                session,
-                categories,
-                category_counts,
+        for category in legacy_categories:
+            await _delete_discord_channel(session, str(category.get("id") or ""))
+            deleted_categories.append(
+                {
+                    "id": str(category.get("id") or ""),
+                    "name": str(category.get("name") or ""),
+                }
             )
+        categories = list(device_categories.values())
 
     db.record_audit_event(
         category="discord",
