@@ -110,6 +110,16 @@ def default_jobs(settings: BemineSettings | None = None) -> tuple[JobDefinition,
                 "notify_discord": False,
             },
         ),
+        JobDefinition(
+            job_id="channel_sync",
+            name="Channel organizer (device bins, active/stale, recency order)",
+            trigger_type="cron",
+            schedule=config_string("discord", "channel_sync_schedule", "0 7 * * *"),
+            config={
+                "type": "channel_sync",
+                "notify_discord": False,
+            },
+        ),
     )
 
 
@@ -518,6 +528,36 @@ def _run_job_type(
             # a failed selftest must fail the job so health flags it
             raise RuntimeError(output)
         return output
+    if job_type == "channel_sync":
+        import asyncio as _asyncio
+        import os as _os
+
+        from ..config import config_string as _config_string
+        from bemine.discord.config import Settings as DiscordSettings
+        from bemine.discord.dispatch import sync_project_channels_to_discord
+
+        guild_id = (
+            str(config.get("guild_id") or "").strip()
+            or _config_string("discord", "guild_id", "").strip()
+            or _os.environ.get("MAYOR_DISCORD_GUILD_ID", "").strip()
+        )
+        if not guild_id:
+            raise ValueError("channel_sync needs [discord].guild_id")
+        token = DiscordSettings.load().token
+        if not token:
+            raise ValueError("channel_sync needs the Discord bot token")
+        result = _asyncio.run(
+            sync_project_channels_to_discord(
+                settings, token, guild_id, archive_stale=True
+            )
+        )
+        return (
+            "Channel organizer: "
+            f"created={len(result.get('created') or [])} "
+            f"archived={len(result.get('archived') or [])} "
+            f"topics={len(result.get('topics_updated') or [])} "
+            f"categories={len(result.get('category_names') or [])}"
+        )
     if job_type == "pa_smm_brief":
         from bemine.briefs import run_brief, render_brief
 

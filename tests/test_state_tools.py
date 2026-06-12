@@ -623,6 +623,16 @@ def test_discord_refresh_channels_tool_updates_local_metadata(tmp_path, monkeypa
         "bemine.discord.channel_index.refresh_channel_metadata",
         fake_refresh_channel_metadata,
     )
+    # repo bemine.toml now pins [discord].guild_id; this test exercises the
+    # default_guild_id fallback, so blank the configured value
+    monkeypatch.setattr(
+        "bemine.context.tool_registry.config_string",
+        lambda section, key, default="": ""
+        if (section, key) == ("discord", "guild_id")
+        else __import__("bemine.config", fromlist=["config_string"]).config_string(
+            section, key, default
+        ),
+    )
 
     out = BemineToolRegistry().execute(
         "discord_refresh_channels",

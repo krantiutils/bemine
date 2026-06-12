@@ -170,7 +170,7 @@ token_env = "MAYOR_DISCORD_BOT_TOKEN"
 home_channel_id = ""
 # DM this Discord user id with session-watcher updates (empty = post to home channel).
 notify_user_id = "681542219488166101"
-guild_id = ""
+guild_id = "1448357327290761378"
 # Access control. allow_all_users = false is the safe default: only the user IDs
 # listed here (or in MAYOR_DISCORD_ALLOWED_USERS) may talk to the bot.
 allowed_users = []
