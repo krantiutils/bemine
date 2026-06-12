@@ -115,6 +115,13 @@ harness_context_limit = 24000        # max chars of SOUL/SKILL/USER injected int
 runtime = "kimi"
 interval_secs = 600
 
+[tmux]
+# Local managed workers live as windows of this one session — the hand-built
+# shape: a single session `0`, one window per agent. Worker tooling resolves a
+# worker name to its window (or a legacy standalone session). Empty = one tmux
+# session per worker.
+home_session = "0"
+
 [continuity]
 # cdjk can lose power/network because of line cuts. On daemon startup/poll, restart
 # Bemine-managed local tmux workers that were recorded as running but whose tmux

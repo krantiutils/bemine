@@ -119,7 +119,9 @@ def snapshot_tmux_layout(
         if len(parts) < 5:
             continue
         name, raw_index, window_name, cwd, command = parts[:5]
-        if name in managed:
+        if name in managed or window_name in managed:
+            # worker continuity owns managed workers, whether each is its own
+            # session (legacy) or a window of the home session
             continue
         try:
             index = int(raw_index)
@@ -205,20 +207,42 @@ def restore_tmux_layout(
             stderr=subprocess.PIPE,
             check=False,
         )
-        if exists.returncode == 0:
-            continue
+        session_alive = exists.returncode == 0
+        live_windows: set[str] = set()
+        if session_alive:
+            # the session survived (or another restorer built it first): merge
+            # only the windows that are missing, matched by window name
+            listed = runner(
+                ["tmux", "list-windows", "-t", name, "-F", "#{window_name}"],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if listed.returncode != 0:
+                continue
+            live_windows = set((listed.stdout or "").splitlines())
         resumed: list[str] = []
         created = 0
-        for position, window in enumerate(windows):
+        session_created = session_alive
+        for window in windows:
+            window_name = str(window.get("name") or "")
+            if session_alive and window_name in live_windows:
+                continue
             command, session_id = _window_launch(db, settings, window)
             cwd = str(window.get("cwd") or "")
-            window_name = str(window.get("name") or "")
-            if position == 0:
+            if not session_created:
                 # the recorded first index IS this config's base-index, so
                 # new-session lands the window exactly where it was
                 argv = ["tmux", "new-session", "-d", "-s", name]
+                target = f"{name}:{window['index']}"
+            elif session_alive:
+                # merging into a live session: recorded indexes may be taken
+                argv = ["tmux", "new-window", "-t", f"{name}:"]
+                target = f"{name}:{window_name}" if window_name else f"{name}:"
             else:
                 argv = ["tmux", "new-window", "-t", f"{name}:{window['index']}"]
+                target = f"{name}:{window['index']}"
             if window_name:
                 argv += ["-n", window_name]
             argv += ["-c", cwd]
@@ -232,12 +256,12 @@ def restore_tmux_layout(
                 check=False,
             )
             if proc.returncode != 0:
-                if position == 0:
+                if not session_created:
                     break  # session itself failed; leave the rest for next boot
                 continue
+            session_created = True
             created += 1
             if session_id:
-                target = f"{name}:{window['index']}"
                 resumed.append(target)
                 try:
                     _nudge_window(target, nudge_sleep)

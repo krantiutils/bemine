@@ -25,6 +25,7 @@ PANE_LINES = "\n".join(
         "hub\t1\ttts\t/home/cdjk/github/streaming-tts\tclaude",
         "hub\t1\ttts\t/home/cdjk/github/streaming-tts\tbash",  # split pane: keep first
         "hub\t2\tlogs\t/home/cdjk\tbash",
+        "hub\t3\tbm-blog\t/home/cdjk/bm\tclaude",  # managed worker AS A WINDOW
         "bm-blog\t0\tbm-blog\t/home/cdjk/bm\tclaude",  # managed worker session
     ]
 )
@@ -69,6 +70,7 @@ def test_snapshot_groups_windows_and_skips_managed(tmp_path, monkeypatch):
     saved = json.loads(layout_state_path(settings).read_text(encoding="utf-8"))
     assert set(saved["sessions"]) == {"hub"}  # managed bm-blog excluded
     windows = saved["sessions"]["hub"]["windows"]
+    # worker continuity owns bm-blog whether it is a session OR a hub window
     assert [w["index"] for w in windows] == [0, 1, 2]
     assert windows[0] == {
         "index": 0,
@@ -205,7 +207,7 @@ def test_restore_skips_fresh_snapshot_and_live_sessions(tmp_path, monkeypatch):
     assert restore_tmux_layout(settings, db=db, runner=runner, nudge_sleep=None) == []
     assert calls == []
 
-    # pre-boot snapshot but the session still exists -> leave it alone
+    # pre-boot snapshot, session alive, every window still there -> untouched
     path.write_text(
         json.dumps(
             {
@@ -220,9 +222,58 @@ def test_restore_skips_fresh_snapshot_and_live_sessions(tmp_path, monkeypatch):
             }
         )
     )
-    assert restore_tmux_layout(settings, db=db, runner=runner, nudge_sleep=None) == []
-    assert all("new-session" not in c for c in calls)
+    calls.clear()
+
+    def live_runner(args, **kwargs):
+        calls.append(list(args))
+        stdout = "bm\n" if "list-windows" in args else ""
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    assert (
+        restore_tmux_layout(settings, db=db, runner=live_runner, nudge_sleep=None) == []
+    )
+    assert all("new-session" not in c and "new-window" not in c for c in calls)
     assert json.loads(path.read_text())["restored_boot"] == 2000.0
+
+
+def test_restore_merges_missing_windows_into_live_session(tmp_path, monkeypatch):
+    """A surviving session is no longer skipped wholesale: windows that died
+    (e.g. only part of the layout came back) are recreated inside it."""
+    settings = _settings(tmp_path)
+    db = BemineDB(settings.db_path)
+    monkeypatch.setattr(layout_mod, "_boot_epoch", lambda: 2000.0)
+    path = layout_state_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "ts": 1500.0,
+                "sessions": {
+                    "hub": {
+                        "windows": [
+                            {"index": 0, "name": "bm", "cwd": "/a", "command": "bash"},
+                            {"index": 1, "name": "logs", "cwd": "/b", "command": "bash"},
+                        ]
+                    }
+                },
+            }
+        )
+    )
+    calls: list[list[str]] = []
+
+    def runner(args, **kwargs):
+        calls.append(list(args))
+        stdout = "bm\n" if "list-windows" in args else ""
+        return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+    restored = restore_tmux_layout(settings, db=db, runner=runner, nudge_sleep=None)
+
+    assert restored == [{"session": "hub", "windows": 1, "resumed": []}]
+    assert all("new-session" not in c for c in calls)  # session already lives
+    new_window = next(c for c in calls if "new-window" in c)
+    assert new_window[new_window.index("-t") + 1] == "hub:"  # append, index taken
+    assert new_window[new_window.index("-n") + 1] == "logs"
+    assert new_window[new_window.index("-c") + 1] == "/b"
 
 
 def test_restore_never_reruns_arbitrary_commands(tmp_path, monkeypatch):

@@ -15,3 +15,8 @@ os.environ.setdefault("BEMINE_IGNORED_PROJECT_ROOTS", str(Path.home() / "gt"))
 # live state dir; tests must resolve paths from their own tmp fixtures.
 os.environ.pop("BEMINE_HOME", None)
 os.environ.pop("BEMINE_CONFIG", None)
+
+# The repo bemine.toml routes workers into the user's home session ("0");
+# tests must not touch it. Empty pins the legacy one-session-per-worker shape;
+# home-session tests pass an explicit home_session to the adapter.
+os.environ.setdefault("BEMINE_TMUX_HOME_SESSION", "")
