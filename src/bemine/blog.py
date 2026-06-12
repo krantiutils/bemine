@@ -132,20 +132,37 @@ def submit_blog_draft(
     problems = validate_blog_draft(
         (dest / "post.md").read_text(encoding="utf-8"), title
     )
+    preview_url = f"https://ampixa.com/blog/preview/{slug}/"
+    # refresh live previews so the review link works immediately (best-effort)
+    try:
+        build_blog_site(settings, db=db)
+        deploy_blog_site(settings)
+    except Exception:
+        preview_url = ""
     if notify:
         lines = [
             f"📝 New blog draft: **{title}** (`{slug}`)",
             f"- project: {project or 'unspecified'} · author: {author or 'unknown'}"
             f" · images: {len(copied_images)}",
-            f"- review: `uv run bemine blog show {slug}` · publish: "
-            f"`uv run bemine blog publish {slug}`",
         ]
+        if preview_url:
+            lines.append(f"- preview: {preview_url}")
+        lines.append(
+            f"- changes: say `request changes on {slug}: <note>` · "
+            f"publish: `publish blog {slug}`"
+        )
         if problems:
             lines.append("- style check: " + "; ".join(problems))
         else:
             lines.append("- style check: clean")
         _notify_discord(settings, "\n".join(lines))
-    return {"slug": slug, "title": title, "source_dir": str(dest), "problems": problems}
+    return {
+        "slug": slug,
+        "title": title,
+        "source_dir": str(dest),
+        "problems": problems,
+        "preview_url": preview_url,
+    }
 
 
 def validate_blog_draft(text: str, title: str) -> list[str]:
@@ -174,7 +191,12 @@ def request_blog_changes(
     *,
     db: BemineDB | None = None,
     notify: bool = True,
+    spawn_reviser: bool = True,
+    controller: Any = None,
 ) -> dict[str, Any]:
+    """Record the change request AND put an agent on it: a managed claude
+    worker revises the draft per the note, refreshes the preview, and reports
+    back with `bemine blog revised`."""
     db = db or BemineDB(settings.db_path)
     row = db.get_blog_post(slug)
     if row is None:
@@ -196,9 +218,120 @@ def request_blog_changes(
         device_id=settings.device_id,
         payload_json=json.dumps({"slug": slug, "note": note}, sort_keys=True),
     )
+    reviser = ""
+    if spawn_reviser:
+        try:
+            reviser = _spawn_revision_worker(
+                settings, db, slug=slug, note=note, row=row, controller=controller
+            )
+        except Exception:
+            reviser = ""
     if notify:
-        _notify_discord(settings, f"🔁 Changes requested on `{slug}`: {note.strip()}")
-    return {"slug": slug, "status": "needs_input", "notes": notes}
+        text = f"🔁 Changes requested on `{slug}`: {note.strip()}"
+        if reviser:
+            text += f"\n- revision worker `{reviser}` is on it"
+        _notify_discord(settings, text)
+    return {
+        "slug": slug,
+        "status": "needs_input",
+        "notes": notes,
+        "reviser": reviser,
+    }
+
+
+def _spawn_revision_worker(
+    settings: BemineSettings,
+    db: BemineDB,
+    *,
+    slug: str,
+    note: str,
+    row: Any,
+    controller: Any = None,
+) -> str:
+    from bemine.workers.workers import WorkerController
+
+    controller = controller or WorkerController(settings, db=db)
+    name = f"blog-revise-{slug[:24]}".rstrip("-")
+    existing = db.get_managed_session(name)
+    if existing is not None and str(existing["status"]) in {"running", "adopted"}:
+        return name  # already revising; the new note is in the draft record
+    draft_path = Path(str(row["source_dir"])) / "post.md"
+    brief = "\n".join(
+        [
+            "# Blog revision task",
+            f"Revise the Ampixa blog draft `{slug}` ({row['title']}).",
+            f"Draft file: {draft_path}",
+            f"Requested change: {note.strip()}",
+            "",
+            "Rules: follow the ampixa-blog skill (artifact-tied claims, no hype,",
+            "text-first). Edit the draft file in place. Do NOT publish.",
+            "When done, run:",
+            f"  uv run --directory /home/cdjk/bm bemine blog revised {slug} "
+            f'--summary "<one line on what you changed>"',
+            "That refreshes the live preview and notifies the reviewer.",
+        ]
+    )
+    controller.start(name=name, runtime="claude", cwd=Path("/home/cdjk/bm"))
+    controller.send_when_ready(name, brief)
+    db.record_audit_event(
+        category="blog",
+        event_type="revision_worker_started",
+        actor="bemine",
+        device_id=settings.device_id,
+        payload_json=json.dumps({"slug": slug, "worker": name}, sort_keys=True),
+    )
+    return name
+
+
+def mark_blog_revised(
+    settings: BemineSettings,
+    slug: str,
+    summary: str,
+    *,
+    db: BemineDB | None = None,
+    notify: bool = True,
+    deploy: bool = True,
+) -> dict[str, Any]:
+    """Called by the revision worker when its edit is done."""
+    db = db or BemineDB(settings.db_path)
+    row = db.get_blog_post(slug)
+    if row is None:
+        raise ValueError(f"unknown blog post: {slug}")
+    notes = (str(row["notes"] or "") + f"\n- revised: {summary.strip()}").strip()
+    db.upsert_blog_post(
+        slug=slug,
+        title=str(row["title"]),
+        project=str(row["project"]),
+        author=str(row["author"]),
+        status="draft",
+        source_dir=str(row["source_dir"]),
+        notes=notes,
+    )
+    text = (Path(str(row["source_dir"])) / "post.md").read_text(encoding="utf-8")
+    problems = validate_blog_draft(text, str(row["title"]))
+    build_blog_site(settings, db=db)
+    if deploy:
+        try:
+            deploy_blog_site(settings)
+        except Exception:
+            pass
+    db.record_audit_event(
+        category="blog",
+        event_type="draft_revised",
+        actor="revision-worker",
+        device_id=settings.device_id,
+        payload_json=json.dumps({"slug": slug, "summary": summary}, sort_keys=True),
+    )
+    if notify:
+        lines = [
+            f"✏️ Draft revised: `{slug}` — {summary.strip()}",
+            f"- preview: https://ampixa.com/blog/preview/{slug}/",
+            f"- style check: {'; '.join(problems) if problems else 'clean'}",
+            f"- publish: `publish blog {slug}` · more changes: "
+            f"`request changes on {slug}: <note>`",
+        ]
+        _notify_discord(settings, "\n".join(lines))
+    return {"slug": slug, "status": "draft", "problems": problems}
 
 
 def publish_blog_post(
@@ -310,9 +443,8 @@ def build_blog_site(
     site = blog_site_dir()
     blog_dir = site / "blog"
     blog_dir.mkdir(parents=True, exist_ok=True)
-    published = [
-        row for row in db.list_blog_posts() if str(row["status"]) == "published"
-    ]
+    rows = db.list_blog_posts()
+    published = [row for row in rows if str(row["status"]) == "published"]
     items = []
     for row in sorted(
         published, key=lambda r: float(r["published_at"] or 0), reverse=True
@@ -338,6 +470,36 @@ def build_blog_site(
             f'<li><span class="date">{date}</span>'
             f'<a href="/blog/{slug}/">{html.escape(str(row["title"]))}</a></li>'
         )
+    # live previews for drafts under review: real rendered page, DRAFT banner,
+    # noindex, never linked from the index — review happens on the actual site
+    preview_root = blog_dir / "preview"
+    if preview_root.exists():
+        shutil.rmtree(preview_root)
+    drafts = [row for row in rows if str(row["status"]) != "published"]
+    for row in drafts:
+        slug = str(row["slug"])
+        source_dir = Path(str(row["source_dir"]))
+        source = source_dir / "post.md"
+        if not source.is_file():
+            continue
+        body = _render_markdown(source.read_text(encoding="utf-8"))
+        preview_dir = preview_root / slug
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        for asset in source_dir.iterdir():
+            if asset.name != "post.md" and asset.is_file():
+                shutil.copy2(asset, preview_dir / asset.name)
+        banner = (
+            f'<div style="background:{CRIMSON};color:#fff;padding:6px 12px;'
+            f'margin-bottom:20px;">DRAFT PREVIEW — not published'
+            f" (status: {row['status']})</div>"
+        )
+        preview_html = _page(
+            f"[draft] {row['title']}",
+            f"{banner}<h1>{html.escape(str(row['title']))}</h1>\n{body}",
+        ).replace(
+            "<style>", '<meta name="robots" content="noindex, nofollow">\n<style>', 1
+        )
+        (preview_dir / "index.html").write_text(preview_html, encoding="utf-8")
     index_body = "<h1>blog</h1>\n"
     if items:
         index_body += '<ul class="posts">\n' + "\n".join(items) + "\n</ul>"
@@ -346,7 +508,11 @@ def build_blog_site(
             "<p>Nothing published yet. Raw audio infrastructure notes land here.</p>"
         )
     (blog_dir / "index.html").write_text(_page("blog", index_body), encoding="utf-8")
-    return {"published": len(published), "site_dir": str(blog_dir)}
+    return {
+        "published": len(published),
+        "previews": len(drafts),
+        "site_dir": str(blog_dir),
+    }
 
 
 def deploy_blog_site(settings: BemineSettings) -> dict[str, Any]:

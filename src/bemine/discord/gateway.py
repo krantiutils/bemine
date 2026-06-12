@@ -1335,6 +1335,15 @@ def _direct_blog_command(normalized_lower: str) -> dict[str, str] | None:
         match = re.fullmatch(r"(?:show|review) blog ([a-z0-9-]+)", raw)
         if match:
             return {"command": "blog.show", "slug": match.group(1)}
+        match = re.fullmatch(
+            r"request changes on ([a-z0-9-]+)[:,]?\s+(.+)", raw, re.DOTALL
+        )
+        if match:
+            return {
+                "command": "blog.request_changes",
+                "slug": match.group(1),
+                "note": match.group(2).strip(),
+            }
     return None
 
 
