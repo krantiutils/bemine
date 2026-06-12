@@ -338,3 +338,23 @@ def test_deploy_refuses_to_run_under_pytest(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="inside a test run"):
         real(settings)
+
+
+def test_preview_dashboard_lists_drafts_and_exists_when_empty(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+
+    build_blog_site(settings, db=db)
+    dash = (tmp_path / "site" / "blog" / "preview" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "Queue is empty" in dash
+
+    _submit(settings, tmp_path, db)
+    build_blog_site(settings, db=db)
+    dash = (tmp_path / "site" / "blog" / "preview" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    assert "/blog/preview/we-measured-nepalimos/" in dash
+    assert "style: clean" in dash
+    assert "noindex" in dash
