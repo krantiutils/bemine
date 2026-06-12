@@ -24,7 +24,11 @@ from bemine.goals import render_goal_start, start_goal
 from bemine.kimi_handler import KimiHandler, render_kimi_status
 from bemine.kernel import BemineKernel
 from bemine.index.status import _redact, collect_fleet_status, render_status
-from bemine.deploy.heartbeat import write_heartbeat, current_head_sha
+from bemine.deploy.heartbeat import (
+    boot_sha_resolver,
+    current_head_sha,
+    write_heartbeat,
+)
 
 from .config import Settings
 from .dispatch import (
@@ -566,7 +570,10 @@ def publish_gateway_heartbeat(settings=None, sha: str | None = None) -> None:
     try:
         if settings is None or not hasattr(settings, "state_dir"):
             settings = BemineSettings.load()
-        write_heartbeat(settings, "gateway", sha or current_head_sha())
+        # sha="" means "boot sha unknown" and is written as-is: falling back to
+        # live HEAD would advertise code this process never imported, and
+        # run_deploy would then capture rollback == target.
+        write_heartbeat(settings, "gateway", current_head_sha() if sha is None else sha)
     except Exception:
         pass
 
@@ -860,10 +867,8 @@ class MayorDiscordGateway:
         settings.require_token()
         self.settings = settings
         self.store = Store(settings.db_path)
-        try:
-            self._boot_sha = current_head_sha()
-        except Exception:
-            self._boot_sha = ""
+        self._boot_sha = boot_sha_resolver()
+        self._boot_sha()  # capture at boot; heartbeats retry only if git failed here
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -896,7 +901,7 @@ class MayorDiscordGateway:
             LOG.info("connected as %s", self.bot.user)
             LOG.info("state db: %s", self.settings.db_path)
             LOG.info("inbox: %s", self.settings.inbox_dir)
-            publish_gateway_heartbeat(sha=self._boot_sha)
+            publish_gateway_heartbeat(sha=self._boot_sha())
             asyncio.create_task(self._heartbeat_loop())
             try:
                 synced = await self.bot.tree.sync()
@@ -947,7 +952,7 @@ class MayorDiscordGateway:
     async def _heartbeat_loop(self) -> None:
         while True:
             await asyncio.sleep(30)
-            await asyncio.to_thread(publish_gateway_heartbeat, None, self._boot_sha)
+            await asyncio.to_thread(publish_gateway_heartbeat, None, self._boot_sha())
 
     async def _handle_allowed_message(self, message: discord.Message) -> None:
         saved_attachments = await self._record_message(message)

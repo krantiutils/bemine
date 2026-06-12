@@ -108,6 +108,38 @@ def test_run_deploy_rolls_back_when_gateway_unhealthy(tmp_path):
     assert "daemon" not in calls["restart"]
 
 
+def test_run_deploy_rollback_never_points_at_the_new_target(tmp_path):
+    """A live-HEAD-poisoned gateway heartbeat advertises the NEW sha before the
+    restart; rollback must fall back to the last confirmed target, or rolling
+    back would reinstall the broken build."""
+    s = _settings(tmp_path)
+    DeployState(
+        phase="confirmed", target_sha="goodsha", rollback_sha="oldersha",
+        updated_at=1.0,
+    ).save(state_path(s))
+    clock = _Clock()
+    deps, calls = _deps(clock=clock, head="newsha", hb_script={
+        "gateway": [_fresh("newsha", clock.t)],
+        "daemon": [_fresh("newsha", clock.t)],
+    })
+    st = P.run_deploy(s, channel_id="c1", deps=deps, self_restart_daemon=False)
+    assert st.phase == "confirmed"
+    assert st.rollback_sha == "goodsha"
+
+
+def test_run_deploy_missing_heartbeat_rolls_back_to_prior_confirmed(tmp_path):
+    s = _settings(tmp_path)
+    DeployState(
+        phase="confirmed", target_sha="goodsha", rollback_sha="oldersha",
+        updated_at=1.0,
+    ).save(state_path(s))
+    clock = _Clock()
+    deps, calls = _deps(clock=clock, head="newsha", hb_script={})
+    st = P.run_deploy(s, channel_id="c1", deps=deps, self_restart_daemon=False)
+    assert st.phase in {"rolled_back", "failed"}
+    assert calls["reset"] == ["goodsha"]
+
+
 def test_run_deploy_daemon_executor_ends_at_daemon_refresh(tmp_path):
     s = _settings(tmp_path)
     clock = _Clock()

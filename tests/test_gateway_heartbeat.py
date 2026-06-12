@@ -28,3 +28,14 @@ def test_publish_falls_back_when_settings_has_no_state_dir(tmp_path, monkeypatch
 
     publish_gateway_heartbeat(_DiscordSettingsLike())
     assert read_heartbeat(s, "gateway")["sha"] == "gwsha2"
+
+
+def test_publish_with_empty_boot_sha_stays_honest(tmp_path, monkeypatch):
+    """sha="" means 'boot sha unknown' — the heartbeat must NOT fall back to the
+    repo's live HEAD: after a push, that advertises code the process never
+    imported, and run_deploy then captures rollback == target."""
+    s = BemineSettings.load(state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v")
+    import bemine.discord.gateway as gw
+    monkeypatch.setattr(gw, "current_head_sha", lambda *a, **k: "livehead")
+    publish_gateway_heartbeat(s, "")
+    assert read_heartbeat(s, "gateway")["sha"] == ""

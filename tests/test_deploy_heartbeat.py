@@ -2,6 +2,7 @@ import subprocess
 from bemine.config import BemineSettings
 from bemine.deploy.heartbeat import (
     write_heartbeat, read_heartbeat, heartbeat_path, current_head_sha,
+    boot_sha_resolver,
 )
 
 
@@ -34,3 +35,29 @@ def test_current_head_sha_uses_runner():
     def fake_runner(argv, **kwargs):
         return subprocess.CompletedProcess(argv, 0, stdout="deadbeef\n", stderr="")
     assert current_head_sha(runner=fake_runner) == "deadbeef"
+
+
+def test_boot_sha_resolver_sticks_to_first_success_even_if_head_moves():
+    shas = iter(["aaa\n", "bbb\n"])
+
+    def fake_runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout=next(shas), stderr="")
+
+    resolve = boot_sha_resolver(runner=fake_runner)
+    assert resolve() == "aaa"
+    # HEAD moved (a deploy landed); the running process must keep reporting
+    # the sha it booted on, not start advertising code it never imported.
+    assert resolve() == "aaa"
+
+
+def test_boot_sha_resolver_retries_until_git_answers():
+    answers = iter(["", "", "ccc\n"])
+
+    def fake_runner(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, stdout=next(answers), stderr="x")
+
+    resolve = boot_sha_resolver(runner=fake_runner)
+    assert resolve() == ""
+    assert resolve() == ""
+    assert resolve() == "ccc"
+    assert resolve() == "ccc"  # iterator exhausted: re-running git would raise

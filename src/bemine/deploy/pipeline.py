@@ -74,7 +74,15 @@ def run_deploy(settings, *, channel_id: str = "", deps: DeployDeps | None = None
 
     target = deps.head_sha()
     hb = deps.read_hb(GATEWAY)
-    rollback = (hb or {}).get("sha") or target
+    hb_sha = (hb or {}).get("sha") or ""
+    # A heartbeat equal to the new target is either a same-sha redeploy or a
+    # poisoned (live-HEAD) heartbeat — in both cases the last confirmed target
+    # is the only sha known to have actually run.
+    prior = st.target_sha if st.phase == "confirmed" else st.rollback_sha
+    if hb_sha and hb_sha != target:
+        rollback = hb_sha
+    else:
+        rollback = prior or hb_sha or target
     st = DeployState(phase="deploying", target_sha=target, rollback_sha=rollback,
                      channel_id=channel_id, updated_at=deps.now())
     st.save(path)

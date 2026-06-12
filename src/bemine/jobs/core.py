@@ -11,7 +11,7 @@ from typing import Any
 
 from ..config import BemineSettings, config_bool, config_list
 from ..db import BemineDB
-from ..deploy.heartbeat import write_heartbeat, current_head_sha
+from ..deploy.heartbeat import boot_sha_resolver, write_heartbeat
 from ..kernel import BemineKernel
 from ..index.status import _redact, collect_fleet_status, render_status
 from .session_watcher import check_sessions
@@ -380,10 +380,8 @@ class BemineDaemon:
     def __init__(self, settings: BemineSettings, *, poll_seconds: int = 30) -> None:
         self.settings = settings
         self.poll_seconds = poll_seconds
-        try:
-            self._boot_sha = current_head_sha()
-        except Exception:
-            self._boot_sha = ""
+        self._boot_sha = boot_sha_resolver()
+        self._boot_sha()  # capture at boot; later ticks retry only if git failed here
 
     def run_once(self) -> list[JobRunResult]:
         self._deploy_tick()
@@ -413,7 +411,7 @@ class BemineDaemon:
         from bemine.deploy.state import DeployState, state_path
 
         try:
-            write_heartbeat(self.settings, "daemon", self._boot_sha)
+            write_heartbeat(self.settings, "daemon", self._boot_sha())
         except Exception:
             pass
         try:

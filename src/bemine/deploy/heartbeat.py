@@ -24,6 +24,23 @@ def current_head_sha(repo: Path | None = None, *, runner=subprocess.run) -> str:
     return (proc.stdout or "").strip()
 
 
+def boot_sha_resolver(repo: Path | None = None, *, runner=subprocess.run):
+    """HEAD captured once, near boot. Retries while git hasn't answered, but the
+    first success sticks — a long-lived process must report the sha it booted
+    on, never the repo's later HEAD (which is code it never imported)."""
+    cache = {"sha": ""}
+
+    def resolve() -> str:
+        if not cache["sha"]:
+            try:
+                cache["sha"] = current_head_sha(repo, runner=runner)
+            except Exception:
+                return ""
+        return cache["sha"]
+
+    return resolve
+
+
 def heartbeat_path(settings, service: str) -> Path:
     return settings.state_dir / "deploy" / f"heartbeat-{service}.json"
 
