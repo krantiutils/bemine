@@ -519,3 +519,17 @@ def test_attended_active_pane_defers_limit_continue_but_still_schedules_wait(tmp
     )
     tick_recovery(s, deps3, now=now3)
     assert tmux.sent_text == ["continue"]
+
+
+def test_classify_sees_error_above_tui_chrome_blank_lines(tmp_path):
+    from bemine.jobs.auto_recovery import classify, RATE_LIMIT_DEFAULTS
+
+    # claude's bottom chrome (input box, separators, status) plus blank lines
+    # pushed the error text outside a raw 30-line window — the overnight
+    # socket error was never classified and the session sat dead.
+    pane = (
+        "API Error: The socket connection was closed unexpectedly\n"
+        + "\n" * 40
+        + "────────────\n❯ \n────────────\n  -- INSERT --\n"
+    )
+    assert classify(pane, signatures=RATE_LIMIT_DEFAULTS) == "rate_limit"

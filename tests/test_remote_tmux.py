@@ -20,10 +20,11 @@ def _remote_cmd(tmux_args):
 
 def test_local_device_runs_tmux_directly():
     runner = _FakeRunner()
-    rt = RemoteTmux(gateway_device="cdjk", runner=runner)
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: None)
     rt.send_keys("cdjk", "%1", ["Down", "Enter"])
-    assert runner.calls[-1][:1] == ["tmux"]
-    assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Down", "Enter"]
+    assert runner.calls[-2][:1] == ["tmux"]
+    assert runner.calls[-2] == ["tmux", "send-keys", "-t", "%1", "Down", "Enter"]
+    assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Enter"]
 
 
 def test_remote_device_wraps_in_ssh():
@@ -36,14 +37,35 @@ def test_remote_device_wraps_in_ssh():
     assert argv[-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
 
 
-def test_send_text_is_literal_then_enter():
+def test_send_text_is_literal_then_enter_then_idempotent_enter():
     runner = _FakeRunner()
-    rt = RemoteTmux(gateway_device="cdjk", runner=runner)
+    pauses = []
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=pauses.append)
     rt.send_text("mbp", "%2", "hello world")
-    assert runner.calls[-2][-1] == _remote_cmd(
+    # text, Enter, then a second Enter: the TUI can eat the first one
+    # mid-redraw (an overnight answer sat unsubmitted in the input box).
+    # A duplicate Enter on empty input is a no-op.
+    assert runner.calls[-3][-1] == _remote_cmd(
         ["send-keys", "-t", "%2", "-l", "hello world"]
     )
+    assert runner.calls[-2][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
     assert runner.calls[-1][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
+    assert len(pauses) >= 2 and pauses[0] >= 0.5
+
+
+def test_send_keys_ending_in_enter_gets_idempotent_second_enter():
+    runner = _FakeRunner()
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: None)
+    rt.send_keys("mbp", "%2", ["Up", "Enter"])
+    assert runner.calls[-2][-1] == _remote_cmd(["send-keys", "-t", "%2", "Up", "Enter"])
+    assert runner.calls[-1][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
+
+
+def test_send_keys_without_enter_is_unchanged():
+    runner = _FakeRunner()
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: None)
+    rt.send_keys("mbp", "%2", ["Down"])
+    assert runner.calls[-1][-1] == _remote_cmd(["send-keys", "-t", "%2", "Down"])
 
 
 def test_list_panes_parses_with_activity():
@@ -81,9 +103,10 @@ def test_list_panes_tolerates_missing_activity():
 
 def test_local_device_still_runs_tmux_directly():
     runner = _FakeRunner()
-    rt = RemoteTmux(gateway_device="cdjk", runner=runner)
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: None)
     rt.send_keys("cdjk", "%1", ["Down", "Enter"])
-    assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Down", "Enter"]
+    assert runner.calls[-2] == ["tmux", "send-keys", "-t", "%1", "Down", "Enter"]
+    assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Enter"]
 
 
 def test_capture_returns_stdout():
@@ -113,6 +136,7 @@ def test_send_text_pauses_between_text_and_enter():
         gateway_device="cdjk", runner=runner, pause=lambda s: pauses.append(s)
     )
     rt.send_text("cdjk", "%1", "hello")
-    assert runner.calls[-2] == ["tmux", "send-keys", "-t", "%1", "-l", "hello"]
+    assert runner.calls[-3] == ["tmux", "send-keys", "-t", "%1", "-l", "hello"]
+    assert runner.calls[-2] == ["tmux", "send-keys", "-t", "%1", "Enter"]
     assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Enter"]
     assert pauses and pauses[0] > 0

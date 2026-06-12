@@ -151,7 +151,11 @@ _RECENT_LINES = 30
 
 
 def _recent(text: str) -> str:
-    return "\n".join((text or "").splitlines()[-_RECENT_LINES:])
+    # Non-empty lines only: TUI chrome and blank padding pushed real error text
+    # ("API Error: socket closed") outside a raw-line window, so the session
+    # was never classified and sat dead overnight.
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return "\n".join(lines[-_RECENT_LINES:])
 
 
 def classify(pane_text: str, asks_user: bool = False, *, signatures: list[str]) -> str:

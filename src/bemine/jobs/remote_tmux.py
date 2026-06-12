@@ -110,9 +110,17 @@ class RemoteTmux:
 
     def send_keys(self, device: str, pane_id: str, keys: list[str]) -> None:
         self._run(device, ["send-keys", "-t", pane_id, *keys])
+        if keys and keys[-1] == "Enter":
+            # TUIs eat an Enter mid-redraw (an overnight auto-answer sat
+            # unsubmitted in the input box); a duplicate Enter on an empty
+            # input is a no-op, so always chase with one.
+            self._pause(1.5)
+            self._run(device, ["send-keys", "-t", pane_id, "Enter"])
 
     def send_text(self, device: str, pane_id: str, text: str) -> None:
         # -l sends text literally; pause so the TUI absorbs it before Enter submits.
         self._run(device, ["send-keys", "-t", pane_id, "-l", text])
-        self._pause(0.2)
+        self._pause(1.0)
+        self._run(device, ["send-keys", "-t", pane_id, "Enter"])
+        self._pause(2.0)
         self._run(device, ["send-keys", "-t", pane_id, "Enter"])
