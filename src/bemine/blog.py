@@ -500,6 +500,43 @@ def build_blog_site(
             "<style>", '<meta name="robots" content="noindex, nofollow">\n<style>', 1
         )
         (preview_dir / "index.html").write_text(preview_html, encoding="utf-8")
+    # gated drafts dashboard at /blog/preview/ (the bare directory 403'd)
+    if drafts:
+        draft_items = []
+        for row in sorted(
+            drafts, key=lambda r: float(r["updated_at"] or 0), reverse=True
+        ):
+            slug = str(row["slug"])
+            source = Path(str(row["source_dir"])) / "post.md"
+            check = "missing draft file"
+            if source.is_file():
+                problems = validate_blog_draft(
+                    source.read_text(encoding="utf-8"), str(row["title"])
+                )
+                check = "; ".join(problems) if problems else "style: clean"
+            note = compact_text(str(row["notes"] or "").strip(), limit=160)
+            draft_items.append(
+                f'<li><a href="/blog/preview/{slug}/">'
+                f"{html.escape(str(row['title']))}</a>"
+                f'<br><span class="date">[{row["status"]}] {html.escape(check)}'
+                f"{' · ' + html.escape(note) if note else ''}</span></li>"
+            )
+        dashboard = (
+            "<h1>drafts under review</h1>\n"
+            '<ul class="posts">\n' + "\n".join(draft_items) + "\n</ul>"
+            f'<p class="meta">publish: say <code>publish blog &lt;slug&gt;</code> '
+            f"in #ampixa-blog · changes: <code>request changes on &lt;slug&gt;: "
+            f"&lt;note&gt;</code></p>"
+        )
+    else:
+        dashboard = "<h1>drafts under review</h1><p>Queue is empty.</p>"
+    preview_root.mkdir(parents=True, exist_ok=True)
+    (preview_root / "index.html").write_text(
+        _page("drafts", dashboard).replace(
+            "<style>", '<meta name="robots" content="noindex, nofollow">\n<style>', 1
+        ),
+        encoding="utf-8",
+    )
     index_body = "<h1>blog</h1>\n"
     if items:
         index_body += '<ul class="posts">\n' + "\n".join(items) + "\n</ul>"
