@@ -28,10 +28,7 @@ GOOD_DRAFT = (
 )
 
 
-import pytest as _pytest
-
-
-@_pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True)
 def _never_deploy(monkeypatch):
     """submit/revise auto-deploy previews; tests must NEVER rsync to prod —
     a test preview leaked to the live server once."""
@@ -440,3 +437,117 @@ def test_blog_revise_command_spawns_worker_with_all_notes(tmp_path, monkeypatch)
     assert "blog-revise-revise-me" in out.text
     assert "first comment" in started["note"]
     assert "second comment" in started["note"]
+
+
+def test_request_changes_routes_to_live_origin_session(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    _submit(settings, tmp_path, db)  # project=neptts-bench
+    monkeypatch.setattr(
+        "bemine.blog._origin_for_project",
+        lambda s, p: {
+            "device": "mbp",
+            "cwd": "/Users/cdjk/neptts-bench",
+            "age": 5,
+            "name": "neptts-bench",
+        },
+    )
+    sent = {}
+
+    class _FakeRT:
+        def send_text(self, device, pane, text):
+            sent.update({"device": device, "pane": pane, "text": text})
+
+    monkeypatch.setattr(
+        "bemine.blog._live_origin_pane", lambda s, d, c: (_FakeRT(), "%9")
+    )
+
+    out = request_blog_changes(
+        settings,
+        "we-measured-nepalimos",
+        "need the real MOS table",
+        db=db,
+        notify=False,
+    )
+
+    assert out["reviser"] == "origin-session:mbp:%9"
+    assert sent["pane"] == "%9"
+    assert "need the real MOS table" in sent["text"]
+    assert "blog update we-measured-nepalimos -" in sent["text"]
+
+
+def test_request_changes_spawns_worker_on_origin_device(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    _submit(settings, tmp_path, db)
+    monkeypatch.setattr(
+        "bemine.blog._origin_for_project",
+        lambda s, p: {
+            "device": "mbp",
+            "cwd": "/Users/cdjk/neptts-bench",
+            "age": 5,
+            "name": "neptts-bench",
+        },
+    )
+    monkeypatch.setattr("bemine.blog._live_origin_pane", lambda s, d, c: None)
+
+    class _FakeController:
+        def __init__(self):
+            self.calls = []
+
+        def start_on_device(self, *, name, runtime, cwd, target_device, command=""):
+            self.calls.append(("remote", name, str(cwd), target_device))
+
+        def start(self, **kwargs):
+            self.calls.append(("local", kwargs))
+
+        def send_when_ready(self, name, text, **kwargs):
+            self.calls.append(("brief", text))
+
+    controller = _FakeController()
+    out = request_blog_changes(
+        settings,
+        "we-measured-nepalimos",
+        "add numbers",
+        db=db,
+        notify=False,
+        controller=controller,
+    )
+
+    assert out["reviser"].startswith("blog-revise-")
+    kind, _name, cwd, device = controller.calls[0]
+    assert kind == "remote" and device == "mbp"
+    assert cwd == "/Users/cdjk/neptts-bench"
+    brief = controller.calls[1][1]
+    assert "ssh cdjk" in brief and "blog update we-measured-nepalimos -" in brief
+
+
+def test_update_blog_draft_replaces_content_and_reverts_to_draft(tmp_path, monkeypatch):
+    from bemine.blog import update_blog_draft
+
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    _submit(settings, tmp_path, db)
+    request_blog_changes(
+        settings,
+        "we-measured-nepalimos",
+        "fix it",
+        db=db,
+        notify=False,
+        spawn_reviser=False,
+    )
+    revised = tmp_path / "revised.md"
+    revised.write_text(GOOD_DRAFT + "\n\nAdded the full MOS table.", encoding="utf-8")
+
+    out = update_blog_draft(
+        settings, "we-measured-nepalimos", revised, db=db, notify=False, deploy=False
+    )
+
+    assert out["status"] == "draft"
+    row = db.get_blog_post("we-measured-nepalimos")
+    text = (Path(str(row["source_dir"])) / "post.md").read_text(encoding="utf-8")
+    assert "Added the full MOS table." in text
+    with pytest.raises(ValueError, match="suspiciously short"):
+        short = tmp_path / "short.md"
+        short.write_text("oops", encoding="utf-8")
+        update_blog_draft(settings, "we-measured-nepalimos", short, db=db, notify=False)
