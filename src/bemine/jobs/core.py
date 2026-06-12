@@ -454,6 +454,26 @@ class BemineDaemon:
         except Exception:
             pass
 
+    def _layout_tick(self) -> None:
+        """Hand-built tmux layouts: restore once after a reboot, then keep the
+        snapshot fresh. Managed workers are excluded on both sides."""
+        from bemine.workers.layout import restore_tmux_layout, snapshot_tmux_layout
+
+        try:
+            restore_tmux_layout(self.settings)
+            snapshot_tmux_layout(self.settings)
+        except Exception as exc:
+            try:
+                BemineDB(self.settings.db_path).record_audit_event(
+                    category="continuity",
+                    event_type="continuity_layout_failed",
+                    actor="bemine-daemon",
+                    device_id=self.settings.device_id,
+                    payload_json=json.dumps({"error": str(exc)}, sort_keys=True),
+                )
+            except Exception:
+                pass
+
     def _continuity_tick(self) -> None:
         try:
             if not _continuity_enabled(self.settings):
@@ -474,21 +494,21 @@ class BemineDaemon:
             except Exception:
                 pass
             resumed = resume_missing_local_workers(self.settings) or []
-            if not resumed:
-                return
-            BemineDB(self.settings.db_path).record_audit_event(
-                category="continuity",
-                event_type="continuity_workers_resumed",
-                actor="bemine-daemon",
-                device_id=self.settings.device_id,
-                payload_json=json.dumps(
-                    {
-                        "count": len(resumed),
-                        "workers": [record.to_dict() for record in resumed],
-                    },
-                    sort_keys=True,
-                ),
-            )
+            if resumed:
+                BemineDB(self.settings.db_path).record_audit_event(
+                    category="continuity",
+                    event_type="continuity_workers_resumed",
+                    actor="bemine-daemon",
+                    device_id=self.settings.device_id,
+                    payload_json=json.dumps(
+                        {
+                            "count": len(resumed),
+                            "workers": [record.to_dict() for record in resumed],
+                        },
+                        sort_keys=True,
+                    ),
+                )
+            self._layout_tick()
         except Exception as exc:
             try:
                 BemineDB(self.settings.db_path).record_audit_event(
