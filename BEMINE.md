@@ -40,6 +40,11 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "add X to shopping/checklist" → `checklist.add` route (the gateway's local tool router).
 - "store SMM/PA idea X" → `uv run bemine backlog add "<idea>" --owner SMM|PA`
   (Discord also accepts `SMM idea: ...` / `store idea for PA: ...`).
+- The `ampixa-blog` SKILL (source: `skills/ampixa-blog/SKILL.md`) is installed
+  fleet-wide (claude ~/.claude/skills, codex ~/.codex/skills on cdjk/mbp/mbp2;
+  kimi via extra_skill_dirs) — agents trigger it on publish-worthy results and
+  it teaches the philosophy, draft shape, and submit recipes. Re-install after
+  editing: copy SKILL.md to those dirs (scp for remotes).
 - "publish this as a blog post" / blog material from ANY session →
   `uv run bemine blog submit <draft.md> --title "<title>" --project <proj>
   --author <who> [--image x.png]` — queues the draft, notifies #ampixa-blog,
