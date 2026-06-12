@@ -239,6 +239,59 @@ def request_blog_changes(
     }
 
 
+def _origin_for_project(settings: BemineSettings, project: str) -> dict[str, Any]:
+    """Where did this draft's material come from? Resolve via live fleet
+    attribution: device + cwd of the freshest session for the project name."""
+    if not project.strip():
+        return {}
+    from bemine.discord.dispatch import _channel_key, _fleet_channel_candidates
+
+    key = _channel_key(project)
+    candidates = [
+        info
+        for info in _fleet_channel_candidates(settings).values()
+        if str(info.get("name")) == key
+    ]
+    if not candidates:
+        return {}
+    return min(candidates, key=lambda info: int(info["age"]))
+
+
+def _live_origin_pane(
+    settings: BemineSettings, device: str, cwd: str
+) -> tuple[Any, str] | None:
+    """A still-running agent pane in the origin cwd — the session that has the
+    actual context that produced the draft."""
+    from bemine.jobs.auto_recovery import _is_agent_pane
+    from bemine.jobs.remote_tmux import RemoteTmux
+
+    tmux = RemoteTmux(gateway_device=settings.device_id)
+    target = "local" if device == settings.device_id else device
+    try:
+        for pane in tmux.list_panes(target):
+            if str(pane.get("path")) == cwd and _is_agent_pane(pane.get("command")):
+                return tmux, str(pane["pane_id"])
+    except Exception:
+        return None
+    return None
+
+
+def _context_request_message(slug: str, title: str, note: str) -> str:
+    return "\n".join(
+        [
+            f"Bemine blog review: your draft `{slug}` ({title}) has reviewer "
+            "comments that need YOUR context:",
+            note.strip(),
+            "",
+            "You wrote this post, so you have the evidence. Revise the full "
+            "markdown and push it back with:",
+            f"  cat revised.md | ssh cdjk 'cd ~/bm && ~/.local/bin/uv run "
+            f"bemine blog update {slug} -'",
+            "(keep the same title; the preview refreshes automatically)",
+        ]
+    )
+
+
 def _spawn_revision_worker(
     settings: BemineSettings,
     db: BemineDB,
@@ -248,39 +301,138 @@ def _spawn_revision_worker(
     row: Any,
     controller: Any = None,
 ) -> str:
+    """Route the change request to whoever has the most context.
+
+    1. the ORIGINATING session, if still alive (it produced the draft);
+    2. a worker ON the origin device in the project repo (evidence is local);
+    3. a local worker with the draft + notes (fallback)."""
     from bemine.workers.workers import WorkerController
+
+    origin = _origin_for_project(settings, str(row["project"] or ""))
+    if origin:
+        live = _live_origin_pane(settings, str(origin["device"]), str(origin["cwd"]))
+        if live is not None:
+            tmux, pane_id = live
+            target = (
+                "local"
+                if str(origin["device"]) == settings.device_id
+                else str(origin["device"])
+            )
+            tmux.send_text(
+                target,
+                pane_id,
+                _context_request_message(slug, str(row["title"]), note),
+            )
+            db.record_audit_event(
+                category="blog",
+                event_type="context_requested_from_origin",
+                actor="bemine",
+                device_id=settings.device_id,
+                payload_json=json.dumps(
+                    {"slug": slug, "device": str(origin["device"]), "pane": pane_id},
+                    sort_keys=True,
+                ),
+            )
+            return f"origin-session:{origin['device']}:{pane_id}"
 
     controller = controller or WorkerController(settings, db=db)
     name = f"blog-revise-{slug[:24]}".rstrip("-")
     existing = db.get_managed_session(name)
     if existing is not None and str(existing["status"]) in {"running", "adopted"}:
         return name  # already revising; the new note is in the draft record
+
     draft_path = Path(str(row["source_dir"])) / "post.md"
-    brief = "\n".join(
-        [
-            "# Blog revision task",
-            f"Revise the Ampixa blog draft `{slug}` ({row['title']}).",
-            f"Draft file: {draft_path}",
-            f"Requested change: {note.strip()}",
-            "",
-            "Rules: follow the ampixa-blog skill (artifact-tied claims, no hype,",
-            "text-first). Edit the draft file in place. Do NOT publish.",
-            "When done, run:",
-            f"  uv run --directory /home/cdjk/bm bemine blog revised {slug} "
-            f'--summary "<one line on what you changed>"',
-            "That refreshes the live preview and notifies the reviewer.",
-        ]
-    )
-    controller.start(name=name, runtime="claude", cwd=Path("/home/cdjk/bm"))
+    remote_origin = origin and str(origin["device"]) != settings.device_id
+    if remote_origin:
+        # the evidence (repo, results) lives on the origin device — revise there
+        brief = "\n".join(
+            [
+                "# Blog revision task (origin device)",
+                f"Revise the Ampixa blog draft `{slug}` ({row['title']}).",
+                f"The draft was written from THIS project: {origin['cwd']}",
+                f"Reviewer comments: {note.strip()}",
+                "",
+                "Fetch the current draft:",
+                f"  ssh cdjk 'cat {draft_path}'",
+                "Use the repo/results here to address the comments with REAL "
+                "numbers and links (ampixa-blog skill rules: artifact-tied "
+                "claims, no hype). Then push the revised markdown back:",
+                f"  cat revised.md | ssh cdjk 'cd ~/bm && ~/.local/bin/uv run "
+                f"bemine blog update {slug} -'",
+                "Do NOT publish.",
+            ]
+        )
+        controller.start_on_device(
+            name=name,
+            runtime="claude",
+            cwd=Path(str(origin["cwd"])),
+            target_device=str(origin["device"]),
+        )
+    else:
+        brief = "\n".join(
+            [
+                "# Blog revision task",
+                f"Revise the Ampixa blog draft `{slug}` ({row['title']}).",
+                f"Draft file: {draft_path}",
+                f"Requested change: {note.strip()}",
+                "",
+                "Rules: follow the ampixa-blog skill (artifact-tied claims, no "
+                "hype, text-first). Edit the draft file in place. Do NOT publish.",
+                "When done, run:",
+                f"  uv run --directory /home/cdjk/bm bemine blog revised {slug} "
+                f'--summary "<one line on what you changed>"',
+                "That refreshes the live preview and notifies the reviewer.",
+            ]
+        )
+        controller.start(name=name, runtime="claude", cwd=Path("/home/cdjk/bm"))
     controller.send_when_ready(name, brief)
     db.record_audit_event(
         category="blog",
         event_type="revision_worker_started",
         actor="bemine",
         device_id=settings.device_id,
-        payload_json=json.dumps({"slug": slug, "worker": name}, sort_keys=True),
+        payload_json=json.dumps(
+            {
+                "slug": slug,
+                "worker": name,
+                "device": str(origin.get("device") or settings.device_id)
+                if origin
+                else settings.device_id,
+            },
+            sort_keys=True,
+        ),
     )
     return name
+
+
+def update_blog_draft(
+    settings: BemineSettings,
+    slug: str,
+    file: Path | str,
+    *,
+    db: BemineDB | None = None,
+    notify: bool = True,
+    deploy: bool = True,
+) -> dict[str, Any]:
+    """The return path: the origin agent pushes its revised draft back.
+
+    `file="-"` reads stdin (the ssh pipe from a remote device)."""
+    db = db or BemineDB(settings.db_path)
+    row = db.get_blog_post(slug)
+    if row is None:
+        raise ValueError(f"unknown blog post: {slug}")
+    if str(file) == "-":
+        import sys
+
+        body = sys.stdin.read()
+    else:
+        body = Path(file).expanduser().read_text(encoding="utf-8")
+    if len(body.strip()) < 50:
+        raise ValueError("revised draft is suspiciously short; refusing to overwrite")
+    (Path(str(row["source_dir"])) / "post.md").write_text(body, encoding="utf-8")
+    return mark_blog_revised(
+        settings, slug, "author updated the draft", db=db, notify=notify, deploy=deploy
+    )
 
 
 def mark_blog_revised(
@@ -525,9 +677,9 @@ def build_blog_site(
         dashboard = (
             "<h1>drafts under review</h1>\n"
             '<ul class="posts">\n' + "\n".join(draft_items) + "\n</ul>"
-            f'<p class="meta">publish: say <code>publish blog &lt;slug&gt;</code> '
-            f"in #ampixa-blog · changes: <code>request changes on &lt;slug&gt;: "
-            f"&lt;note&gt;</code></p>"
+            '<p class="meta">publish: say <code>publish blog &lt;slug&gt;</code> '
+            "in #ampixa-blog · changes: <code>request changes on &lt;slug&gt;: "
+            "&lt;note&gt;</code></p>"
         )
     else:
         dashboard = "<h1>drafts under review</h1><p>Queue is empty.</p>"

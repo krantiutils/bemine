@@ -10,3 +10,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 # the ignore list for the suite. Tests that exercise the filter itself manage
 # this env var explicitly.
 os.environ.setdefault("BEMINE_IGNORED_PROJECT_ROOTS", str(Path.home() / "gt"))
+
+# Bemine-launched sessions export BEMINE_HOME/BEMINE_CONFIG pointing at the
+# live state dir; tests must resolve paths from their own tmp fixtures.
+os.environ.pop("BEMINE_HOME", None)
+os.environ.pop("BEMINE_CONFIG", None)

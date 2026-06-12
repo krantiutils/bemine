@@ -868,6 +868,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     blog_revised.add_argument("slug")
     blog_revised.add_argument("--summary", required=True, help="What changed.")
+    blog_update = blog_sub.add_parser(
+        "update",
+        help="Replace a draft's markdown (origin agent pushes revisions back; "
+        "- reads stdin).",
+    )
+    blog_update.add_argument("slug")
+    blog_update.add_argument("file", help="Revised markdown file, or - for stdin.")
     blog_build = blog_sub.add_parser(
         "build", help="Rebuild the static blog pages from published posts."
     )
@@ -2159,6 +2166,11 @@ def main(argv: list[str] | None = None) -> None:
                 result = mark_blog_revised(
                     settings, args.slug, args.summary, db=blog_db
                 )
+                print(json.dumps(result, indent=2, sort_keys=True))
+            elif args.blog_command == "update":
+                from bemine.blog import update_blog_draft
+
+                result = update_blog_draft(settings, args.slug, args.file, db=blog_db)
                 print(json.dumps(result, indent=2, sort_keys=True))
             elif args.blog_command == "build":
                 result = build_blog_site(settings, db=blog_db)
