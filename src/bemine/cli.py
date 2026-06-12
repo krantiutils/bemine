@@ -858,6 +858,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     blog_changes.add_argument("slug")
     blog_changes.add_argument("--note", required=True, help="What is missing.")
+    blog_changes.add_argument(
+        "--no-reviser",
+        action="store_true",
+        help="Only record the note; do not spawn a revision worker.",
+    )
+    blog_revised = blog_sub.add_parser(
+        "revised", help="Revision worker reports an edit done (refreshes preview)."
+    )
+    blog_revised.add_argument("slug")
+    blog_revised.add_argument("--summary", required=True, help="What changed.")
     blog_build = blog_sub.add_parser(
         "build", help="Rebuild the static blog pages from published posts."
     )
@@ -2136,7 +2146,18 @@ def main(argv: list[str] | None = None) -> None:
                 print(json.dumps(result, indent=2, sort_keys=True))
             elif args.blog_command == "request-changes":
                 result = request_blog_changes(
-                    settings, args.slug, args.note, db=blog_db
+                    settings,
+                    args.slug,
+                    args.note,
+                    db=blog_db,
+                    spawn_reviser=not args.no_reviser,
+                )
+                print(json.dumps(result, indent=2, sort_keys=True))
+            elif args.blog_command == "revised":
+                from bemine.blog import mark_blog_revised
+
+                result = mark_blog_revised(
+                    settings, args.slug, args.summary, db=blog_db
                 )
                 print(json.dumps(result, indent=2, sort_keys=True))
             elif args.blog_command == "build":

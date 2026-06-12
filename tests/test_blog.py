@@ -28,6 +28,18 @@ GOOD_DRAFT = (
 )
 
 
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _never_deploy(monkeypatch):
+    """submit/revise auto-deploy previews; tests must NEVER rsync to prod —
+    a test preview leaked to the live server once."""
+    monkeypatch.setattr(
+        "bemine.blog.deploy_blog_site", lambda settings: {"skipped": "test"}
+    )
+
+
 def _settings(tmp_path, monkeypatch):
     monkeypatch.setattr("bemine.blog.blog_site_dir", lambda: tmp_path / "site")
     return BemineSettings.load(
@@ -215,3 +227,99 @@ def test_submit_reads_stdin_for_remote_pipes(tmp_path, monkeypatch):
     assert result["slug"] == "piped-post"
     text = (Path(result["source_dir"]) / "post.md").read_text(encoding="utf-8")
     assert "NepaliMOS" in text
+
+
+def test_build_renders_draft_previews_with_noindex(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    _submit(settings, tmp_path, db)
+
+    out = build_blog_site(settings, db=db)
+
+    assert out["previews"] == 1
+    preview = (
+        tmp_path / "site" / "blog" / "preview" / "we-measured-nepalimos" / "index.html"
+    ).read_text(encoding="utf-8")
+    assert "DRAFT PREVIEW" in preview
+    assert "noindex" in preview
+    index = (tmp_path / "site" / "blog" / "index.html").read_text(encoding="utf-8")
+    assert "preview" not in index  # drafts never linked from the public index
+
+
+def test_request_changes_spawns_revision_worker(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    _submit(settings, tmp_path, db)
+
+    class _FakeController:
+        def __init__(self):
+            self.started = []
+            self.sent = []
+
+        def start(self, *, name, runtime, cwd, command=""):
+            self.started.append((name, runtime))
+
+        def send_when_ready(self, name, text, **kwargs):
+            self.sent.append((name, text))
+
+    controller = _FakeController()
+    out = request_blog_changes(
+        settings,
+        "we-measured-nepalimos",
+        "add the score table",
+        db=db,
+        notify=False,
+        controller=controller,
+    )
+
+    assert out["reviser"].startswith("blog-revise-")
+    assert controller.started[0][1] == "claude"
+    brief = controller.sent[0][1]
+    assert "add the score table" in brief
+    assert "bemine blog revised we-measured-nepalimos" in brief
+    assert "Do NOT publish" in brief
+
+
+def test_mark_revised_returns_to_draft_and_rebuilds(tmp_path, monkeypatch):
+    from bemine.blog import mark_blog_revised
+
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    _submit(settings, tmp_path, db)
+    request_blog_changes(
+        settings,
+        "we-measured-nepalimos",
+        "tighten the intro",
+        db=db,
+        notify=False,
+        spawn_reviser=False,
+    )
+
+    out = mark_blog_revised(
+        settings,
+        "we-measured-nepalimos",
+        "tightened intro",
+        db=db,
+        notify=False,
+        deploy=False,
+    )
+
+    assert out["status"] == "draft"
+    row = db.get_blog_post("we-measured-nepalimos")
+    assert row["status"] == "draft"
+    assert "revised: tightened intro" in row["notes"]
+    assert (
+        tmp_path / "site" / "blog" / "preview" / "we-measured-nepalimos" / "index.html"
+    ).is_file()
+
+
+def test_gateway_routes_request_changes_phrase():
+    from bemine.discord import gateway as gw
+
+    assert gw._direct_blog_command(
+        "request changes on my-post: add the benchmark table please"
+    ) == {
+        "command": "blog.request_changes",
+        "slug": "my-post",
+        "note": "add the benchmark table please",
+    }
