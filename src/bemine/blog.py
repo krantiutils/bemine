@@ -76,20 +76,35 @@ def submit_blog_draft(
     db: BemineDB | None = None,
     notify: bool = True,
 ) -> dict[str, Any]:
-    """The path ANY codex/claude session uses to hand material to Bemine."""
+    """The path ANY codex/claude session uses to hand material to Bemine.
+
+    `file="-"` reads the draft from stdin, so remote-device agents can pipe:
+    cat draft.md | ssh cdjk 'cd ~/bm && uv run bemine blog submit - --title ...'
+    """
     db = db or BemineDB(settings.db_path)
     title = title.strip()
     if not title:
         raise ValueError("blog title is required")
-    file = Path(file).expanduser()
-    if not file.is_file():
-        raise ValueError(f"draft markdown not found: {file}")
+    body = ""
+    if str(file) == "-":
+        import sys
+
+        body = sys.stdin.read()
+        if not body.strip():
+            raise ValueError("empty draft on stdin")
+    else:
+        file = Path(file).expanduser()
+        if not file.is_file():
+            raise ValueError(f"draft markdown not found: {file}")
     slug = _slugify(title)
     if db.get_blog_post(slug) is not None:
         raise ValueError(f"a blog post with slug `{slug}` already exists")
     dest = blog_drafts_dir(settings) / slug
     dest.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(file, dest / "post.md")
+    if body:
+        (dest / "post.md").write_text(body, encoding="utf-8")
+    else:
+        shutil.copy2(file, dest / "post.md")
     copied_images: list[str] = []
     for image in images or []:
         image = Path(image).expanduser()
