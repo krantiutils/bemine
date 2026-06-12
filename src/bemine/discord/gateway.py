@@ -997,6 +997,14 @@ class MayorDiscordGateway:
             )
             await responder.send(_discord_chunk(text, limit=1900)[0])
             return
+        blog_args = _direct_blog_command(normalized_lower)
+        if blog_args is not None:
+            command_name = blog_args.pop("command", "blog.list")
+            text = await asyncio.to_thread(
+                lambda: run_command(command_name, BemineSettings.load(), blog_args).text
+            )
+            await responder.send(_discord_chunk(text, limit=1900)[0])
+            return
         if normalized_lower in {
             "!mayor rundown",
             "mayor rundown",
@@ -1300,6 +1308,34 @@ def _message_channel_name(message: discord.Message) -> str:
 
 def _message_category_name(message: discord.Message) -> str:
     return _channel_category_name(message.channel)
+
+
+def _direct_blog_command(normalized_lower: str) -> dict[str, str] | None:
+    text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip().lower())
+    variants = {
+        text,
+        text.removeprefix("!mayor ").removeprefix("mayor "),
+        text.removeprefix("!bemine ").removeprefix("bemine "),
+    }
+    if variants & {
+        "blog",
+        "blog queue",
+        "blog list",
+        "list blogs",
+        "show blog queue",
+        "what blogs are queued",
+        "what's in the blog queue",
+        "what is in the blog queue",
+    }:
+        return {"command": "blog.list"}
+    for raw in variants:
+        match = re.fullmatch(r"publish blog ([a-z0-9-]+)", raw)
+        if match:
+            return {"command": "blog.publish", "slug": match.group(1)}
+        match = re.fullmatch(r"(?:show|review) blog ([a-z0-9-]+)", raw)
+        if match:
+            return {"command": "blog.show", "slug": match.group(1)}
+    return None
 
 
 def _direct_backlog_command(normalized_lower: str) -> dict[str, str] | None:

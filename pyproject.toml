@@ -8,6 +8,7 @@ dependencies = [
     "discord.py==2.7.1",
     "anthropic>=0.40",
     "openai>=1.50",
+    "markdown>=3.10.2",
 ]
 
 [project.scripts]
