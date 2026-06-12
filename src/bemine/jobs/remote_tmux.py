@@ -124,3 +124,20 @@ class RemoteTmux:
         self._run(device, ["send-keys", "-t", pane_id, "Enter"])
         self._pause(2.0)
         self._run(device, ["send-keys", "-t", pane_id, "Enter"])
+        # VERIFY the message left the input box — an auto-answer once sat
+        # unsubmitted overnight because the TUI ate every Enter. If the text
+        # still shows in the pane tail, chase with more Enters (a duplicate
+        # Enter on an empty input is a no-op, so chasing is always safe).
+        snippet = text.strip().splitlines()[0][:60] if text.strip() else ""
+        if not snippet:
+            return
+        for _ in range(2):
+            try:
+                pane = self.capture(device, pane_id, lines=50)
+            except Exception:
+                return
+            tail = [line for line in pane.splitlines() if line.strip()][-3:]
+            if not any(snippet in line for line in tail):
+                return
+            self._pause(2.0)
+            self._run(device, ["send-keys", "-t", pane_id, "Enter"])

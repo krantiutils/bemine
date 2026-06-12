@@ -45,11 +45,10 @@ def test_send_text_is_literal_then_enter_then_idempotent_enter():
     # text, Enter, then a second Enter: the TUI can eat the first one
     # mid-redraw (an overnight answer sat unsubmitted in the input box).
     # A duplicate Enter on empty input is a no-op.
-    assert runner.calls[-3][-1] == _remote_cmd(
-        ["send-keys", "-t", "%2", "-l", "hello world"]
-    )
-    assert runner.calls[-2][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
-    assert runner.calls[-1][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
+    sends = [c for c in runner.calls if "send-keys" in c[-1]]
+    assert sends[0][-1] == _remote_cmd(["send-keys", "-t", "%2", "-l", "hello world"])
+    assert sends[1][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
+    assert sends[2][-1] == _remote_cmd(["send-keys", "-t", "%2", "Enter"])
     assert len(pauses) >= 2 and pauses[0] >= 0.5
 
 
@@ -136,7 +135,52 @@ def test_send_text_pauses_between_text_and_enter():
         gateway_device="cdjk", runner=runner, pause=lambda s: pauses.append(s)
     )
     rt.send_text("cdjk", "%1", "hello")
-    assert runner.calls[-3] == ["tmux", "send-keys", "-t", "%1", "-l", "hello"]
-    assert runner.calls[-2] == ["tmux", "send-keys", "-t", "%1", "Enter"]
-    assert runner.calls[-1] == ["tmux", "send-keys", "-t", "%1", "Enter"]
+    sends = [c for c in runner.calls if "send-keys" in c]
+    assert sends[0] == ["tmux", "send-keys", "-t", "%1", "-l", "hello"]
+    assert sends[1] == ["tmux", "send-keys", "-t", "%1", "Enter"]
+    assert sends[2] == ["tmux", "send-keys", "-t", "%1", "Enter"]
     assert pauses and pauses[0] > 0
+
+
+class _SequencedRunner:
+    """stdout differs per capture call; send calls recorded like _FakeRunner."""
+
+    def __init__(self, capture_outputs):
+        self.calls = []
+        self._captures = list(capture_outputs)
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(argv)
+        flat = " ".join(argv)
+        stdout = ""
+        if "capture-pane" in flat:
+            stdout = self._captures.pop(0) if self._captures else ""
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+
+def test_send_text_verifies_submission_and_chases_stuck_text():
+    # first capture: the text still sits in the input box (Enter eaten);
+    # second capture: clean -> stop chasing.
+    stuck = "────\n❯ do the probe now\n────\n-- INSERT --\n"
+    clean = "❯ do the probe now\n● Working on it\n────\n❯ \n"
+    runner = _SequencedRunner([stuck, clean])
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: None)
+
+    rt.send_text("cdjk", "%1", "do the probe now")
+
+    enters = [c for c in runner.calls if c[-1] == "Enter" and "send-keys" in c]
+    # base Enter + idempotent Enter + 1 verified chase
+    assert len(enters) == 3
+    captures = [c for c in runner.calls if "capture-pane" in " ".join(c)]
+    assert len(captures) == 2
+
+
+def test_send_text_stops_chasing_once_submitted():
+    clean = "❯ do the probe now\n● Working on it\n────\n❯ \n"
+    runner = _SequencedRunner([clean])
+    rt = RemoteTmux(gateway_device="cdjk", runner=runner, pause=lambda s: None)
+
+    rt.send_text("cdjk", "%1", "do the probe now")
+
+    enters = [c for c in runner.calls if c[-1] == "Enter" and "send-keys" in c]
+    assert len(enters) == 2  # base + idempotent only, no chase
