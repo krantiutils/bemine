@@ -318,8 +318,43 @@ def _project_channel_topic(channel: ProjectChannel, device: str = "") -> str:
     )[:1024]
 
 
-def _device_category_name(device: str) -> str:
-    return f"Bemine · {device}"
+def _device_category_name(device: str, *, stale: bool = False) -> str:
+    return f"Bemine · {device} · stale" if stale else f"Bemine · {device}"
+
+
+def _stale_after_secs() -> int:
+    return max(1, config_int("discord", "stale_after_days", 7)) * 86400
+
+
+def _category_assignments(
+    device_for: Mapping[str, str],
+    age_for: Mapping[str, int | None],
+    *,
+    stale_secs: int,
+) -> dict[str, str]:
+    """Channel name -> category display name, split by recent activity.
+
+    No known session activity counts as stale — the daily organizer keeps each
+    device's bin showing live work on top and parks dormant projects."""
+    out: dict[str, str] = {}
+    for name, device in device_for.items():
+        age = age_for.get(name)
+        stale = age is None or int(age) > stale_secs
+        out[name] = _device_category_name(device, stale=stale)
+    return out
+
+
+def _position_payload(
+    placements: Mapping[str, list[tuple[int, str]]],
+) -> list[dict[str, Any]]:
+    """Per-category recency ordering: freshest first. placements maps
+    category_id -> [(age_seconds, channel_id), ...]."""
+    payload: list[dict[str, Any]] = []
+    for category_id in sorted(placements):
+        ordered = sorted(placements[category_id], key=lambda item: item[0])
+        for position, (_age, channel_id) in enumerate(ordered):
+            payload.append({"id": channel_id, "position": position})
+    return payload
 
 
 def _cfg_excluded_channel_names() -> set[str]:
@@ -369,21 +404,24 @@ def _device_channel_layout(
     channels: list[ProjectChannel],
     aliases: Mapping[str, ProjectChannel],
     attribution: dict[str, dict[str, Any]],
-) -> tuple[dict[str, str], list[dict[str, Any]]]:
-    """Decide each channel's device and which remote-only channels to add.
+) -> tuple[dict[str, str], dict[str, int | None], list[dict[str, Any]]]:
+    """Decide each channel's device, last-activity age, and remote additions.
 
     Local channels follow their latest fleet activity (default: this device).
     Remote cwds with recent activity and an unclaimed name become new channels."""
     device_for: dict[str, str] = {}
+    age_for: dict[str, int | None] = {}
     for channel in channels:
         hit = attribution.get(str(channel.cwd))
         device_for[channel.channel_name] = (
             str(hit["device"]) if hit else settings.device_id
         )
+        age_for[channel.channel_name] = int(hit["age"]) if hit else None
     for alias_name, alias_channel in aliases.items():
         device_for[alias_name] = device_for.get(
             alias_channel.channel_name, settings.device_id
         )
+        age_for[alias_name] = age_for.get(alias_channel.channel_name)
     window_secs = (
         max(1, config_int("discord", "fleet_channel_max_age_days", 14)) * 86400
     )
@@ -400,7 +438,8 @@ def _device_channel_layout(
         taken.add(name)
         remote_entries.append(info)
         device_for[name] = str(info["device"])
-    return device_for, remote_entries
+        age_for[name] = int(info["age"])
+    return device_for, age_for, remote_entries
 
 
 async def _modify_discord_channel(
@@ -452,8 +491,11 @@ async def sync_project_channels_to_discord(
     # Organize by the computer each project runs on (live fleet attribution);
     # remote-device projects get channels too.
     attribution = _fleet_channel_candidates(settings)
-    device_for, remote_entries = _device_channel_layout(
+    device_for, age_for, remote_entries = _device_channel_layout(
         settings, channels, aliases, attribution
+    )
+    category_name_for = _category_assignments(
+        device_for, age_for, stale_secs=_stale_after_secs()
     )
     remote_channels = [
         ProjectChannel(
@@ -508,15 +550,42 @@ async def sync_project_channels_to_discord(
             )
         }
 
-        async def _device_category(device: str) -> Mapping[str, Any]:
-            key = _device_category_name(device).lower()
+        async def _named_category(display_name: str) -> Mapping[str, Any]:
+            key = display_name.lower()
             category = device_categories.get(key)
             if category is None:
                 category = await _create_project_category(
-                    session, guild_id, _device_category_name(device)
+                    session, guild_id, display_name
                 )
                 device_categories[key] = category
             return category
+
+        def _category_for(name: str) -> str:
+            return category_name_for.get(
+                name, _device_category_name(settings.device_id, stale=True)
+            )
+
+        # STICKY membership: a channel already filed under a device bin whose
+        # project simply has no recent fleet activity belongs in that device's
+        # stale bin — fleet sampling flaps, and archiving on a missed sample
+        # would bounce real project channels in and out of the Archive.
+        device_by_category_id: dict[str, str] = {}
+        for category in device_categories.values():
+            display = str(category.get("name") or "")
+            device = display.removeprefix("Bemine · ").removesuffix(" · stale").strip()
+            if device:
+                device_by_category_id[str(category.get("id") or "")] = device
+        excluded_names = _cfg_excluded_channel_names()
+        for name, channel in existing_by_name.items():
+            if name in target_names or _channel_key(name) in excluded_names:
+                continue
+            device = device_by_category_id.get(str(channel.get("parent_id") or ""))
+            if not device:
+                continue
+            target_names.add(name)
+            device_for.setdefault(name, device)
+            age_for.setdefault(name, None)
+            category_name_for[name] = _device_category_name(device, stale=True)
 
         topic_by_name = {
             channel.channel_name: _project_channel_topic(
@@ -555,12 +624,20 @@ async def sync_project_channels_to_discord(
                 existing_by_name.pop(name, None)
         topics_updated: list[str] = []
         moved: list[dict[str, str]] = []
+        placements: dict[str, list[tuple[int, str]]] = {}
+
+        def _track(category_id: str, name: str, channel_id: str) -> None:
+            age = age_for.get(name)
+            placements.setdefault(category_id, []).append(
+                (int(age) if age is not None else 10**9, channel_id)
+            )
+
         for name, channel in existing_by_name.items():
-            device = device_for.get(name, settings.device_id)
-            category = await _device_category(device)
+            category = await _named_category(_category_for(name))
+            category_id = str(category.get("id") or "")
             payload: dict[str, Any] = {}
-            if str(channel.get("parent_id") or "") != str(category.get("id") or ""):
-                payload["parent_id"] = str(category.get("id") or "")
+            if str(channel.get("parent_id") or "") != category_id:
+                payload["parent_id"] = category_id
             desired_topic = topic_by_name.get(name, "")
             if desired_topic and str(channel.get("topic") or "") != desired_topic:
                 payload["topic"] = desired_topic
@@ -569,17 +646,19 @@ async def sync_project_channels_to_discord(
                     session, str(channel.get("id") or ""), payload
                 )
                 if "parent_id" in payload:
-                    moved.append({"name": name, "device": device})
+                    moved.append(
+                        {"name": name, "category": str(category.get("name") or "")}
+                    )
                 if "topic" in payload:
                     topics_updated.append(name)
+            _track(category_id, name, str(channel.get("id") or ""))
         created: list[dict[str, str]] = []
         skipped: list[str] = []
         for name in sorted(target_names):
             if name in existing_by_name:
                 skipped.append(name)
                 continue
-            device = device_for.get(name, settings.device_id)
-            category = await _device_category(device)
+            category = await _named_category(_category_for(name))
             channel = await _create_text_channel(
                 session,
                 guild_id,
@@ -594,6 +673,16 @@ async def sync_project_channels_to_discord(
                     "category_id": str(category.get("id") or ""),
                     "category_name": str(category.get("name") or ""),
                 }
+            )
+            _track(str(category.get("id") or ""), name, str(channel.get("id") or ""))
+        # recency ordering inside each category: freshest project on top
+        order_payload = _position_payload(placements)
+        if order_payload:
+            await _discord_json(
+                session,
+                "PATCH",
+                f"https://discord.com/api/v10/guilds/{guild_id}/channels",
+                json_payload=order_payload,
             )
         # every managed channel now lives in a device category; the legacy
         # "Bemine Projects" categories are empty shells — remove them
@@ -2948,11 +3037,15 @@ async def _discord_json(
     method: str,
     url: str,
     *,
-    json_payload: Mapping[str, Any] | None = None,
+    json_payload: Mapping[str, Any] | list[Any] | None = None,
 ) -> Any:
-    async with session.request(
-        method, url, json=dict(json_payload) if json_payload else None
-    ) as response:
+    if isinstance(json_payload, list):
+        body = json_payload
+    elif json_payload:
+        body = dict(json_payload)
+    else:
+        body = None
+    async with session.request(method, url, json=body) as response:
         text = await response.text()
         try:
             data = json.loads(text) if text else {}

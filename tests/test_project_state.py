@@ -217,7 +217,9 @@ def test_device_channel_layout_attributes_and_adds_remote_projects(tmp_path):
         },
     }
 
-    device_for, remote = _device_channel_layout(settings, local, {}, attribution)
+    device_for, age_for, remote = _device_channel_layout(
+        settings, local, {}, attribution
+    )
 
     assert device_for["bemine"] == "cdjk"
     assert device_for["nanoclaw"] == "cdjk"  # no fleet hit for its cwd -> local
@@ -225,6 +227,40 @@ def test_device_channel_layout_attributes_and_adds_remote_projects(tmp_path):
     assert device_for["himalmt"] == "mbp2"
     names = {str(info["name"]) for info in remote}
     assert names == {"g2p", "himalmt"}
+    assert age_for["bemine"] == 10
+    assert age_for["nanoclaw"] is None
+    assert age_for["g2p"] == 100
+
+
+def test_category_assignments_split_active_and_stale():
+    from bemine.discord.dispatch import _category_assignments
+
+    device_for = {"bemine": "cdjk", "github": "cdjk", "g2p": "mbp"}
+    age_for = {"bemine": 3600, "github": None, "g2p": 10 * 86400}
+
+    out = _category_assignments(device_for, age_for, stale_secs=7 * 86400)
+
+    assert out["bemine"] == "Bemine \u00b7 cdjk"
+    assert out["github"] == "Bemine \u00b7 cdjk \u00b7 stale"
+    assert out["g2p"] == "Bemine \u00b7 mbp \u00b7 stale"
+
+
+def test_position_payload_orders_freshest_first():
+    from bemine.discord.dispatch import _position_payload
+
+    placements = {
+        "cat1": [(500, "b"), (10, "a"), (10**9, "c")],
+        "cat0": [(1, "z")],
+    }
+
+    payload = _position_payload(placements)
+
+    assert payload == [
+        {"id": "z", "position": 0},
+        {"id": "a", "position": 0},
+        {"id": "b", "position": 1},
+        {"id": "c", "position": 2},
+    ]
 
 
 def test_fleet_channel_candidates_filters_and_picks_freshest(tmp_path, monkeypatch):
