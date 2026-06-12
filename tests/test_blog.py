@@ -194,3 +194,24 @@ def test_gateway_routes_blog_phrases():
         "slug": "my-post",
     }
     assert gw._direct_blog_command("backlog status") is None
+
+
+def test_submit_reads_stdin_for_remote_pipes(tmp_path, monkeypatch):
+    import io
+
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    monkeypatch.setattr("sys.stdin", io.StringIO(GOOD_DRAFT))
+
+    result = submit_blog_draft(
+        settings,
+        file="-",
+        title="Piped post",
+        author="mbp-agent",
+        db=db,
+        notify=False,
+    )
+
+    assert result["slug"] == "piped-post"
+    text = (Path(result["source_dir"]) / "post.md").read_text(encoding="utf-8")
+    assert "NepaliMOS" in text
