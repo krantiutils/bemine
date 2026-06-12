@@ -913,6 +913,29 @@ class MayorDiscordGateway:
                 discord.MessageType.reply,
             }:
                 return
+            # preview annotator comments arrive via webhook (author is not an
+            # allowed user) — accept ONLY the narrow blog-comment format
+            if getattr(message, "webhook_id", None):
+                comment = _parse_blog_comment(message.content or "")
+                if comment is not None:
+                    slug, note = comment
+                    try:
+                        await asyncio.to_thread(
+                            lambda: run_command(
+                                "blog.request_changes",
+                                BemineSettings.load(),
+                                {
+                                    "slug": slug,
+                                    "note": note,
+                                    "no_reviser": True,
+                                    "quiet": True,
+                                },
+                            )
+                        )
+                        await _acknowledge_message(message)
+                    except Exception:
+                        await _acknowledge_message(message, emoji=WARNING_REACTION)
+                return
             if not self._is_allowed(message.author):
                 LOG.warning("ignored unauthorized Discord user %s", message.author.id)
                 return
@@ -1310,6 +1333,17 @@ def _message_category_name(message: discord.Message) -> str:
     return _channel_category_name(message.channel)
 
 
+_BLOG_COMMENT_RE = re.compile(r"^blog-comment ([a-z0-9-]+)\n(.+)", re.DOTALL)
+
+
+def _parse_blog_comment(content: str) -> tuple[str, str] | None:
+    """Annotator webhook messages: 'blog-comment <slug>\\n> quote\\nnote'."""
+    match = _BLOG_COMMENT_RE.match((content or "").strip())
+    if match is None:
+        return None
+    return match.group(1), match.group(2).strip()
+
+
 def _direct_blog_command(normalized_lower: str) -> dict[str, str] | None:
     text = re.sub(r"[\s.?!]+$", "", normalized_lower.strip().lower())
     variants = {
@@ -1344,6 +1378,9 @@ def _direct_blog_command(normalized_lower: str) -> dict[str, str] | None:
                 "slug": match.group(1),
                 "note": match.group(2).strip(),
             }
+        match = re.fullmatch(r"revise blog ([a-z0-9-]+)", raw)
+        if match:
+            return {"command": "blog.revise", "slug": match.group(1)}
     return None
 
 

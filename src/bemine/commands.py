@@ -206,8 +206,41 @@ def _blog_request_changes(settings: BemineSettings, args: Mapping) -> CommandRes
     note = str(args.get("note") or "").strip()
     if not note:
         raise ValueError("a note describing what is missing is required")
-    result = request_blog_changes(settings, slug, note)
+    result = request_blog_changes(
+        settings,
+        slug,
+        note,
+        spawn_reviser=not bool(args.get("no_reviser")),
+        notify=not bool(args.get("quiet")),
+    )
     return CommandResult(text=f"Changes requested on {slug}: {note}\n", data=result)
+
+
+def _blog_revise(settings: BemineSettings, args: Mapping) -> CommandResult:
+    """Spawn ONE revision worker applying all accumulated reviewer comments."""
+    from bemine.blog import _spawn_revision_worker
+    from bemine.db import BemineDB
+
+    db = BemineDB(settings.db_path)
+    slug = str(args.get("slug") or "").strip()
+    row = db.get_blog_post(slug)
+    if row is None:
+        raise ValueError(f"unknown blog post: {slug}")
+    notes = str(row["notes"] or "").strip()
+    if not notes:
+        raise ValueError(f"no comments recorded on {slug} yet")
+    worker = _spawn_revision_worker(
+        settings,
+        db,
+        slug=slug,
+        note="Apply ALL reviewer comments below:\n" + notes,
+        row=row,
+    )
+    return CommandResult(
+        text=f"Revision worker `{worker}` started on {slug} with the "
+        "accumulated comments.\n",
+        data={"worker": worker, "slug": slug},
+    )
 
 
 def _config_show(settings: BemineSettings, args: Mapping) -> CommandResult:
@@ -667,6 +700,9 @@ _SPECS = (
         "blog.request_changes",
         "Send a blog draft back for context",
         _blog_request_changes,
+    ),
+    CommandSpec(
+        "blog.revise", "Spawn a worker applying all blog comments", _blog_revise
     ),
     CommandSpec("config.show", "Show parsed Bemine config", _config_show),
     CommandSpec(

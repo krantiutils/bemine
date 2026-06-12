@@ -165,6 +165,10 @@ model = "claude-opus-4-6"
 base_url = "http://127.0.0.1:3456"
 api_key_env = "MERIDIAN_API_KEY"      # Meridian accepts any value by default
 
+[blog]
+# browser annotator on gated previews posts comments here
+comment_webhook = "https://discord.com/api/webhooks/1514942309857497120/FxiCzcFfgaWMNvSgLbwMqs-qm6E1-XWR70dsefhUnIyfdPP4YWFxzAnC6TZ8TorIvTpa"
+
 [discord]
 token_env = "MAYOR_DISCORD_BOT_TOKEN"
 home_channel_id = ""

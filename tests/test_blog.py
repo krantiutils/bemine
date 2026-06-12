@@ -358,3 +358,85 @@ def test_preview_dashboard_lists_drafts_and_exists_when_empty(tmp_path, monkeypa
     assert "/blog/preview/we-measured-nepalimos/" in dash
     assert "style: clean" in dash
     assert "noindex" in dash
+
+
+def test_preview_embeds_annotator_when_webhook_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "bemine.blog._cfg",
+        lambda key, default: (
+            "https://discord.com/api/webhooks/x/y"
+            if key == "comment_webhook"
+            else default
+        ),
+    )
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    _submit(settings, tmp_path, db)
+
+    build_blog_site(settings, db=db)
+
+    preview = (
+        tmp_path / "site" / "blog" / "preview" / "we-measured-nepalimos" / "index.html"
+    ).read_text(encoding="utf-8")
+    assert "cmt-panel" in preview
+    assert "blog-comment " in preview
+    assert "discord.com/api/webhooks/x/y" in preview
+    # published pages never carry the annotator
+    publish_blog_post(
+        settings, "we-measured-nepalimos", db=db, deploy=False, notify=False
+    )
+    build_blog_site(settings, db=db)
+    post = (
+        tmp_path / "site" / "blog" / "we-measured-nepalimos" / "index.html"
+    ).read_text(encoding="utf-8")
+    assert "cmt-panel" not in post
+
+
+def test_gateway_parses_webhook_comment_and_revise_phrase():
+    from bemine.discord import gateway as gw
+
+    assert gw._parse_blog_comment(
+        "blog-comment my-post\n> the selected text\nplease tighten this"
+    ) == ("my-post", "> the selected text\nplease tighten this")
+    assert gw._parse_blog_comment("hello there") is None
+    assert gw._direct_blog_command("revise blog my-post") == {
+        "command": "blog.revise",
+        "slug": "my-post",
+    }
+
+
+def test_blog_revise_command_spawns_worker_with_all_notes(tmp_path, monkeypatch):
+    from bemine.commands import run_command
+
+    monkeypatch.setattr("bemine.blog.blog_site_dir", lambda: tmp_path / "site")
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v", device_id="cdjk"
+    )
+    db = BemineDB(settings.db_path)
+    draft = tmp_path / "d.md"
+    draft.write_text(GOOD_DRAFT, encoding="utf-8")
+    submit_blog_draft(settings, file=draft, title="Revise me", db=db, notify=False)
+    request_blog_changes(
+        settings, "revise-me", "first comment", db=db, notify=False, spawn_reviser=False
+    )
+    request_blog_changes(
+        settings,
+        "revise-me",
+        "second comment",
+        db=db,
+        notify=False,
+        spawn_reviser=False,
+    )
+    started = {}
+    monkeypatch.setattr(
+        "bemine.blog._spawn_revision_worker",
+        lambda s, d, *, slug, note, row, controller=None: (
+            started.update({"slug": slug, "note": note}) or "blog-revise-revise-me"
+        ),
+    )
+
+    out = run_command("blog.revise", settings, {"slug": "revise-me"})
+
+    assert "blog-revise-revise-me" in out.text
+    assert "first comment" in started["note"]
+    assert "second comment" in started["note"]
