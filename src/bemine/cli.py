@@ -208,6 +208,25 @@ Examples:
 """
 
 
+BLOG_HELP = """\
+Ampixa blog pipeline (ampixa.com/blog). Bemine orchestrates: ANY agent session
+submits material here; the Discord bot reviews in #ampixa-blog, may request
+more context, validates against subagents/style.md (artifact-tied claims, no
+hype), renders monospace static pages, and deploys.
+
+The path for any codex/claude session:
+  uv run bemine blog submit ./draft.md --title "We measured X" \\
+      --project neptts-bench --author codex-session --image chart.png
+  # -> queued as draft + Discord notification; review happens in Discord
+
+Operate the queue:
+  uv run bemine blog list
+  uv run bemine blog show <slug>
+  uv run bemine blog request-changes <slug> --note "add the benchmark table"
+  uv run bemine blog publish <slug>          # validate -> render -> deploy
+"""
+
+
 BACKLOG_HELP = """\
 Capture, list, or inspect durable PA/SMM backlog items.
 
@@ -792,6 +811,58 @@ def build_parser() -> argparse.ArgumentParser:
     subagents_show.add_argument("name", help="Profile name, e.g. PA or SMM.")
     subagents_show.add_argument(
         "--json", action="store_true", help="Emit profile as JSON."
+    )
+
+    blog = sub.add_parser(
+        "blog",
+        help="Submit/review/publish Ampixa blog posts (ampixa.com/blog).",
+        description="Ampixa blog pipeline: agents submit drafts, Bemine "
+        "orchestrates review, style validation, and deploy.",
+        epilog=dedent(BLOG_HELP),
+        formatter_class=HELP_FORMATTER,
+    )
+    blog_sub = blog.add_subparsers(dest="blog_command", required=True)
+    blog_submit = blog_sub.add_parser(
+        "submit", help="Submit a markdown draft to the blog queue."
+    )
+    blog_submit.add_argument("file", help="Path to the draft markdown file.")
+    blog_submit.add_argument("--title", required=True, help="Post title.")
+    blog_submit.add_argument("--project", default="", help="Originating project.")
+    blog_submit.add_argument(
+        "--author", default="", help="Submitting session/agent identity."
+    )
+    blog_submit.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        help="Image file to attach (repeatable).",
+    )
+    blog_list = blog_sub.add_parser("list", help="List blog posts and statuses.")
+    blog_list.add_argument("--json", action="store_true", help="Emit JSON.")
+    blog_show = blog_sub.add_parser("show", help="Show a draft with style check.")
+    blog_show.add_argument("slug")
+    blog_validate = blog_sub.add_parser("validate", help="Run the style check.")
+    blog_validate.add_argument("slug")
+    blog_publish = blog_sub.add_parser(
+        "publish", help="Validate, render, deploy to ampixa.com/blog."
+    )
+    blog_publish.add_argument("slug")
+    blog_publish.add_argument(
+        "--skip-deploy", action="store_true", help="Render only; no rsync."
+    )
+    blog_publish.add_argument(
+        "--force", action="store_true", help="Publish despite style findings."
+    )
+    blog_changes = blog_sub.add_parser(
+        "request-changes", help="Send a draft back for more context."
+    )
+    blog_changes.add_argument("slug")
+    blog_changes.add_argument("--note", required=True, help="What is missing.")
+    blog_build = blog_sub.add_parser(
+        "build", help="Rebuild the static blog pages from published posts."
+    )
+    blog_build.add_argument(
+        "--deploy", action="store_true", help="Also rsync to the server."
     )
 
     backlog = sub.add_parser(
@@ -2005,6 +2076,76 @@ def main(argv: list[str] | None = None) -> None:
                 print(json.dumps(profile.to_dict(), indent=2, sort_keys=True))
             else:
                 print(profile.text.rstrip() + "\n", end="")
+    elif args.command == "blog":
+        from bemine.blog import (
+            build_blog_site,
+            deploy_blog_site,
+            publish_blog_post,
+            render_blog_post,
+            render_blog_posts,
+            request_blog_changes,
+            submit_blog_draft,
+            validate_blog_draft,
+        )
+        from bemine.db import BemineDB as _BlogDB
+        from pathlib import Path as _P
+
+        blog_db = _BlogDB(settings.db_path)
+        try:
+            if args.blog_command == "submit":
+                result = submit_blog_draft(
+                    settings,
+                    file=_P(args.file),
+                    title=args.title,
+                    project=args.project,
+                    author=args.author,
+                    images=[_P(p) for p in args.image],
+                    db=blog_db,
+                )
+                print(json.dumps(result, indent=2, sort_keys=True))
+            elif args.blog_command == "list":
+                rows = blog_db.list_blog_posts()
+                if args.json:
+                    print(json.dumps([dict(r) for r in rows], indent=2, sort_keys=True))
+                else:
+                    print(render_blog_posts(rows), end="")
+            elif args.blog_command in {"show", "validate"}:
+                row = blog_db.get_blog_post(args.slug)
+                if row is None:
+                    raise SystemExit(f"unknown blog post: {args.slug}")
+                text = (_P(str(row["source_dir"])) / "post.md").read_text(
+                    encoding="utf-8"
+                )
+                if args.blog_command == "show":
+                    print(render_blog_post(row, text))
+                else:
+                    problems = validate_blog_draft(text, str(row["title"]))
+                    print(
+                        "\n".join(f"- {p}" for p in problems)
+                        if problems
+                        else "style check: clean"
+                    )
+            elif args.blog_command == "publish":
+                result = publish_blog_post(
+                    settings,
+                    args.slug,
+                    db=blog_db,
+                    deploy=not args.skip_deploy,
+                    force=args.force,
+                )
+                print(json.dumps(result, indent=2, sort_keys=True))
+            elif args.blog_command == "request-changes":
+                result = request_blog_changes(
+                    settings, args.slug, args.note, db=blog_db
+                )
+                print(json.dumps(result, indent=2, sort_keys=True))
+            elif args.blog_command == "build":
+                result = build_blog_site(settings, db=blog_db)
+                if args.deploy:
+                    result["deploy"] = deploy_blog_site(settings)
+                print(json.dumps(result, indent=2, sort_keys=True))
+        except (ValueError, RuntimeError) as exc:
+            raise SystemExit(str(exc)) from exc
     elif args.command == "backlog":
         owner = args.owner or default_backlog_owner()
         try:

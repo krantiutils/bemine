@@ -40,6 +40,13 @@ reaps stale state automatically (~30 min); `deploy status` shows the phase.
 - "add X to shopping/checklist" → `checklist.add` route (the gateway's local tool router).
 - "store SMM/PA idea X" → `uv run bemine backlog add "<idea>" --owner SMM|PA`
   (Discord also accepts `SMM idea: ...` / `store idea for PA: ...`).
+- "publish this as a blog post" / blog material from ANY session →
+  `uv run bemine blog submit <draft.md> --title "<title>" --project <proj>
+  --author <who> [--image x.png]` — queues the draft, notifies #ampixa-blog,
+  Bemine reviews/validates (subagents/style.md claims discipline), can
+  `blog request-changes <slug> --note ...`, then `blog publish <slug>` renders
+  and deploys to https://ampixa.com/blog. Queue: `blog list`; Discord phrases:
+  "blog queue", "show blog <slug>", "publish blog <slug>".
 - channel management: sync creates missing project channels WITH topics and
   refreshes drifted topics; `--archive-stale` moves untracked channels to the
   "Bemine Archive" category (history preserved) instead of deleting; `--prune`

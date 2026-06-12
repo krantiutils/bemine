@@ -194,6 +194,19 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
     tokenize='unicode61'
 );
 
+CREATE TABLE IF NOT EXISTS blog_posts (
+    slug TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    project TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',
+    source_dir TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    published_at REAL
+);
+
 CREATE TABLE IF NOT EXISTS project_watchers (
     project_id TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL,
@@ -399,6 +412,62 @@ class BemineDB:
                     )
                 )
             return results
+
+    def upsert_blog_post(
+        self,
+        *,
+        slug: str,
+        title: str,
+        project: str = "",
+        author: str = "",
+        status: str = "draft",
+        source_dir: str,
+        notes: str = "",
+        published_at: float | None = None,
+    ) -> None:
+        now = time.time()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO blog_posts(
+                    slug, title, project, author, status, source_dir, notes,
+                    created_at, updated_at, published_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(slug) DO UPDATE SET
+                    title=excluded.title,
+                    project=excluded.project,
+                    author=excluded.author,
+                    status=excluded.status,
+                    source_dir=excluded.source_dir,
+                    notes=excluded.notes,
+                    updated_at=excluded.updated_at,
+                    published_at=COALESCE(excluded.published_at, blog_posts.published_at)
+                """,
+                (
+                    slug,
+                    title,
+                    project,
+                    author,
+                    status,
+                    source_dir,
+                    notes,
+                    now,
+                    now,
+                    published_at,
+                ),
+            )
+
+    def get_blog_post(self, slug: str) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM blog_posts WHERE slug = ?", (slug,)
+            ).fetchone()
+
+    def list_blog_posts(self) -> list[sqlite3.Row]:
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT * FROM blog_posts ORDER BY updated_at DESC"
+            ).fetchall()
 
     def device_cwd_for_project(self, project_id: str, *, device_id: str) -> str:
         with self.connect() as conn:

@@ -166,6 +166,50 @@ def _backlog_status(settings: BemineSettings, args: Mapping) -> CommandResult:
     return CommandResult(text=render_backlog_status(status), data=status)
 
 
+def _blog_list(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.blog import render_blog_posts
+    from bemine.db import BemineDB
+
+    rows = BemineDB(settings.db_path).list_blog_posts()
+    return CommandResult(
+        text=render_blog_posts(rows),
+        data={"schema": "bemine.blog_posts.v1", "posts": [dict(r) for r in rows]},
+    )
+
+
+def _blog_show(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from pathlib import Path
+
+    from bemine.blog import render_blog_post
+    from bemine.db import BemineDB
+
+    slug = str(args.get("slug") or "").strip()
+    row = BemineDB(settings.db_path).get_blog_post(slug)
+    if row is None:
+        raise ValueError(f"unknown blog post: {slug}")
+    text = (Path(str(row["source_dir"])) / "post.md").read_text(encoding="utf-8")
+    return CommandResult(text=render_blog_post(row, text), data=dict(row))
+
+
+def _blog_publish(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.blog import publish_blog_post
+
+    slug = str(args.get("slug") or "").strip()
+    result = publish_blog_post(settings, slug, force=bool(args.get("force")))
+    return CommandResult(text=f"Published {slug} → {result['url']}\n", data=result)
+
+
+def _blog_request_changes(settings: BemineSettings, args: Mapping) -> CommandResult:
+    from bemine.blog import request_blog_changes
+
+    slug = str(args.get("slug") or "").strip()
+    note = str(args.get("note") or "").strip()
+    if not note:
+        raise ValueError("a note describing what is missing is required")
+    result = request_blog_changes(settings, slug, note)
+    return CommandResult(text=f"Changes requested on {slug}: {note}\n", data=result)
+
+
 def _config_show(settings: BemineSettings, args: Mapping) -> CommandResult:
     config = load_bemine_config()
     return CommandResult(
@@ -615,6 +659,14 @@ _SPECS = (
     CommandSpec("backlog.list", "List durable PA/SMM backlog items", _backlog_list),
     CommandSpec(
         "backlog.status", "Show durable backlog health by owner", _backlog_status
+    ),
+    CommandSpec("blog.list", "List Ampixa blog queue", _blog_list),
+    CommandSpec("blog.show", "Show a blog draft with style check", _blog_show),
+    CommandSpec("blog.publish", "Validate, render, deploy a blog post", _blog_publish),
+    CommandSpec(
+        "blog.request_changes",
+        "Send a blog draft back for context",
+        _blog_request_changes,
     ),
     CommandSpec("config.show", "Show parsed Bemine config", _config_show),
     CommandSpec(
