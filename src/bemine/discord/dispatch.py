@@ -496,7 +496,16 @@ async def sync_project_channels_to_discord(
             str(channel.get("name")): channel
             for channel in existing
             if channel.get("type") == 0
-            and str(channel.get("parent_id") or "") in managed_category_ids
+            and (
+                str(channel.get("parent_id") or "") in managed_category_ids
+                # ADOPT same-name uncategorized channels (the session watcher
+                # creates project channels bare) — creating alongside them made
+                # empty duplicates while the originals kept the history
+                or (
+                    not channel.get("parent_id")
+                    and str(channel.get("name")) in target_names
+                )
+            )
         }
 
         async def _device_category(device: str) -> Mapping[str, Any]:
