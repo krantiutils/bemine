@@ -1218,6 +1218,16 @@ def build_parser() -> argparse.ArgumentParser:
     tmux_capture.add_argument("name", help="tmux session name.")
     tmux_kill = tmux_sub.add_parser("kill", help="Kill a managed tmux session.")
     tmux_kill.add_argument("name", help="tmux session name.")
+    tmux_layout = tmux_sub.add_parser(
+        "layout",
+        help="Show the snapshotted hand-built tmux layout; --restore rebuilds "
+        "missing sessions (windows in their cwds, agents resumed).",
+    )
+    tmux_layout.add_argument(
+        "--restore",
+        action="store_true",
+        help="Recreate missing snapshotted sessions now, ignoring boot guards.",
+    )
 
     workers = sub.add_parser(
         "workers",
@@ -1811,6 +1821,26 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.command == "tmux":
+        if args.tmux_command == "layout":
+            from bemine.workers.layout import (
+                layout_state_path,
+                restore_tmux_layout,
+                snapshot_tmux_layout,
+            )
+
+            layout_settings = _settings_from_args(args)
+            if args.restore:
+                restored = restore_tmux_layout(layout_settings, force=True)
+                print(json.dumps({"restored": restored}, indent=2, sort_keys=True))
+            else:
+                snapshot_tmux_layout(layout_settings)
+                state_file = layout_state_path(layout_settings)
+                print(
+                    state_file.read_text(encoding="utf-8")
+                    if state_file.exists()
+                    else json.dumps({"sessions": {}})
+                )
+            return
         tmux = TmuxAdapter()
         if args.tmux_command == "start":
             tmux.start(args.name, args.start_command)
