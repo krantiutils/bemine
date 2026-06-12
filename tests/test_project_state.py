@@ -160,3 +160,98 @@ def test_plan_reports_would_archive_for_stale_channels(tmp_path, monkeypatch):
     plan2 = plan_project_channel_sync(settings, archive_stale=True, prune=True)
     assert plan2["would_archive"] == []
     assert [c["channel_name"] for c in plan2["would_prune"]] == ["old-project"]
+
+
+def test_device_channel_layout_attributes_and_adds_remote_projects(tmp_path):
+    from bemine.discord.dispatch import ProjectChannel, _device_channel_layout
+
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v", device_id="cdjk"
+    )
+    local = [
+        ProjectChannel(
+            channel_name="bemine",
+            cwd=Path("/home/cdjk/bm"),
+            project_id="p1",
+            project_name="bemine",
+        ),
+        ProjectChannel(
+            channel_name="nanoclaw",
+            cwd=Path("/home/cdjk/nanoclaw"),
+            project_id="p2",
+            project_name="nanoclaw",
+        ),
+    ]
+    attribution = {
+        "/home/cdjk/bm": {
+            "cwd": "/home/cdjk/bm",
+            "device": "cdjk",
+            "age": 10,
+            "name": "bm",
+        },
+        "/Users/cdjk/g2p": {
+            "cwd": "/Users/cdjk/g2p",
+            "device": "mbp",
+            "age": 100,
+            "name": "g2p",
+        },
+        "/Users/cdjk/himalMT": {
+            "cwd": "/Users/cdjk/himalMT",
+            "device": "mbp2",
+            "age": 50,
+            "name": "himalmt",
+        },
+        # name collision with a local channel -> remote skipped
+        "/Users/cdjk/nanoclaw": {
+            "cwd": "/Users/cdjk/nanoclaw",
+            "device": "mbp",
+            "age": 5,
+            "name": "nanoclaw",
+        },
+        # too old -> excluded
+        "/Users/cdjk/ancient": {
+            "cwd": "/Users/cdjk/ancient",
+            "device": "mbp",
+            "age": 90 * 86400,
+            "name": "ancient",
+        },
+    }
+
+    device_for, remote = _device_channel_layout(settings, local, {}, attribution)
+
+    assert device_for["bemine"] == "cdjk"
+    assert device_for["nanoclaw"] == "cdjk"  # no fleet hit for its cwd -> local
+    assert device_for["g2p"] == "mbp"
+    assert device_for["himalmt"] == "mbp2"
+    names = {str(info["name"]) for info in remote}
+    assert names == {"g2p", "himalmt"}
+
+
+def test_fleet_channel_candidates_filters_and_picks_freshest(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from bemine.discord.dispatch import _fleet_channel_candidates
+
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v", device_id="cdjk"
+    )
+
+    def fake_fleet(s, **kwargs):
+        mk = lambda dev, cwd, age: SimpleNamespace(
+            device_id=dev, cwd=cwd, age_seconds=age
+        )
+        return [
+            mk("local", "/home/cdjk/bm", 500),
+            mk("local", "/home/cdjk/bm", 100),  # fresher duplicate wins
+            mk("mbp", "/Users/cdjk/Downloads", 10),  # excluded name
+            mk("mbp2", "/Users/cdjk/himalMT", 60),
+        ], []
+
+    monkeypatch.setattr("bemine.index.status.collect_fleet_status", fake_fleet)
+
+    best = _fleet_channel_candidates(settings)
+
+    assert best["/home/cdjk/bm"]["age"] == 100
+    assert best["/home/cdjk/bm"]["device"] == "cdjk"
+    assert "/Users/cdjk/Downloads" not in best
+    assert best["/Users/cdjk/himalMT"]["device"] == "mbp2"
