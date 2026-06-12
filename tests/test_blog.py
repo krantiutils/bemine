@@ -323,3 +323,18 @@ def test_gateway_routes_request_changes_phrase():
         "slug": "my-post",
         "note": "add the benchmark table please",
     }
+
+
+def test_deploy_refuses_to_run_under_pytest(tmp_path, monkeypatch):
+    # bypass the autouse stub to hit the real function: the env guard must trip
+    import importlib
+
+    import bemine.blog as blog_module
+
+    real = importlib.reload(blog_module).deploy_blog_site
+    settings = BemineSettings.load(
+        state_dir=tmp_path / ".bemine", vault_dir=tmp_path / "v"
+    )
+
+    with pytest.raises(RuntimeError, match="inside a test run"):
+        real(settings)
