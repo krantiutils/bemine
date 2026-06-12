@@ -417,7 +417,9 @@ def test_ssh_tmux_send_pipes_handoff_through_stdin(monkeypatch: pytest.MonkeyPat
 
 
 def _capture_until(tmp_path: Path, name: str, needle: str) -> str:
-    deadline = time.time() + 5
+    # generous: each probe is a full `python -m bemine.cli` subprocess, which
+    # crawls when the whole suite runs; early-return keeps the happy path fast
+    deadline = time.time() + 30
     captured = ""
     while time.time() < deadline:
         captured = _run(tmp_path, "workers", "capture", name).stdout
