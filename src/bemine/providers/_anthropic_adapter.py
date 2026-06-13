@@ -1834,6 +1834,27 @@ def _strip_orphaned_tool_blocks(result: List[Dict[str, Any]]) -> None:
                 m["content"] = [{"type": "text", "text": "(tool result removed)"}]
 
 
+def _hoist_tool_results(result: List[Dict[str, Any]]) -> None:
+    """Move tool_result blocks to the front of any user message that mixes them with text.
+
+    When concurrent AgentLoops race-write to the same session, _merge_consecutive_roles
+    can produce user messages like [text:"wait", tool_result:xyz].  Kimi's
+    Anthropic-compatible API (which converts to OpenAI format internally) rejects
+    these: it requires tool_result blocks to appear before any text blocks in a user
+    message that responds to an assistant's tool_use.  Hoisting is safe — it preserves
+    all content, just reorders it so the API contract is satisfied.
+    """
+    for m in result:
+        if m["role"] != "user" or not isinstance(m["content"], list):
+            continue
+        tool_results = [b for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
+        if not tool_results:
+            continue
+        others = [b for b in m["content"] if not (isinstance(b, dict) and b.get("type") == "tool_result")]
+        if others and m["content"][0].get("type") != "tool_result":
+            m["content"] = tool_results + others
+
+
 def _merge_consecutive_roles(result: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Merge consecutive same-role messages to enforce Anthropic alternation.
 
@@ -2085,6 +2106,7 @@ def convert_messages_to_anthropic(
 
     _strip_orphaned_tool_blocks(result)
     result = _merge_consecutive_roles(result)
+    _hoist_tool_results(result)
     _manage_thinking_signatures(result, base_url, model)
     _evict_old_screenshots(result)
 

@@ -93,6 +93,15 @@ class AgentLoop:
                                   iterations=iteration - 1, stopped_reason="cancelled")
             response = self.client.complete(messages=messages, tools=tool_schemas,
                                             model=model, system=system)
+            # Check immediately after the blocking HTTP call returns: a newer message
+            # may have interrupted while we were waiting for the API.  Without this
+            # check the ghost thread would write assistant/tool rows to the session DB
+            # AFTER the new AgentLoop has already started writing its own rows,
+            # producing an interleaved history that triggers API 400 errors on every
+            # subsequent dispatch.
+            if cancel_event is not None and cancel_event.is_set():
+                return LoopResult(final_text="", tool_calls=tool_call_count,
+                                  iterations=iteration, stopped_reason="cancelled")
             usage = getattr(response, "usage", None)
             if usage is not None:
                 in_tok = int(getattr(usage, "prompt_tokens", 0) or 0)
