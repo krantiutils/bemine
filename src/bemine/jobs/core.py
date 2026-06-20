@@ -382,6 +382,7 @@ class BemineDaemon:
         self.poll_seconds = poll_seconds
         self._boot_sha = boot_sha_resolver()
         self._boot_sha()  # capture at boot; later ticks retry only if git failed here
+        self._workers_resumed_at_boot: float = 0.0  # boot epoch of last worker-resume pass
 
     def run_once(self) -> list[JobRunResult]:
         self._deploy_tick()
@@ -493,7 +494,14 @@ class BemineDaemon:
                 tick_device_failover(self.settings)
             except Exception:
                 pass
-            resumed = resume_missing_local_workers(self.settings) or []
+            from bemine.workers.layout import _boot_epoch
+
+            boot = _boot_epoch()
+            if self._workers_resumed_at_boot == boot:
+                resumed = []  # already ran this boot; respect intentional kills
+            else:
+                resumed = resume_missing_local_workers(self.settings) or []
+                self._workers_resumed_at_boot = boot
             if resumed:
                 BemineDB(self.settings.db_path).record_audit_event(
                     category="continuity",
