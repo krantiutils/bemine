@@ -12,6 +12,7 @@ words without evidence are rejected at validation.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import logging
@@ -171,6 +172,7 @@ def submit_blog_draft(
 def validate_blog_draft(text: str, title: str) -> list[str]:
     """Deterministic Ampixa claims-discipline checks (subagents/style.md)."""
     problems: list[str] = []
+    _, text = split_front_matter(text)
     body = text.strip()
     if len(body) < 400:
         problems.append("too short (<400 chars) — lead with the concrete artifact")
@@ -540,45 +542,140 @@ def publish_blog_post(
 
 # --- rendering -----------------------------------------------------------
 
-
-_PAGE_CSS = f"""
-  body {{
-    font-family: 'Lucida Console', Monaco, monospace;
-    font-size: 17px; color: #111; background: #fff;
-    max-width: 860px; margin: 0 auto; padding: 0 24px 64px;
-    line-height: 1.6;
-  }}
-  a {{ color: {CRIMSON}; text-decoration: none; }}
-  a:hover {{ text-decoration: underline; }}
-  header {{ border-bottom: 1px solid #ddd; padding: 18px 0; margin-bottom: 28px; }}
-  header a.home {{ color: #111; font-weight: bold; }}
-  h1, h2, h3 {{ line-height: 1.25; }}
-  h1 {{ font-size: 1.5em; }}
-  .meta {{ color: #777; font-size: 0.85em; margin-bottom: 24px; }}
-  pre {{ background: #f6f6f6; padding: 12px; overflow-x: auto; font-size: 0.85em; }}
-  code {{ background: #f6f6f6; padding: 1px 4px; }}
-  pre code {{ padding: 0; }}
-  img {{ max-width: 100%; }}
-  ul.posts {{ list-style: none; padding: 0; }}
-  ul.posts li {{ margin: 14px 0; }}
-  ul.posts .date {{ color: #777; margin-right: 12px; font-size: 0.85em; }}
-  hr {{ border: 0; border-top: 1px solid #ddd; }}
-"""
+# Shared CSS/JS/fonts live in src/bemine/blog_static/ and are copied to <site>/blog/_static/ on every build.
+# The deploy rsyncs blog/ with --delete, so they must be emitted under blog/; not under blog/preview/, which is
+# behind basic auth and would 401 for public pages.
+STATIC_SRC = Path(__file__).parent / "blog_static"
+FONTS_CSS = (
+    "https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Mono:wght@400;600"
+    "&family=Noto+Serif+Devanagari:wght@400;700&family=Noto+Sans+Devanagari:wght@400;600&display=swap"
+)
+POST_TYPES = ("release", "benchmark", "dataset", "lesson", "post")
+_FRONT_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.S)
+_DEVANAGARI_RE = re.compile(r"[ऀ-ॿ]")
+# blocks the read-aloud player speaks, in reading order (tables, code and figures are skipped)
+_SPOKEN_RE = re.compile(r"<(h2|p|li|figcaption)((?:\s[^>]*)?)>(.*?)</\1>", re.S)
 
 
-def _page(title: str, body_html: str) -> str:
+def split_front_matter(text: str) -> tuple[dict[str, str], str]:
+    """Optional `---` block of `key: value` lines at the top of post.md; returns (meta, body)."""
+    m = _FRONT_RE.match(text)
+    if not m:
+        return {}, text
+    meta: dict[str, str] = {}
+    for line in m.group(1).splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        key, sep, value = line.partition(":")
+        if not sep:
+            raise ValueError(f"front matter line is not `key: value`: {line!r}")
+        meta[key.strip().lower()] = value.strip()
+    return meta, text[m.end():]
+
+
+def _plain(html_text: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", html_text))).strip()
+
+
+def _post_meta(row: Any, body_html: str, body_md: str, meta: dict[str, str]) -> dict[str, Any]:
+    """Per-post card/header data: front matter wins, then defaults derived from the post itself."""
+    title = str(row["title"])
+    summary = meta.get("summary", "")
+    if not summary:
+        for para in re.findall(r"<p>(.*?)</p>", body_html, flags=re.S):
+            text = _plain(para)
+            if len(re.sub(r"[^A-Za-z]", "", text)) >= 40:
+                summary = text
+                break
+    summary = compact_text(summary, limit=180)
+    kind = meta.get("type", "post").lower()
+    if kind not in POST_TYPES:
+        raise ValueError(f"front matter type {kind!r} is not one of {', '.join(POST_TYPES)}")
+    glyph = meta.get("glyph", "")
+    if not glyph:
+        found = _DEVANAGARI_RE.findall(title)
+        glyph = found[0] if found else "अ"
+    links = []
+    for key, label in (("model", "model"), ("code", "code"), ("dataset", "dataset"), ("demo", "demo"),
+                       ("paper", "paper"), ("benchmark", "benchmark")):
+        url = meta.get(key, "")
+        if url:
+            if not url.startswith("https://"):
+                raise ValueError(f"front matter {key} must be an https:// URL, got {url!r}")
+            links.append((label, url))
+    project = meta.get("project") or str(row["project"] or "") or "notes"
+    words = len(_plain(body_html).split())
+    ts = float(row["published_at"] or row["updated_at"] or time.time())
+    return {
+        "slug": str(row["slug"]),
+        "title": title,
+        "summary": summary,
+        "type": kind,
+        "glyph": glyph,
+        "project": project,
+        "project_label": meta.get("project_label", project.replace("-", " ")),
+        "links": links,
+        "author": meta.get("author", "Ampixa Labs"),
+        "date": datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+        "minutes": max(1, round(words / 230)),
+        "body_md_words": len(body_md.split()),
+    }
+
+
+def _copy_static(blog_dir: Path) -> dict[str, str]:
+    """Copy blog_static/ into blog/_static/; css/js get content-hashed names. Returns their URLs."""
+    if not STATIC_SRC.is_dir():
+        raise RuntimeError(f"blog static assets missing at {STATIC_SRC}")
+    out = blog_dir / "_static"
+    if out.exists():
+        shutil.rmtree(out)
+    (out / "fonts").mkdir(parents=True)
+    for font in (STATIC_SRC / "fonts").iterdir():
+        if font.is_file() and font.suffix.lower() != ".md":
+            shutil.copy2(font, out / "fonts" / font.name)
+    urls = {}
+    for name in ("blog.css", "blog.js"):
+        data = (STATIC_SRC / name).read_bytes()
+        stem, ext = name.rsplit(".", 1)
+        hashed = f"{stem}.{hashlib.sha256(data).hexdigest()[:10]}.{ext}"
+        (out / hashed).write_bytes(data)
+        urls[ext] = f"/blog/_static/{hashed}"
+    return urls
+
+
+def _page(title: str, body_html: str, static: dict[str, str], *, noindex: bool = False,
+          description: str = "", image: str = "", canonical: str = "") -> str:
+    head = [f'<link rel="stylesheet" href="{static["css"]}">']
+    if noindex:
+        head.append('<meta name="robots" content="noindex, nofollow">')
+    if description:
+        head.append(f'<meta name="description" content="{html.escape(description)}">')
+        head.append(f'<meta property="og:description" content="{html.escape(description)}">')
+    if image:
+        head.append(f'<meta property="og:image" content="{html.escape(image)}">')
+        head.append('<meta name="twitter:card" content="summary_large_image">')
+    if canonical:
+        head.append(f'<link rel="canonical" href="{html.escape(canonical)}">')
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{html.escape(title)} — ampixa labs</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:title" content="{html.escape(title)}">
 <link rel="icon" type="image/png" href="/assets/logo.png">
-<style>{_PAGE_CSS}</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="{FONTS_CSS}">
+{chr(10).join(head)}
 </head>
 <body>
-<header><a class="home" href="/">ampixa labs</a> · <a href="/blog/">blog</a></header>
+<div class="wrap">
+<header class="top"><a class="brand" href="/">ampixa<b>▪</b>labs</a>
+<nav><a href="/">work</a><a href="/blog/" aria-current="page">blog</a><a href="https://github.com/Ampixa">github</a></nav></header>
 {body_html}
+</div>
+<script src="{static["js"]}" defer></script>
 </body>
 </html>
 """
@@ -587,123 +684,215 @@ def _page(title: str, body_html: str) -> str:
 def _render_markdown(text: str) -> str:
     import markdown
 
-    return markdown.markdown(text, extensions=["fenced_code", "tables"])
+    out = markdown.markdown(text, extensions=["fenced_code", "tables", "toc"])
+    # a paragraph that is nothing but italics (`_caption_` under a figure or table) is a caption
+    return re.sub(r"<p><em>((?:(?!</?p>|</em>).)*)</em></p>", r'<p class="cap"><em>\1</em></p>', out, flags=re.S)
+
+
+def _tag_spoken_blocks(body_html: str) -> tuple[str, int]:
+    """Number the blocks the read-aloud player speaks (data-a=N), same order the audio clips are rendered in."""
+    count = 0
+
+    def tag(m: re.Match) -> str:
+        nonlocal count
+        if len(re.sub(r"[^A-Za-zऀ-ॿ]", "", _plain(m.group(3)))) < 8:
+            return m.group(0)
+        out = f"<{m.group(1)}{m.group(2)} data-a=\"{count}\">{m.group(3)}</{m.group(1)}>"
+        count += 1
+        return out
+
+    return _SPOKEN_RE.sub(tag, body_html), count
+
+
+def spoken_blocks(text: str) -> list[str]:
+    """Plain text of each block the player speaks, for rendering audio/<n>.mp3 outside Bemine."""
+    _, body = split_front_matter(text)
+    return [_plain(m.group(3)) for m in _SPOKEN_RE.finditer(_render_markdown(body))
+            if len(re.sub(r"[^A-Za-zऀ-ॿ]", "", _plain(m.group(3)))) >= 8]
+
+
+def _post_body(meta: dict[str, Any], body_html: str, *, audio_clips: int, banner: str = "") -> str:
+    toc = re.findall(r'<h2 id="([^"]+)">(.*?)</h2>', body_html, flags=re.S)
+    listen = ""
+    if audio_clips:
+        body_html, tagged = _tag_spoken_blocks(body_html)
+        if tagged != audio_clips:
+            raise ValueError(f"{meta['slug']}: audio/ has {audio_clips} clips but the post has {tagged} spoken blocks")
+        info = f"read aloud · {meta['minutes']} min read · hover a paragraph and press ▶ to start there"
+        listen = (f'<div class="listen" id="listen" data-info="{html.escape(info)}">'
+                  '<button id="l-play" aria-label="Listen to this post" aria-pressed="false">▶ listen</button>'
+                  f'<span class="l-info" id="l-info">{html.escape(info)}</span>'
+                  '<span class="l-bar"><span id="l-prog"></span></span>'
+                  '<button id="l-speed" aria-label="Playback speed">1×</button></div>')
+    links = "".join(f'<a href="{html.escape(u)}">{html.escape(l)} ↗</a>' for l, u in meta["links"])
+    toc_html = ""
+    if len(toc) >= 3:
+        toc_html = ('<nav class="toc" aria-label="Contents"><div class="label">contents</div><ol>'
+                    + "".join(f'<li><a href="#{i}">{t}</a></li>' for i, t in toc) + "</ol></nav>")
+    return f"""{banner}<a class="back" href="/blog/">← all posts</a>
+<article>
+<header class="phead">
+  <span class="pback" aria-hidden="true">{html.escape(meta["glyph"])}</span>
+  <div class="label">{html.escape(meta["type"])} · {html.escape(meta["project_label"])}</div>
+  <h1 class="ptitle">{html.escape(meta["title"])}</h1>
+  <div class="pmeta">{meta["date"]} · {html.escape(meta["author"])} · {meta["minutes"]} min read</div>
+  {f'<div class="links">{links}</div>' if links else ""}
+</header>
+{listen}
+<div class="pgrid{"" if toc_html else " notoc"}">{toc_html}<div class="prose" id="prose">
+{body_html}
+</div></div>
+</article>"""
+
+
+def _index_body(posts: list[dict[str, Any]]) -> str:
+    cards = "\n".join(
+        f'<li class="card" data-p="{html.escape(p["project"])}"><a href="/blog/{p["slug"]}/">'
+        f'<span class="glyph" aria-hidden="true">{html.escape(p["glyph"])}</span>'
+        f'<span class="label">{html.escape(p["type"])} · {html.escape(p["project_label"])}</span>'
+        f'<h2>{html.escape(p["title"])}</h2><p>{html.escape(p["summary"])}</p>'
+        f'<span class="meta"><span>{p["date"]}</span><span>→</span></span></a></li>'
+        for p in posts
+    )
+    projects: dict[str, str] = {}
+    for p in posts:
+        projects.setdefault(p["project"], p["project_label"])
+    data = {
+        "projects": projects,
+        "posts": [{"t": p["title"], "p": p["project"], "g": p["glyph"], "d": p["date"],
+                   "url": f"/blog/{p['slug']}/"} for p in posts],
+    }
+    blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    if not posts:
+        cards = ""
+    return f"""<h1 class="ih1">blog<span class="cur">_</span><span class="hglyph" lang="ne">लेख</span></h1>
+<p class="lede">Benchmarks, releases and the experiments that did not work, for the languages of Nepal. Every claim links to a repo, a model card or a dataset.</p>
+<div class="bar"><div class="chips" id="chips" role="group" aria-label="Filter by project"></div>
+<div class="toggle" role="group" aria-label="View"><button id="v-grid" aria-pressed="true">grid</button><button id="v-map" aria-pressed="false">map</button></div></div>
+{'<p class="empty">Nothing published yet.</p>' if not posts else ""}
+<ul class="grid" id="grid">
+{cards}
+</ul>
+<div class="map" id="map" hidden><svg id="svg" role="img" aria-label="Posts grouped by project"></svg><div class="outline" id="outline"></div></div>
+<p class="legend" id="legend" hidden>Click a project to light its posts. Lines join posts to the project they report on.</p>
+<script type="application/json" id="posts-data">{blob}</script>"""
+
+
+def _copy_assets(source_dir: Path, dest: Path) -> int:
+    """Copy a post's images (never its markdown) and, if present, its audio/ clips. Returns the clip count."""
+    for asset in source_dir.iterdir():
+        if asset.suffix.lower() != ".md" and asset.is_file():  # post.md and provenance notes stay private
+            shutil.copy2(asset, dest / asset.name)
+    audio = source_dir / "audio"
+    if not audio.is_dir():
+        return 0
+    clips = sorted(audio.glob("*.mp3"), key=lambda p: int(p.stem) if p.stem.isdigit() else -1)
+    if any(not c.stem.isdigit() for c in clips) or [int(c.stem) for c in clips] != list(range(len(clips))):
+        raise ValueError(f"{source_dir.name}: audio/ must hold 0.mp3 … N.mp3 with no gaps")
+    (dest / "audio").mkdir(exist_ok=True)
+    for clip in clips:
+        shutil.copy2(clip, dest / "audio" / clip.name)
+    return len(clips)
 
 
 def build_blog_site(
     settings: BemineSettings, *, db: BemineDB | None = None
 ) -> dict[str, Any]:
-    """Render /blog/index.html and every published post into the site dir."""
+    """Render /blog/index.html, every published post, and gated previews into the site dir."""
     db = db or BemineDB(settings.db_path)
     site = blog_site_dir()
     blog_dir = site / "blog"
     blog_dir.mkdir(parents=True, exist_ok=True)
+    static = _copy_static(blog_dir)
     rows = db.list_blog_posts()
     published = [row for row in rows if str(row["status"]) == "published"]
-    items = []
-    for row in sorted(
-        published, key=lambda r: float(r["published_at"] or 0), reverse=True
-    ):
+    cards = []
+    for row in sorted(published, key=lambda r: float(r["published_at"] or 0), reverse=True):
         slug = str(row["slug"])
-        date = datetime.fromtimestamp(
-            float(row["published_at"] or time.time()), tz=timezone.utc
-        ).strftime("%Y-%m-%d")
         source_dir = Path(str(row["source_dir"]))
-        body = _render_markdown((source_dir / "post.md").read_text(encoding="utf-8"))
+        meta_raw, body_md = split_front_matter((source_dir / "post.md").read_text(encoding="utf-8"))
+        body = _render_markdown(body_md)
+        meta = _post_meta(row, body, body_md, meta_raw)
         post_dir = blog_dir / slug
         post_dir.mkdir(parents=True, exist_ok=True)
-        for asset in source_dir.iterdir():
-            if asset.suffix.lower() != ".md" and asset.is_file():  # post.md and provenance notes stay private
-                shutil.copy2(asset, post_dir / asset.name)
-        post_html = _page(
-            str(row["title"]),
-            f"<h1>{html.escape(str(row['title']))}</h1>"
-            f'<div class="meta">{date}</div>\n{body}',
+        clips = _copy_assets(source_dir, post_dir)
+        image = meta_raw.get("image", "")
+        (post_dir / "index.html").write_text(
+            _page(meta["title"], _post_body(meta, body, audio_clips=clips), static,
+                  description=meta["summary"], canonical=f"https://ampixa.com/blog/{slug}/",
+                  image=f"https://ampixa.com/blog/{slug}/{image}" if image else ""),
+            encoding="utf-8",
         )
-        (post_dir / "index.html").write_text(post_html, encoding="utf-8")
-        items.append(
-            f'<li><span class="date">{date}</span>'
-            f'<a href="/blog/{slug}/">{html.escape(str(row["title"]))}</a></li>'
-        )
-    # live previews for drafts under review: real rendered page, DRAFT banner,
-    # noindex, never linked from the index — review happens on the actual site
+        cards.append(meta)
+    # live previews for drafts under review: real rendered page, DRAFT banner, noindex, never linked from the
+    # index — review happens on the actual site
     preview_root = blog_dir / "preview"
     if preview_root.exists():
         shutil.rmtree(preview_root)
     drafts = [row for row in rows if str(row["status"]) != "published"]
+    failed: list[str] = []
     for row in drafts:
         slug = str(row["slug"])
         source_dir = Path(str(row["source_dir"]))
         source = source_dir / "post.md"
         if not source.is_file():
             continue
-        body = _render_markdown(source.read_text(encoding="utf-8"))
-        preview_dir = preview_root / slug
-        preview_dir.mkdir(parents=True, exist_ok=True)
-        for asset in source_dir.iterdir():
-            if asset.suffix.lower() != ".md" and asset.is_file():  # post.md and provenance notes stay private
-                shutil.copy2(asset, preview_dir / asset.name)
-        banner = (
-            f'<div style="background:{CRIMSON};color:#fff;padding:6px 12px;'
-            f'margin-bottom:20px;">DRAFT PREVIEW — not published'
-            f" (status: {row['status']}) · select text to comment</div>"
-        )
-        preview_html = _page(
-            f"[draft] {row['title']}",
-            f"{banner}<h1>{html.escape(str(row['title']))}</h1>\n{body}"
-            + _annotator_html(slug),
-        ).replace(
-            "<style>", '<meta name="robots" content="noindex, nofollow">\n<style>', 1
-        )
-        (preview_dir / "index.html").write_text(preview_html, encoding="utf-8")
+        try:
+            meta_raw, body_md = split_front_matter(source.read_text(encoding="utf-8"))
+            body = _render_markdown(body_md)
+            meta = _post_meta(row, body, body_md, meta_raw)
+            preview_dir = preview_root / slug
+            preview_dir.mkdir(parents=True, exist_ok=True)
+            clips = _copy_assets(source_dir, preview_dir)
+            banner = (f'<div class="draft-banner">DRAFT PREVIEW — not published (status: '
+                      f'{html.escape(str(row["status"]))}) · select text to comment</div>')
+            (preview_dir / "index.html").write_text(
+                _page(f"[draft] {meta['title']}",
+                      _post_body(meta, body, audio_clips=clips, banner=banner) + _annotator_html(slug),
+                      static, noindex=True),
+                encoding="utf-8",
+            )
+        except (ValueError, OSError) as exc:
+            # one broken draft must not take down every other preview; it is listed as broken on the dashboard
+            log.error("blog preview %s failed: %s", slug, exc)
+            failed.append(slug)
     # gated drafts dashboard at /blog/preview/ (the bare directory 403'd)
     if drafts:
         draft_items = []
-        for row in sorted(
-            drafts, key=lambda r: float(r["updated_at"] or 0), reverse=True
-        ):
+        for row in sorted(drafts, key=lambda r: float(r["updated_at"] or 0), reverse=True):
             slug = str(row["slug"])
             source = Path(str(row["source_dir"])) / "post.md"
             check = "missing draft file"
-            if source.is_file():
-                problems = validate_blog_draft(
-                    source.read_text(encoding="utf-8"), str(row["title"])
-                )
+            if slug in failed:
+                check = "preview failed to render — see bemine log"
+            elif source.is_file():
+                _, body_md = split_front_matter(source.read_text(encoding="utf-8"))
+                problems = validate_blog_draft(body_md, str(row["title"]))
                 check = "; ".join(problems) if problems else "style: clean"
             note = compact_text(str(row["notes"] or "").strip(), limit=160)
             draft_items.append(
-                f'<li><a href="/blog/preview/{slug}/">'
-                f"{html.escape(str(row['title']))}</a>"
-                f'<br><span class="date">[{row["status"]}] {html.escape(check)}'
+                f'<li><a href="/blog/preview/{slug}/">{html.escape(str(row["title"]))}</a>'
+                f'<br><span class="pmeta">[{row["status"]}] {html.escape(check)}'
                 f"{' · ' + html.escape(note) if note else ''}</span></li>"
             )
         dashboard = (
-            "<h1>drafts under review</h1>\n"
-            '<ul class="posts">\n' + "\n".join(draft_items) + "\n</ul>"
-            '<p class="meta">publish: say <code>publish blog &lt;slug&gt;</code> '
-            "in #ampixa-blog · changes: <code>request changes on &lt;slug&gt;: "
-            "&lt;note&gt;</code></p>"
+            '<h1 class="ih1">drafts under review</h1>\n<ul class="prose">\n' + "\n".join(draft_items) + "\n</ul>"
+            '<p class="pmeta">publish: say <code>publish blog &lt;slug&gt;</code> in #ampixa-blog · changes: '
+            "<code>request changes on &lt;slug&gt;: &lt;note&gt;</code></p>"
         )
     else:
-        dashboard = "<h1>drafts under review</h1><p>Queue is empty.</p>"
+        dashboard = '<h1 class="ih1">drafts under review</h1><p class="empty">Queue is empty.</p>'
     preview_root.mkdir(parents=True, exist_ok=True)
-    (preview_root / "index.html").write_text(
-        _page("drafts", dashboard).replace(
-            "<style>", '<meta name="robots" content="noindex, nofollow">\n<style>', 1
-        ),
+    (preview_root / "index.html").write_text(_page("drafts", dashboard, static, noindex=True), encoding="utf-8")
+    (blog_dir / "index.html").write_text(
+        _page("blog", _index_body(cards), static, canonical="https://ampixa.com/blog/",
+              description="Benchmarks, releases and lessons from Ampixa Labs, for the languages of Nepal."),
         encoding="utf-8",
     )
-    index_body = "<h1>blog</h1>\n"
-    if items:
-        index_body += '<ul class="posts">\n' + "\n".join(items) + "\n</ul>"
-    else:
-        index_body += (
-            "<p>Nothing published yet. Raw audio infrastructure notes land here.</p>"
-        )
-    (blog_dir / "index.html").write_text(_page("blog", index_body), encoding="utf-8")
     return {
         "published": len(published),
-        "previews": len(drafts),
+        "previews": len(drafts) - len(failed),
+        "preview_failures": failed,
         "site_dir": str(blog_dir),
     }
 

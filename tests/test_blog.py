@@ -121,7 +121,9 @@ def test_publish_good_draft_builds_index_and_post(tmp_path, monkeypatch):
     ).read_text(encoding="utf-8")
     assert "We measured NepaliMOS" in post
     assert "neptts-bench" in post
-    assert "#DC143C" in post  # crimson accent, ampixa style
+    css = next((tmp_path / "site" / "blog" / "_static").glob("blog.*.css"))
+    assert f"/blog/_static/{css.name}" in post
+    assert "#DC143C" in css.read_text(encoding="utf-8")  # crimson accent, ampixa style
     row = db.get_blog_post("we-measured-nepalimos")
     assert row["status"] == "published"
 
@@ -601,3 +603,33 @@ def test_build_never_publishes_markdown_from_draft_dir(tmp_path, monkeypatch) ->
     preview = tmp_path / "site" / "blog" / "preview" / result["slug"]
     assert (preview / "chart.png").is_file()
     assert not list(preview.glob("*.md"))
+
+
+def test_front_matter_feeds_the_card_and_never_renders_as_text(tmp_path, monkeypatch) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    draft = tmp_path / "fm.md"
+    draft.write_text(
+        "---\ntype: benchmark\nglyph: य\nsummary: One line card summary.\n"
+        "code: https://github.com/Ampixa/neptts-bench\n---\n" + GOOD_DRAFT,
+        encoding="utf-8",
+    )
+    fm = submit_blog_draft(
+        settings, file=draft, title="Front matter post", project="neptts-bench",
+        author="t", db=db, notify=False,
+    )
+    plain = _submit(settings, tmp_path, db)
+    blog = tmp_path / "site" / "blog"
+    preview = (blog / "preview" / fm["slug"] / "index.html").read_text(encoding="utf-8")
+    assert "noindex" in preview and "type: benchmark" not in preview
+    assert "benchmark · neptts bench" in preview
+    assert 'href="https://github.com/Ampixa/neptts-bench">code' in preview
+
+    publish_blog_post(settings, fm["slug"], db=db, deploy=False, notify=False)
+    live = (blog / fm["slug"] / "index.html").read_text(encoding="utf-8")
+    assert "noindex" not in live and "One line card summary." in live
+    index = (blog / "index.html").read_text(encoding="utf-8")
+    assert "One line card summary." in index and fm["slug"] in index
+    assert plain["slug"] not in index  # drafts never appear on the public index
+    assert list((blog / "_static").glob("blog.*.css"))
+    assert (blog / "_static" / "fonts" / "nithya-ranjana-du.woff2").is_file()
