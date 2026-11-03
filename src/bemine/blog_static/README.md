@@ -16,6 +16,7 @@ template change that stops referencing it.
 | `fonts/cmu-serif-700.woff2` | bold | same package, `cmu-serif-700-roman.ttf` (82d500c7…), same subset | c9ced832… |
 | `fonts/cmu-serif-400-italic.woff2` | italic | same package, `cmu-serif-500-italic.ttf` (0473b873…), same subset | 72918611… |
 | `fonts/nithya-ranjana-du.woff2` | Ranjana backdrops and display titles only | `NithyaRanjanaDU-Regular.otf` v1.000 (8a2ebe62…, EkType, from mbp2 `~/github/llm/ocr-tech/data/fonts/all/devanagari/`), subset U+0900-097F, 200C-200D | 939d2355… |
+| `icons/favicon.svg`, `icons/favicon-32.png`, `icons/apple-touch-icon.png` | tab and home-screen icons: the Ampixa crimson pixel cross (four squares, centre empty) on paper | drawn 2026-11-04 by make_icons.py (Claude Code); the geometry matches the cross in the Yak figures | in git |
 | `fonts/LICENSE-CMU-Serif-OFL.txt` | licence, shipped with the font | npm package `OFL.txt` | n/a |
 | `fonts/LICENSE-Nithya-Ranjana-OFL.txt` | licence, shipped with the font | github.com/EkType/NithyaRanjana `OFL.txt` | n/a |
 
