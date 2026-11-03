@@ -551,6 +551,25 @@ FONTS_CSS = (
     "&family=Noto+Serif+Devanagari:wght@400;700&family=Noto+Sans+Devanagari:wght@400;600&display=swap"
 )
 POST_TYPES = ("release", "benchmark", "dataset", "lesson", "post")
+# link-preview image for pages without their own (the ampixa.com site card, 1600x900)
+SITE_CARD = ("https://ampixa.com/assets/og-card.png?v=20260924", 1600, 900)
+
+
+def _image_size(path: Path) -> tuple[int, int]:
+    """Pixel size of a PNG or JPEG, read from its header (og:image:width/height must be exact)."""
+    data = path.read_bytes()
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                raise ValueError(f"{path.name}: corrupt JPEG marker at byte {i}")
+            marker, length = data[i + 1], int.from_bytes(data[i + 2:i + 4], "big")
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                return int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+            i += 2 + length
+    raise ValueError(f"{path.name}: social image must be PNG or JPEG")
 _FRONT_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.S)
 _DEVANAGARI_RE = re.compile(r"[ऀ-ॿ]")
 # blocks the read-aloud player speaks, in reading order (tables, code and figures are skipped)
@@ -633,6 +652,7 @@ def _copy_static(blog_dir: Path) -> dict[str, str]:
     for font in (STATIC_SRC / "fonts").iterdir():
         if font.is_file() and font.suffix.lower() != ".md":
             shutil.copy2(font, out / "fonts" / font.name)
+    shutil.copytree(STATIC_SRC / "icons", out / "icons")
     urls = {}
     for name in ("blog.css", "blog.js"):
         data = (STATIC_SRC / name).read_bytes()
@@ -644,26 +664,44 @@ def _copy_static(blog_dir: Path) -> dict[str, str]:
 
 
 def _page(title: str, body_html: str, static: dict[str, str], *, noindex: bool = False,
-          description: str = "", image: str = "", canonical: str = "") -> str:
+          description: str = "", image: tuple[str, int, int] | None = None, canonical: str = "",
+          kind: str = "website", published: str = "") -> str:
+    """Full social metadata on every public page: Open Graph + Twitter, with the site card as the fallback image."""
+    img_url, img_w, img_h = image or SITE_CARD
+    e = html.escape
     head = [f'<link rel="stylesheet" href="{static["css"]}">']
     if noindex:
         head.append('<meta name="robots" content="noindex, nofollow">')
+    head += [
+        f'<meta property="og:title" content="{e(title)}">',
+        '<meta property="og:site_name" content="Ampixa Labs">',
+        f'<meta property="og:type" content="{e(kind)}">',
+        '<meta property="og:locale" content="en_US">',
+        f'<meta property="og:image" content="{e(img_url)}">',
+        f'<meta property="og:image:width" content="{img_w}">',
+        f'<meta property="og:image:height" content="{img_h}">',
+        f'<meta property="og:image:alt" content="{e(title)}">',
+        '<meta name="twitter:card" content="summary_large_image">',
+        f'<meta name="twitter:title" content="{e(title)}">',
+        f'<meta name="twitter:image" content="{e(img_url)}">',
+    ]
     if description:
-        head.append(f'<meta name="description" content="{html.escape(description)}">')
-        head.append(f'<meta property="og:description" content="{html.escape(description)}">')
-    if image:
-        head.append(f'<meta property="og:image" content="{html.escape(image)}">')
-        head.append('<meta name="twitter:card" content="summary_large_image">')
+        head += [f'<meta name="description" content="{e(description)}">',
+                 f'<meta property="og:description" content="{e(description)}">',
+                 f'<meta name="twitter:description" content="{e(description)}">']
     if canonical:
-        head.append(f'<link rel="canonical" href="{html.escape(canonical)}">')
+        head += [f'<link rel="canonical" href="{e(canonical)}">', f'<meta property="og:url" content="{e(canonical)}">']
+    if published:
+        head.append(f'<meta property="article:published_time" content="{e(published)}">')
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{html.escape(title)} — ampixa labs</title>
-<meta property="og:title" content="{html.escape(title)}">
-<link rel="icon" type="image/png" href="/assets/logo.png">
+<link rel="icon" type="image/svg+xml" href="/blog/_static/icons/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/blog/_static/icons/favicon-32.png">
+<link rel="apple-touch-icon" href="/blog/_static/icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{FONTS_CSS}">
@@ -816,11 +854,15 @@ def build_blog_site(
         post_dir = blog_dir / slug
         post_dir.mkdir(parents=True, exist_ok=True)
         clips = _copy_assets(source_dir, post_dir)
-        image = meta_raw.get("image", "")
+        image = None
+        if meta_raw.get("image"):
+            w, h = _image_size(post_dir / meta_raw["image"])
+            image = (f"https://ampixa.com/blog/{slug}/{meta_raw['image']}", w, h)
+        published_iso = datetime.fromtimestamp(float(row["published_at"] or time.time()), tz=timezone.utc).isoformat()
         (post_dir / "index.html").write_text(
             _page(meta["title"], _post_body(meta, body, audio_clips=clips), static,
                   description=meta["summary"], canonical=f"https://ampixa.com/blog/{slug}/",
-                  image=f"https://ampixa.com/blog/{slug}/{image}" if image else ""),
+                  image=image, kind="article", published=published_iso),
             encoding="utf-8",
         )
         cards.append(meta)

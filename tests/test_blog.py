@@ -633,3 +633,31 @@ def test_front_matter_feeds_the_card_and_never_renders_as_text(tmp_path, monkeyp
     assert plain["slug"] not in index  # drafts never appear on the public index
     assert list((blog / "_static").glob("blog.*.css"))
     assert (blog / "_static" / "fonts" / "nithya-ranjana-du.woff2").is_file()
+
+
+def test_pages_carry_full_social_metadata(tmp_path, monkeypatch) -> None:
+    import struct
+    import zlib
+
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    draft = tmp_path / "og.md"
+    draft.write_text("---\nimage: card.png\n---\n" + GOOD_DRAFT, encoding="utf-8")
+    result = submit_blog_draft(settings, file=draft, title="Social post", db=db, notify=False)
+    raw = zlib.compress(b"\x00" * (1 + 3 * 1200) * 630)
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+    (Path(result["source_dir"]) / "card.png").write_bytes(
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1200, 630, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", raw) + chunk(b"IEND", b""))
+    publish_blog_post(settings, result["slug"], db=db, deploy=False, notify=False)
+    blog = tmp_path / "site" / "blog"
+    post = (blog / result["slug"] / "index.html").read_text(encoding="utf-8")
+    for tag in ('og:type" content="article"', 'og:site_name" content="Ampixa Labs"',
+                f'og:url" content="https://ampixa.com/blog/{result["slug"]}/"',
+                f'og:image" content="https://ampixa.com/blog/{result["slug"]}/card.png"',
+                'og:image:width" content="1200"', 'og:image:height" content="630"',
+                'twitter:title" content="Social post"', "article:published_time", "apple-touch-icon"):
+        assert tag in post, tag
+    index = (blog / "index.html").read_text(encoding="utf-8")
+    assert 'og:image" content="https://ampixa.com/assets/og-card.png' in index  # site card fallback
+    assert (blog / "_static" / "icons" / "favicon.svg").is_file()
