@@ -613,7 +613,7 @@ def build_blog_site(
         post_dir = blog_dir / slug
         post_dir.mkdir(parents=True, exist_ok=True)
         for asset in source_dir.iterdir():
-            if asset.name != "post.md" and asset.is_file():
+            if asset.suffix.lower() != ".md" and asset.is_file():  # post.md and provenance notes stay private
                 shutil.copy2(asset, post_dir / asset.name)
         post_html = _page(
             str(row["title"]),
@@ -641,7 +641,7 @@ def build_blog_site(
         preview_dir = preview_root / slug
         preview_dir.mkdir(parents=True, exist_ok=True)
         for asset in source_dir.iterdir():
-            if asset.name != "post.md" and asset.is_file():
+            if asset.suffix.lower() != ".md" and asset.is_file():  # post.md and provenance notes stay private
                 shutil.copy2(asset, preview_dir / asset.name)
         banner = (
             f'<div style="background:{CRIMSON};color:#fff;padding:6px 12px;'

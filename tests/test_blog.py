@@ -588,3 +588,16 @@ def test_mirror_blog_to_git_commits_and_pushes(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr("bemine.blog._cfg", lambda key, default: str(tmp_path / "nope"))
     assert mirror_blog_to_git(blog)["ok"] is False
+
+
+def test_build_never_publishes_markdown_from_draft_dir(tmp_path, monkeypatch) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    db = BemineDB(settings.db_path)
+    result = _submit(settings, tmp_path, db)
+    src = Path(result["source_dir"])
+    (src / "README.md").write_text("internal provenance", encoding="utf-8")
+    (src / "chart.png").write_bytes(b"png")
+    build_blog_site(settings, db=db)
+    preview = tmp_path / "site" / "blog" / "preview" / result["slug"]
+    assert (preview / "chart.png").is_file()
+    assert not list(preview.glob("*.md"))
