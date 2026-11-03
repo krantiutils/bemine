@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -46,6 +47,8 @@ _ARTIFACT_RE = re.compile(
 )
 
 CRIMSON = "#DC143C"
+
+log = logging.getLogger(__name__)
 
 
 def _cfg(key: str, default: str) -> str:
@@ -735,7 +738,57 @@ def deploy_blog_site(settings: BemineSettings) -> dict[str, Any]:
     )
     if proc.returncode != 0:
         raise RuntimeError(f"blog deploy failed: {proc.stderr.strip()[:400]}")
-    return {"host": host, "remote": f"{remote}/blog/"}
+    return {
+        "host": host,
+        "remote": f"{remote}/blog/",
+        "git": mirror_blog_to_git(local_blog),
+    }
+
+
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=120,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"git {args[0]} failed: {proc.stderr.strip()[:400]}")
+    return proc.stdout
+
+
+def mirror_blog_to_git(local_blog: Path) -> dict[str, Any]:
+    """Keep Ampixa/ampixa-site in parity with what was just deployed.
+
+    The live deploy already succeeded, so a git failure is logged and reported
+    in the result instead of raised (raising would mask the live deploy)."""
+    repo = Path(_cfg("git_repo_dir", "~/github/ampixa-site")).expanduser()
+    try:
+        if not (repo / ".git").is_dir():
+            raise RuntimeError(f"site repo clone missing at {repo}")
+        _git(repo, "pull", "--rebase", "-q")
+        (repo / "site" / "blog").mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            ["rsync", "-a", "--delete", f"{local_blog}/", f"{repo}/site/blog/"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(f"rsync to repo failed: {proc.stderr.strip()[:400]}")
+        _git(repo, "add", "-A", "site/blog")
+        if not _git(repo, "status", "--porcelain", "site/blog").strip():
+            return {"ok": True, "commit": None}
+        _git(repo, "commit", "-q", "-m", "Sync blog from Bemine deploy")
+        _git(repo, "push", "-q")
+        return {"ok": True, "commit": _git(repo, "rev-parse", "--short", "HEAD").strip()}
+    except Exception as exc:
+        log.error("blog git mirror failed (live deploy succeeded): %s", exc)
+        return {"ok": False, "error": str(exc)}
 
 
 def _annotator_html(slug: str) -> str:

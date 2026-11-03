@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from bemine.blog import (
     build_blog_site,
+    mirror_blog_to_git,
     publish_blog_post,
     render_blog_posts,
     request_blog_changes,
@@ -551,3 +553,38 @@ def test_update_blog_draft_replaces_content_and_reverts_to_draft(tmp_path, monke
         short = tmp_path / "short.md"
         short.write_text("oops", encoding="utf-8")
         update_blog_draft(settings, "we-measured-nepalimos", short, db=db, notify=False)
+
+
+def test_mirror_blog_to_git_commits_and_pushes(tmp_path, monkeypatch) -> None:
+    def git(*args: str, cwd: Path) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout
+
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", "-b", "main", str(remote), cwd=tmp_path)
+    repo = tmp_path / "clone"
+    git("clone", "-q", str(remote), str(repo), cwd=tmp_path)
+    git("config", "user.email", "t@t", cwd=repo)
+    git("config", "user.name", "t", cwd=repo)
+    (repo / "README").write_text("x")
+    git("add", ".", cwd=repo)
+    git("commit", "-qm", "init", cwd=repo)
+    git("push", "-q", "-u", "origin", "main", cwd=repo)
+    monkeypatch.setattr(
+        "bemine.blog._cfg",
+        lambda key, default: str(repo) if key == "git_repo_dir" else default,
+    )
+    blog = tmp_path / "blog"
+    (blog / "preview").mkdir(parents=True)
+    (blog / "preview" / "index.html").write_text("drafts")
+
+    first = mirror_blog_to_git(blog)
+    assert first["ok"] and first["commit"]
+    assert git("log", "-1", "--format=%s", "main", cwd=remote).strip() == (
+        "Sync blog from Bemine deploy"
+    )
+    assert mirror_blog_to_git(blog) == {"ok": True, "commit": None}
+
+    monkeypatch.setattr("bemine.blog._cfg", lambda key, default: str(tmp_path / "nope"))
+    assert mirror_blog_to_git(blog)["ok"] is False
