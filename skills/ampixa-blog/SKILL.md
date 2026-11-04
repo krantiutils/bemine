@@ -22,6 +22,14 @@ If the result is preliminary, unverified, or has no artifact to link — do not
 submit. Capture it as an SMM backlog idea instead
 (`bemine backlog add "..." --owner SMM`).
 
+## Writing guide (read before drafting)
+
+The public house guide is https://github.com/Ampixa/blog-guide: structure (TL;DR, hero,
+question headings, "What this is not"), links as markdown links, takeaway captions, figure
+choice, palette, front matter keys and the pre-submit checklist. The reference post is
+https://ampixa.com/blog/yak-an-open-lossless-nepali-first-tokenizer/. A draft that ignores
+the guide (bare URLs, no figures, no front matter links) will be sent back.
+
 ## Ampixa philosophy (the draft must follow this)
 
 - Text-first, plain, technical. Monospace sensibility; no marketing voice.
