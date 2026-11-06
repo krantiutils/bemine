@@ -918,28 +918,10 @@ class MayorDiscordGateway:
                 discord.MessageType.reply,
             }:
                 return
-            # preview annotator comments arrive via webhook (author is not an
-            # allowed user) — accept ONLY the narrow blog-comment format
+            # Webhooks are bearer credentials, not authorized human identities.
+            # Never dispatch their content, even when allow_all_users is enabled.
             if getattr(message, "webhook_id", None):
-                comment = _parse_blog_comment(message.content or "")
-                if comment is not None:
-                    slug, note = comment
-                    try:
-                        await asyncio.to_thread(
-                            lambda: run_command(
-                                "blog.request_changes",
-                                BemineSettings.load(),
-                                {
-                                    "slug": slug,
-                                    "note": note,
-                                    "no_reviser": True,
-                                    "quiet": True,
-                                },
-                            )
-                        )
-                        await _acknowledge_message(message)
-                    except Exception:
-                        await _acknowledge_message(message, emoji=WARNING_REACTION)
+                LOG.warning("ignored Discord webhook %s", message.webhook_id)
                 return
             if not self._is_allowed(message.author):
                 LOG.warning("ignored unauthorized Discord user %s", message.author.id)
