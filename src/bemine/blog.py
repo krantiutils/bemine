@@ -1023,77 +1023,12 @@ def mirror_blog_to_git(local_blog: Path) -> dict[str, Any]:
 
 
 def _annotator_html(slug: str) -> str:
-    """Notion-style inline comments on gated previews: select text, write a
-    note, it posts to #ampixa-blog through a webhook (form-data POST avoids a
-    CORS preflight). The gateway records each comment on the draft; saying
-    `revise blog <slug>` then applies all of them with one worker."""
-    webhook = _cfg("comment_webhook", "").strip()
-    if not webhook:
-        return ""
-    return f"""
-<div id="cmt-panel" style="display:none;position:fixed;bottom:0;left:0;right:0;
-background:#fff;border-top:3px solid {CRIMSON};padding:14px 24px;
-box-shadow:0 -4px 16px rgba(0,0,0,.12);z-index:50;">
-  <div style="font-size:.8em;color:#777;margin-bottom:6px;">commenting on:
-    <em id="cmt-quote"></em></div>
-  <textarea id="cmt-text" rows="2" placeholder="what should change here?"
-    style="width:100%;font-family:inherit;font-size:.95em;padding:8px;
-    box-sizing:border-box;border:1px solid #ccc;"></textarea>
-  <div style="margin-top:8px;">
-    <button id="cmt-send" style="background:{CRIMSON};color:#fff;border:0;
-      padding:8px 18px;font-family:inherit;cursor:pointer;">send comment</button>
-    <button id="cmt-cancel" style="background:#eee;border:0;padding:8px 14px;
-      font-family:inherit;cursor:pointer;">cancel</button>
-    <span id="cmt-status" style="margin-left:12px;font-size:.85em;color:#777;"></span>
-  </div>
-</div>
-<script>
-(function () {{
-  var SLUG = {json.dumps(slug)};
-  var HOOK = {json.dumps(webhook)};
-  var panel = document.getElementById('cmt-panel');
-  var quoteEl = document.getElementById('cmt-quote');
-  var textEl = document.getElementById('cmt-text');
-  var statusEl = document.getElementById('cmt-status');
-  var currentQuote = '';
-  document.addEventListener('mouseup', function () {{
-    setTimeout(function () {{
-      var sel = window.getSelection().toString().trim();
-      if (sel.length > 3 && !panel.contains(document.activeElement)) {{
-        currentQuote = sel.slice(0, 300);
-        quoteEl.textContent = '"' + currentQuote.slice(0, 140)
-          + (currentQuote.length > 140 ? '…' : '') + '"';
-        statusEl.textContent = '';
-        panel.style.display = 'block';
-        textEl.focus();
-      }}
-    }}, 10);
-  }});
-  document.getElementById('cmt-cancel').onclick = function () {{
-    panel.style.display = 'none'; textEl.value = '';
-  }};
-  document.getElementById('cmt-send').onclick = function () {{
-    var note = textEl.value.trim();
-    if (!note) {{ statusEl.textContent = 'write a note first'; return; }}
-    var content = 'blog-comment ' + SLUG + '\\n> ' + currentQuote
-      + '\\n' + note;
-    var form = new FormData();
-    form.append('payload_json', JSON.stringify({{content: content}}));
-    statusEl.textContent = 'sending…';
-    fetch(HOOK, {{method: 'POST', body: form}}).then(function (r) {{
-      if (r.ok) {{
-        statusEl.textContent = 'sent to #ampixa-blog ✓';
-        textEl.value = '';
-        setTimeout(function () {{ panel.style.display = 'none'; }}, 900);
-      }} else {{ statusEl.textContent = 'failed (' + r.status + ')'; }}
-    }}).catch(function () {{ statusEl.textContent = 'network error'; }});
-  }};
-}})();
-</script>
-"""
+    """Keep preview HTML free of Discord bearer credentials.
 
-
-# --- discord -------------------------------------------------------------
+    Review comments must come from an authorized Discord user until an
+    authenticated server-side comment endpoint is available.
+    """
+    return ""
 
 
 def _notify_discord(settings: BemineSettings, text: str) -> bool:

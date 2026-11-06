@@ -361,7 +361,7 @@ def test_preview_dashboard_lists_drafts_and_exists_when_empty(tmp_path, monkeypa
     assert "noindex" in dash
 
 
-def test_preview_embeds_annotator_when_webhook_configured(tmp_path, monkeypatch):
+def test_preview_never_exposes_webhook_when_configured(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "bemine.blog._cfg",
         lambda key, default: (
@@ -379,9 +379,9 @@ def test_preview_embeds_annotator_when_webhook_configured(tmp_path, monkeypatch)
     preview = (
         tmp_path / "site" / "blog" / "preview" / "we-measured-nepalimos" / "index.html"
     ).read_text(encoding="utf-8")
-    assert "cmt-panel" in preview
-    assert "blog-comment " in preview
-    assert "discord.com/api/webhooks/x/y" in preview
+    assert "cmt-panel" not in preview
+    assert "blog-comment " not in preview
+    assert "discord.com/api/webhooks/x/y" not in preview
     # published pages never carry the annotator
     publish_blog_post(
         settings, "we-measured-nepalimos", db=db, deploy=False, notify=False
